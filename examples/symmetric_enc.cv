@@ -1,0 +1,59 @@
+(* Symmetric Encryption Example
+   
+   This example demonstrates a basic symmetric encryption scheme
+   and proves secrecy of encrypted messages under the IND-CPA assumption.
+*)
+
+(* Type declarations *)
+type key [large, fixed].
+type plaintext [large, fixed].
+type ciphertext [bounded].
+type nonce [large, fixed].
+
+(* Symmetric encryption primitives *)
+
+(* Key generation *)
+fun keygen(): key [private].
+
+(* Encryption function: takes a plaintext, key, and nonce, returns ciphertext *)
+fun enc(plaintext, key, nonce): ciphertext.
+
+(* Decryption function: takes a ciphertext, key, and nonce, returns plaintext *)
+fun dec(ciphertext, key, nonce): plaintext
+reduc forall m: plaintext, k: key, r: nonce;
+      dec(enc(m, k, r), k, r) = m.
+
+(* IND-CPA assumption: encryption hides the plaintext *)
+param N.
+equiv(ind_cpa(enc))
+      foreach i <= N do r <-R nonce; (
+        x: plaintext;
+        enc(x, k, r))
+    <=(0)=>
+      foreach i <= N do r <-R nonce; (
+        x: plaintext;
+        new y: ciphertext;
+        y).
+
+(* Channels for communication *)
+channel c.
+
+(* Secret message to protect *)
+free secretMessage: plaintext [private].
+
+(* Query: prove that the secret message remains secret *)
+query attacker(secretMessage).
+
+(* Main process *)
+process
+  (* Generate a key *)
+  new k: key;
+  
+  (* Generate a random nonce *)
+  new r: nonce;
+  
+  (* Encrypt the secret message *)
+  let ciphertext = enc(secretMessage, k, r) in
+  
+  (* Send the ciphertext to the adversary *)
+  out(c, ciphertext)

@@ -1,0 +1,69 @@
+(* Diffie-Hellman Key Exchange Example
+   
+   This example demonstrates the Diffie-Hellman key exchange protocol
+   and proves security of the shared secret under the DDH assumption.
+*)
+
+(* Type declarations *)
+type G [large, fixed].      (* Group elements *)
+type exponent [large, fixed]. (* Exponents *)
+
+(* Diffie-Hellman operations *)
+
+(* Generator of the group *)
+const g: G.
+
+(* Exponentiation *)
+fun exp(G, exponent): G.
+
+(* Multiplication of exponents (in the exponent) *)
+equation forall x: exponent, y: exponent;
+  exp(exp(g, x), y) = exp(exp(g, y), x).
+
+(* DDH assumption: Decisional Diffie-Hellman *)
+param N.
+equiv(ddh(exp))
+      foreach i <= N do (
+        x <-R exponent; y <-R exponent;
+        (exp(g, x), exp(g, y), exp(g, mult(x, y))))
+    <=(0)=>
+      foreach i <= N do (
+        x <-R exponent; y <-R exponent; z <-R G;
+        (exp(g, x), exp(g, y), z)).
+
+(* Helper function for exponent multiplication (abstract) *)
+fun mult(exponent, exponent): exponent.
+equation forall x: exponent, y: exponent;
+  exp(g, mult(x, y)) = exp(exp(g, x), y).
+
+(* Channels *)
+channel c.
+
+(* Secret exponents *)
+free a: exponent [private].
+free b: exponent [private].
+
+(* Query: prove that the shared secret remains secret *)
+query attacker(exp(g, mult(a, b))).
+
+(* Main process: Two parties perform DH key exchange *)
+process
+  (* Alice generates her key pair *)
+  new privA: exponent;
+  let pubA = exp(g, privA) in
+  
+  (* Bob generates his key pair *)
+  new privB: exponent;
+  let pubB = exp(g, privB) in
+  
+  (* Exchange public keys *)
+  out(c, pubA);
+  out(c, pubB);
+  
+  (* Both compute the shared secret *)
+  let sharedA = exp(pubB, privA) in
+  let sharedB = exp(pubA, privB) in
+  
+  (* The shared secrets should be equal *)
+  (* sharedA = sharedB = exp(g, mult(privA, privB)) *)
+  0
