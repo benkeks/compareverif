@@ -6,6 +6,10 @@ This repository contains example protocols for [CryptoVerif](https://cryptoverif
 
 CryptoVerif is an automatic protocol verifier that analyzes cryptographic protocols in the computational model. It can prove security properties of protocols such as secrecy and authentication under computational assumptions.
 
+## Getting Started
+
+New to CryptoVerif? Check out our [Quick Start Guide](QUICKSTART.md) for step-by-step installation and usage instructions.
+
 ## Prerequisites
 
 To run these examples, you need to install CryptoVerif:
@@ -13,6 +17,8 @@ To run these examples, you need to install CryptoVerif:
 1. Download CryptoVerif from [https://cryptoverif.inria.fr/](https://cryptoverif.inria.fr/)
 2. Follow the installation instructions for your platform
 3. Make sure `cryptoverif` is in your PATH
+
+For detailed installation help, see [QUICKSTART.md](QUICKSTART.md).
 
 ## Examples
 
@@ -84,7 +90,7 @@ cryptoverif examples/authenticated_enc.cv
 
 ## Contributing
 
-Feel free to add more examples or improve existing ones. Submit a pull request with your changes.
+We welcome contributions! Whether you want to add new examples, improve documentation, or fix bugs, please see our [Contributing Guide](CONTRIBUTING.md) for details on how to get started.
 
 ## License
 
