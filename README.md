@@ -32,6 +32,13 @@ An implementation of the Diffie-Hellman key exchange protocol with:
 - Shared secret computation
 - Security proof under the DDH assumption
 
+### 3. Authenticated Encryption (`examples/authenticated_enc.cv`)
+
+A more advanced example showing authenticated encryption (encrypt-then-MAC) with:
+- Combined confidentiality and authenticity
+- MAC verification before decryption
+- Security proofs under IND-CPA and SUF-CMA assumptions
+
 ## Running the Examples
 
 You can verify all examples using the provided Makefile:
@@ -43,6 +50,7 @@ make all
 # Verify a specific example
 make symmetric_enc
 make diffie_hellman
+make authenticated_enc
 
 # Clean generated files
 make clean
@@ -53,6 +61,7 @@ Or run CryptoVerif directly on individual files:
 ```bash
 cryptoverif examples/symmetric_enc.cv
 cryptoverif examples/diffie_hellman.cv
+cryptoverif examples/authenticated_enc.cv
 ```
 
 ## Project Structure
@@ -63,7 +72,8 @@ cryptoverif examples/diffie_hellman.cv
 ├── Makefile           # Build automation
 └── examples/          # Example protocol files
     ├── symmetric_enc.cv
-    └── diffie_hellman.cv
+    ├── diffie_hellman.cv
+    └── authenticated_enc.cv
 ```
 
 ## Learning Resources

@@ -1,0 +1,96 @@
+(* Authenticated Encryption Example
+   
+   This example demonstrates authenticated encryption (encrypt-then-MAC)
+   combining confidentiality and authenticity guarantees.
+*)
+
+(* Type declarations *)
+type key [large, fixed].
+type mkey [large, fixed].      (* MAC key *)
+type plaintext [large, fixed].
+type ciphertext [bounded].
+type mac [bounded].
+type nonce [large, fixed].
+
+(* Symmetric encryption primitives *)
+fun enc(plaintext, key, nonce): ciphertext.
+
+fun dec(ciphertext, key, nonce): plaintext
+reduc forall m: plaintext, k: key, r: nonce;
+      dec(enc(m, k, r), k, r) = m.
+
+(* MAC primitives *)
+fun hmac(ciphertext, mkey): mac.
+
+(* MAC verification *)
+fun verify_mac(ciphertext, mac, mkey): bool
+reduc forall c: ciphertext, mk: mkey;
+      verify_mac(c, hmac(c, mk), mk) = true.
+
+(* IND-CPA assumption for encryption *)
+param N, M.
+equiv(ind_cpa(enc))
+      foreach i <= N do r <-R nonce; (
+        x: plaintext;
+        enc(x, k, r))
+    <=(0)=>
+      foreach i <= N do r <-R nonce; (
+        x: plaintext;
+        new y: ciphertext;
+        y).
+
+(* SUF-CMA assumption for MAC: MAC is unforgeable *)
+equiv(suf_cma(hmac))
+      foreach i <= M do (
+        x: ciphertext;
+        hmac(x, mk))
+    <=(0)=>
+      foreach i <= M do (
+        x: ciphertext;
+        find j <= M suchthat defined(x[j]) && x = x[j] then
+          hmac(x, mk)
+        else
+          new m: mac;
+          m).
+
+(* Channels *)
+channel c_send, c_recv.
+
+(* Secret message *)
+free secretMsg: plaintext [private].
+
+(* Query: prove confidentiality *)
+query attacker(secretMsg).
+
+(* Main process: Sender and Receiver *)
+process
+  (* Generate encryption and MAC keys *)
+  new encKey: key;
+  new macKey: mkey;
+  
+  (* Sender process *)
+  (
+    (* Generate a random nonce *)
+    new r: nonce;
+    
+    (* Encrypt the message *)
+    let ct = enc(secretMsg, encKey, r) in
+    
+    (* Compute MAC over ciphertext *)
+    let tag = hmac(ct, macKey) in
+    
+    (* Send ciphertext, MAC, and nonce *)
+    out(c_send, (ct, tag, r))
+  )
+  |
+  (* Receiver process *)
+  (
+    (* Receive message *)
+    in(c_recv, (receivedCt: ciphertext, receivedTag: mac, receivedNonce: nonce));
+    
+    (* Verify MAC *)
+    if verify_mac(receivedCt, receivedTag, macKey) = true then
+      (* Decrypt only if MAC is valid *)
+      let decrypted = dec(receivedCt, encKey, receivedNonce) in
+      0
+  )
