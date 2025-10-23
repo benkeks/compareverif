@@ -6,6 +6,8 @@ This repository contains example protocols for [CryptoVerif](https://cryptoverif
 
 CryptoVerif is an automatic protocol verifier that analyzes cryptographic protocols in the computational model. It can prove security properties of protocols such as secrecy and authentication under computational assumptions.
 
+**Note:** These examples are written for CryptoVerif version 2.11 and later.
+
 ## Getting Started
 
 New to CryptoVerif? Check out our [Quick Start Guide](QUICKSTART.md) for step-by-step installation and usage instructions.

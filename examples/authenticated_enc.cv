@@ -15,43 +15,47 @@ type nonce [large, fixed].
 (* Symmetric encryption primitives *)
 fun enc(plaintext, key, nonce): ciphertext.
 
-fun dec(ciphertext, key, nonce): plaintext
-reduc forall m: plaintext, k: key, r: nonce;
-      dec(enc(m, k, r), k, r) = m.
+fun dec(ciphertext, key, nonce): plaintext.
+
+(* Decryption correctness equation *)
+equation forall m: plaintext, k: key, r: nonce;
+  dec(enc(m, k, r), k, r) = m.
 
 (* MAC primitives *)
 fun hmac(ciphertext, mkey): mac.
 
 (* MAC verification *)
-fun verify_mac(ciphertext, mac, mkey): bool
-reduc forall c: ciphertext, mk: mkey;
-      verify_mac(c, hmac(c, mk), mk) = true.
+fun verify_mac(ciphertext, mac, mkey): bool.
+
+(* MAC correctness equation *)
+equation forall c: ciphertext, mk: mkey;
+  verify_mac(c, hmac(c, mk), mk) = true.
 
 (* IND-CPA assumption for encryption *)
 param N, M.
 equiv(ind_cpa(enc))
-      foreach i <= N do r <-R nonce; (
-        x: plaintext;
-        enc(x, k, r))
-    <=(0)=>
-      foreach i <= N do r <-R nonce; (
-        x: plaintext;
-        new y: ciphertext;
-        y).
+  foreach i <= N do r <-R nonce; (
+    x: plaintext;
+    enc(x, k, r))
+<=(0)=>
+  foreach i <= N do r <-R nonce; (
+    x: plaintext;
+    new y: ciphertext;
+    y).
 
 (* SUF-CMA assumption for MAC: MAC is unforgeable *)
 equiv(suf_cma(hmac))
-      foreach i <= M do (
-        x: ciphertext;
-        hmac(x, mk))
-    <=(0)=>
-      foreach i <= M do (
-        x: ciphertext;
-        find j <= M suchthat defined(x[j]) && x = x[j] then
-          hmac(x, mk)
-        else
-          new m: mac;
-          m).
+  foreach i <= M do (
+    x: ciphertext;
+    hmac(x, mk))
+<=(0)=>
+  foreach i <= M do (
+    x: ciphertext;
+    find j <= M suchthat defined(x[j]) && x = x[j] then
+      hmac(x, mk)
+    else
+      new m: mac;
+      m).
 
 (* Channels *)
 channel c_send, c_recv.

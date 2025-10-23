@@ -18,7 +18,7 @@ all: $(EXAMPLES)
 	@for example in $(EXAMPLES); do \
 		echo ""; \
 		echo "=== Verifying $$example ==="; \
-		$(CRYPTOVERIF) $$example -o $(OUT_DIR)/$$(basename $$example .cv).out || true; \
+		$(CRYPTOVERIF) -o $(OUT_DIR)/$$(basename $$example .cv).out $$example || true; \
 	done
 	@echo ""
 	@echo "Verification complete. Results saved in $(OUT_DIR)/"
@@ -27,17 +27,17 @@ all: $(EXAMPLES)
 symmetric_enc:
 	@echo "Verifying symmetric encryption example..."
 	@mkdir -p $(OUT_DIR)
-	$(CRYPTOVERIF) examples/symmetric_enc.cv -o $(OUT_DIR)/symmetric_enc.out
+	$(CRYPTOVERIF) -o $(OUT_DIR)/symmetric_enc.out examples/symmetric_enc.cv
 
 diffie_hellman:
 	@echo "Verifying Diffie-Hellman key exchange example..."
 	@mkdir -p $(OUT_DIR)
-	$(CRYPTOVERIF) examples/diffie_hellman.cv -o $(OUT_DIR)/diffie_hellman.out
+	$(CRYPTOVERIF) -o $(OUT_DIR)/diffie_hellman.out examples/diffie_hellman.cv
 
 authenticated_enc:
 	@echo "Verifying authenticated encryption example..."
 	@mkdir -p $(OUT_DIR)
-	$(CRYPTOVERIF) examples/authenticated_enc.cv -o $(OUT_DIR)/authenticated_enc.out
+	$(CRYPTOVERIF) -o $(OUT_DIR)/authenticated_enc.out examples/authenticated_enc.cv
 
 # Clean generated files
 clean:

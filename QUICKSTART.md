@@ -4,10 +4,12 @@ This guide will help you get started with the CryptoVerif examples in minutes.
 
 ## Step 1: Install CryptoVerif
 
+**Note:** These examples require CryptoVerif version 2.11 or later.
+
 ### Linux/macOS
 
 1. Visit [https://cryptoverif.inria.fr/](https://cryptoverif.inria.fr/)
-2. Download the latest version
+2. Download version 2.11 or later
 3. Extract the archive:
    ```bash
    tar -xzf cryptoverif2.XX.tar.gz

@@ -23,13 +23,13 @@ equation forall x: exponent, y: exponent;
 (* DDH assumption: Decisional Diffie-Hellman *)
 param N.
 equiv(ddh(exp))
-      foreach i <= N do (
-        x <-R exponent; y <-R exponent;
-        (exp(g, x), exp(g, y), exp(g, mult(x, y))))
-    <=(0)=>
-      foreach i <= N do (
-        x <-R exponent; y <-R exponent; z <-R G;
-        (exp(g, x), exp(g, y), z)).
+  foreach i <= N do (
+    x <-R exponent; y <-R exponent;
+    (exp(g, x), exp(g, y), exp(g, mult(x, y))))
+<=(0)=>
+  foreach i <= N do (
+    x <-R exponent; y <-R exponent; z <-R G;
+    (exp(g, x), exp(g, y), z)).
 
 (* Helper function for exponent multiplication (abstract) *)
 fun mult(exponent, exponent): exponent.
