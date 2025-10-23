@@ -22,7 +22,7 @@ jobs:
     
     - name: Cache CryptoVerif installation
       id: cache-cryptoverif
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/cryptoverif
         key: cryptoverif-2.11-${{ runner.os }}
@@ -71,7 +71,7 @@ jobs:
     
     - name: Upload output artifacts
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: cryptoverif-outputs
         path: output/
