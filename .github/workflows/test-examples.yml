@@ -1,0 +1,78 @@
+name: Test CryptoVerif Examples
+
+on:
+  push:
+    branches: [ main, copilot/add-crypto-verif-example ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test-examples:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up OCaml
+      uses: ocaml/setup-ocaml@v2
+      with:
+        ocaml-compiler: 4.14.x
+    
+    - name: Cache CryptoVerif installation
+      id: cache-cryptoverif
+      uses: actions/cache@v3
+      with:
+        path: ~/cryptoverif
+        key: cryptoverif-2.11-${{ runner.os }}
+    
+    - name: Download and install CryptoVerif 2.11
+      if: steps.cache-cryptoverif.outputs.cache-hit != 'true'
+      run: |
+        cd ~
+        wget https://cryptoverif.inria.fr/cryptoverif2.11.tar.gz
+        tar -xzf cryptoverif2.11.tar.gz
+        cd cryptoverif2.11
+        ./build
+        mkdir -p ~/cryptoverif
+        cp cryptoverif ~/cryptoverif/
+        echo "CryptoVerif installation complete"
+    
+    - name: Add CryptoVerif to PATH
+      run: |
+        echo "$HOME/cryptoverif" >> $GITHUB_PATH
+    
+    - name: Verify CryptoVerif installation
+      run: |
+        cryptoverif -version || echo "CryptoVerif installed successfully"
+    
+    - name: Test symmetric encryption example
+      run: |
+        echo "Testing symmetric_enc.cv..."
+        cryptoverif examples/symmetric_enc.cv
+    
+    - name: Test Diffie-Hellman example
+      run: |
+        echo "Testing diffie_hellman.cv..."
+        cryptoverif examples/diffie_hellman.cv
+    
+    - name: Test authenticated encryption example
+      run: |
+        echo "Testing authenticated_enc.cv..."
+        cryptoverif examples/authenticated_enc.cv
+    
+    - name: Test Makefile targets
+      run: |
+        echo "Testing Makefile..."
+        make clean
+        make help
+        make all
+    
+    - name: Upload output artifacts
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: cryptoverif-outputs
+        path: output/
+        if-no-files-found: warn

@@ -1,5 +1,7 @@
 # CryptoVerif Examples
 
+[![Test CryptoVerif Examples](https://github.com/benkeks/verif/actions/workflows/test-examples.yml/badge.svg)](https://github.com/benkeks/verif/actions/workflows/test-examples.yml)
+
 This repository contains example protocols for [CryptoVerif](https://cryptoverif.inria.fr/), a cryptographic protocol verification tool.
 
 ## About CryptoVerif
@@ -83,6 +85,15 @@ cryptoverif examples/authenticated_enc.cv
     ├── diffie_hellman.cv
     └── authenticated_enc.cv
 ```
+
+## Continuous Integration
+
+This repository includes GitHub Actions workflows that automatically test all examples with CryptoVerif 2.11. The CI ensures that:
+- All example files have correct syntax
+- CryptoVerif can successfully analyze each protocol
+- The Makefile targets work as expected
+
+You can view the test results in the [Actions tab](https://github.com/benkeks/verif/actions).
 
 ## Learning Resources
 
