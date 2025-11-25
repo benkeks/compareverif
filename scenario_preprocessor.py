@@ -2,17 +2,30 @@ import re
 from pathlib import Path
 from itertools import product
 import subprocess
+import sys
 
-def preprocess_scenarios(input_file='hashed_passwords_singularized.pv', output_dir='_scenarios'):
+def preprocess_scenarios(input_file, output_dir=None):
     """
     Preprocessor that finds magical comments of the form:
     (*** <Some heading>
       <Some source> ***)
     and generates versions of the file with different source combinations.
     
+    Args:
+        input_file: Path to the input .pv file
+        output_dir: Output directory (defaults to _scenarios/<input_filename>)
+    
     Returns:
-        List[Path]: List of generated file paths
+        List[dict]: List of generated file info
     """
+    input_path = Path(input_file)
+    
+    # Default output directory based on input filename
+    if output_dir is None:
+        output_dir = Path('_scenarios') / input_path.stem
+    else:
+        output_dir = Path(output_dir)
+    
     # Read the input file
     with open(input_file, 'r') as f:
         content = f.read()
@@ -56,7 +69,7 @@ def preprocess_scenarios(input_file='hashed_passwords_singularized.pv', output_d
         })
     
     # Create output directory
-    Path(output_dir).mkdir(exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     # Collect all magical chunks for scenario generation
     magical_chunks = [chunk for chunk in chunks if chunk['type'] == 'magical']
@@ -122,44 +135,71 @@ def preprocess_scenarios(input_file='hashed_passwords_singularized.pv', output_d
     print(f"Total scenarios generated: {len(permutations)}")
     return generated_files
 
-# Generate all scenario files
-generated_files = preprocess_scenarios()
-
-# Run ProVerif on all generated files
-print("\n--- Running ProVerif on generated scenarios ---")
-for file in generated_files:
-    file_path = file['path']
-    print(f"\nVerifying: {file_path}")
-    try:
-        result = subprocess.run(
-            ['proverif', str(file_path)],
-            capture_output=True,
-            text=True,
-            timeout=300  # 5 minute timeout per file
-        )
-        
-        if result.returncode == 0:
-            # silent success
-            pass
-        else:
-            print(f"✗ Failed: {file_path.name}")
-            print(f"Error output:\n{result.stderr}")
-        
-        # Optionally print ProVerif output
-        if result.stdout:
-            result_list = (line for line in result.stdout.splitlines() if line.startswith("RESULT"))
-            result_presentations = []
-            for query, res in zip(file['queries'], result_list):
-                value = "✓" if res.endswith("true.") else "✗"
-                result_presentations.append(
-                    f'{query['tag']}: {value}'
-                )
-            print("\t".join(result_presentations))
+def run_proverif_on_files(generated_files):
+    """Run ProVerif on all generated files and display results."""
+    print("\n--- Running ProVerif on generated scenarios ---")
+    for file in generated_files:
+        file_path = file['path']
+        print(f"\nVerifying: {file_path}")
+        try:
+            result = subprocess.run(
+                ['proverif', str(file_path)],
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout per file
+            )
             
-    except subprocess.TimeoutExpired:
-        print(f"⏱ Timeout: {file_path.name} (exceeded 5 minutes)")
-    except FileNotFoundError:
-        print("Error: proverif command not found. Please ensure ProVerif is installed and in PATH.")
-        break
-    except Exception as e:
-        print(f"Error running proverif on {file_path.name}: {e}")
+            if result.returncode == 0:
+                # silent success
+                pass
+            else:
+                print(f"✗ Failed: {file_path.name}")
+                print(f"Error output:\n{result.stderr}")
+            
+            # Optionally print ProVerif output
+            if result.stdout:
+                result_list = (line for line in result.stdout.splitlines() if line.startswith("RESULT"))
+                result_presentations = []
+                for query, res in zip(file['queries'], result_list):
+                    value = "✓" if res.endswith("true.") else "✗"
+                    result_presentations.append(
+                        f'{query["tag"]}: {value}'
+                    )
+                print("\t".join(result_presentations))
+                
+        except subprocess.TimeoutExpired:
+            print(f"⏱ Timeout: {file_path.name} (exceeded 5 minutes)")
+        except FileNotFoundError:
+            print("Error: proverif command not found. Please ensure ProVerif is installed and in PATH.")
+            break
+        except Exception as e:
+            print(f"Error running proverif on {file_path.name}: {e}")
+
+def main():
+    """Main entry point supporting multiple input files."""
+    if len(sys.argv) < 2:
+        print("Usage: python scenario_preprocessor.py <input_file1.pv> [input_file2.pv ...]")
+        print("Example: python scenario_preprocessor.py hashed_passwords.pv singularized_passwords.pv")
+        sys.exit(1)
+    
+    input_files = sys.argv[1:]
+    all_generated_files = []
+    
+    for input_file in input_files:
+        if not Path(input_file).exists():
+            print(f"Error: File '{input_file}' not found")
+            continue
+        
+        print(f"\n{'='*60}")
+        print(f"Processing: {input_file}")
+        print('='*60)
+        
+        generated_files = preprocess_scenarios(input_file)
+        all_generated_files.extend(generated_files)
+    
+    # Run ProVerif on all generated files
+    if all_generated_files:
+        run_proverif_on_files(all_generated_files)
+
+if __name__ == '__main__':
+    main()
