@@ -1,24 +1,33 @@
-free c : channel .
+channel c .
 
-free Cocks : bitstring [ private ] .
-free RSA: bitstring [ private ] .
+free password: bitstring [ private ] .
 
-event evCocks .
-event evRSA .
+type uid .
+free user1: uid .
+free user2: uid .
 
-(*
-query attacker ( Cocks ) .
-query attacker ( RSA ) .
-*)
+event authentication_request(uid) .
+event authentication_success(uid) .
 
-query event(evCocks) ==> event(evRSA) .
+query user: uid; event(authentication_success(user)) ==> event(authentication_request(user)) .
+query attacker(password) .
+
+type key .
+fun senc(bitstring, key): bitstring .
+reduc forall m: bitstring, k: key; sdec(senc(m, k), k) = m .  
+
+let user(user: uid, session_key: key) = 
+    event authentication_request(user);
+    out( c, (user, senc(password, session_key)) ) .
+
+let server(session_key: key) = 
+    in( c, cypher_text: bitstring );
+    let (user: uid, x: bitstring) = sdec(cypher_text, session_key) in
+    if x = password then
+        event authentication_success(user)
+    else
+        0 .
 
 process
-    out( c, Cocks );
-    in( c, x: bitstring );
-    if x = RSA then
-        event evCocks;
-        event evRSA
-    else
-        event evRSA
-    
+    new key1: key;
+    user(user1, key1) | !server(key1)
