@@ -14,11 +14,11 @@ query attacker(password) .
 
 type key .
 fun senc(bitstring, key): bitstring .
-reduc forall m: bitstring, k: key; sdec(senc(m, k), k) = m .  
+reduc forall m: bitstring, k: key; sdec(senc(m, k), k) = m .
 
 let user(user: uid, session_key: key) = 
     event authentication_request(user);
-    out( c, (user, senc(password, session_key)) ) .
+    out( c, senc((user, password), session_key) ) .
 
 let server(session_key: key) = 
     in( c, cypher_text: bitstring );
