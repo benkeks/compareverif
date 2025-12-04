@@ -39,7 +39,7 @@ python3 scenario_preprocessor.py hashed_passwords.pv
 
 Process multiple files:
 ```bash
-python scenario_preprocessor.py hashed_passwords.pv singularized_passwords.pv
+python3 scenario_preprocessor.py hashed_passwords.pv singularized_passwords.pv
 ```
 
 ### How It Works

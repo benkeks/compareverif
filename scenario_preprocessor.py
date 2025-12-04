@@ -74,14 +74,14 @@ def preprocess_scenarios(input_file, output_dir=None):
     # Collect all magical chunks for scenario generation
     magical_chunks = [chunk for chunk in chunks if chunk['type'] == 'magical']
     
-    # Generate all permutations (2^n combinations for n magical chunks)
-    # Each permutation is a tuple of booleans indicating whether to include each magical chunk
+    # Generate all combinations (2^n combinations for n magical chunks)
+    # Each combinations is a tuple of booleans indicating whether to include each magical chunk
     num_scenarios = len(magical_chunks)
-    permutations = list(product([False, True], repeat=num_scenarios))
+    combinations = list(product([False, True], repeat=num_scenarios))
     
     generated_files = []
     
-    for perm in permutations:
+    for perm in combinations:
         output_content = ''
         
         # Build filename from included scenarios
@@ -90,7 +90,7 @@ def preprocess_scenarios(input_file, output_dir=None):
             if include:
                 included_names.append(magical_chunks[i]['heading'])
         
-        # Generate content based on permutation
+        # Generate content based on combinations
         for chunk in chunks:
             if chunk['type'] == 'base':
                 output_content += chunk['content']
@@ -132,7 +132,7 @@ def preprocess_scenarios(input_file, output_dir=None):
         })
         print(f"Generated: {output_path}")
     
-    print(f"Total scenarios generated: {len(permutations)}")
+    print(f"Total scenarios generated: {len(combinations)}")
     return generated_files
 
 def run_proverif_on_files(generated_files):
