@@ -4,6 +4,20 @@ from itertools import product
 import subprocess
 import sys
 
+# Some utility functions for pretty printing
+
+def print_headline(title, char='=', width=60):
+    border = char * width
+    print(f"\n{border}")
+    print(title)
+    print(border)
+
+def print_subheading(title, char='-', width=60):
+    print(title)
+    print(char * width)
+
+# Main preprocessor function
+
 def preprocess_scenarios(input_file, output_dir=None):
     """
     Preprocessor that finds magical comments of the form:
@@ -18,6 +32,8 @@ def preprocess_scenarios(input_file, output_dir=None):
     Returns:
         List[dict]: List of generated file info
     """
+    print_headline(f"Processing: {input_file}")
+
     input_path = Path(input_file)
     
     # Default output directory based on input filename
@@ -136,11 +152,31 @@ def preprocess_scenarios(input_file, output_dir=None):
     return generated_files
 
 def run_proverif_on_files(generated_files):
-    """Run ProVerif on all generated files and display results."""
-    print("\n--- Running ProVerif on generated scenarios ---")
+    """Run ProVerif on all generated files and return results.
+    
+    Returns:
+        List[dict]: List of results, one per file, containing:
+            - path: Path to the file
+            - included_scenarios: List of included scenario names
+            - status: 'success', 'error', 'timeout', or 'exception'
+            - query_results: List of dicts with 'tag', 'result' (True/False), and optionally 'error'
+            - error_message: Error message if status is not 'success'
+    """
+    print_headline("Running ProVerif on generated scenarios")
+    results = []
+    
     for file in generated_files:
         file_path = file['path']
-        print(f"\nVerifying: {file_path}")
+        print_subheading(f"\nVerifying: {file_path}")
+        
+        file_result = {
+            'path': file_path,
+            'included_scenarios': file['included_scenarios'],
+            'status': None,
+            'query_results': [],
+            'error_message': None
+        }
+        
         try:
             result = subprocess.run(
                 ['proverif', str(file_path)],
@@ -150,30 +186,129 @@ def run_proverif_on_files(generated_files):
             )
             
             if result.returncode == 0:
-                # silent success
-                pass
+                file_result['status'] = 'success'
             else:
+                file_result['status'] = 'error'
+                file_result['error_message'] = result.stderr
                 print(f"✗ Failed: {file_path.name}")
                 print(f"Error output:\n{result.stderr}")
             
-            # Optionally print ProVerif output
+            # Parse ProVerif output for query results
             if result.stdout:
-                result_list = (line for line in result.stdout.splitlines() if line.startswith("RESULT"))
-                result_presentations = []
-                for query, res in zip(file['queries'], result_list):
-                    value = "✓" if res.endswith("true.") else "✗"
-                    result_presentations.append(
-                        f'{query["tag"]}: {value}'
-                    )
-                print("\t".join(result_presentations))
+                result_lines = [line for line in result.stdout.splitlines() if line.startswith("RESULT")]
+                for query, res_line in zip(file['queries'], result_lines):
+                    query_passed = res_line.endswith("true.")
+                    file_result['query_results'].append({
+                        'tag': query["tag"],
+                        'result': query_passed
+                    })
+                    value = "✓" if query_passed else "✗"
+                    print(f"\t{query['tag']}: {value}")
+            else:
+                # No output but success - initialize empty query results
+                for query in file['queries']:
+                    file_result['query_results'].append({
+                        'tag': query["tag"],
+                        'result': None
+                    })
                 
         except subprocess.TimeoutExpired:
+            file_result['status'] = 'timeout'
+            file_result['error_message'] = 'Exceeded 5 minute timeout'
             print(f"⏱ Timeout: {file_path.name} (exceeded 5 minutes)")
         except FileNotFoundError:
+            file_result['status'] = 'exception'
+            file_result['error_message'] = 'ProVerif command not found. Please ensure ProVerif is installed and in PATH.'
             print("Error: proverif command not found. Please ensure ProVerif is installed and in PATH.")
+            results.append(file_result)
             break
         except Exception as e:
+            file_result['status'] = 'exception'
+            file_result['error_message'] = str(e)
             print(f"Error running proverif on {file_path.name}: {e}")
+        
+        results.append(file_result)
+    
+    return results
+
+def analyze_minimal_false_combinations(results, input_files):
+    """Analyze results to find minimal scenario combinations that make queries false.
+    
+    For each input file and query, finds all minimal sets of included scenarios
+    that result in a false query (where minimal means no other false-making 
+    combination is a strict subset).
+    
+    Args:
+        results: List of result dicts from run_proverif_on_files
+        input_files: List of original input file paths
+    
+    Returns:
+        Dict mapping input_file -> query_tag -> list of minimal scenario sets
+    """
+    # Group results by input file
+    analysis = {}
+    
+    for input_file in input_files:
+        input_stem = Path(input_file).stem
+        analysis[input_file] = {}
+        
+        # Find all results from this input file
+        file_results = [r for r in results if input_stem in str(r['path'])]
+        
+        if not file_results:
+            continue
+        
+        # Get query tags from first result
+        query_tags = [q['tag'] for q in file_results[0]['query_results']]
+        
+        # For each query, find false combinations
+        for query_idx, query_tag in enumerate(query_tags):
+            false_combinations = []
+            
+            for result in file_results:
+                if query_idx < len(result['query_results']):
+                    query_result = result['query_results'][query_idx]
+                    # Collect false results
+                    if query_result['result'] is False:
+                        false_combinations.append(set(result['included_scenarios']))
+            
+            # Find minimal combinations (no subset relationships)
+            minimal_combinations = []
+            for combo in false_combinations:
+                is_minimal = True
+                for other_combo in false_combinations:
+                    if other_combo < combo:  # other_combo is strict subset
+                        is_minimal = False
+                        break
+                if is_minimal:
+                    minimal_combinations.append(combo)
+            
+            # Remove duplicates
+            minimal_combinations = list({frozenset(c): c for c in minimal_combinations}.values())
+            
+            analysis[input_file][query_tag] = minimal_combinations
+    
+    return analysis
+
+def print_analysis(analysis):
+    """Pretty print the minimal breaking combinations analysis."""
+    print_headline("Minimal combinations to break queries")
+    
+    for input_file, queries in analysis.items():
+        print_subheading(f"\nInput File: {input_file}")
+        
+        for query_tag, minimal_combos in queries.items():
+            print(f"  Query: {query_tag}")
+            
+            if not minimal_combos:
+                print(f"    (No false results found)")
+            else:
+                for i, combo in enumerate(minimal_combos, 1):
+                    if combo:
+                        scenario_str = ", ".join(sorted(combo))
+                        print(f"      {{{scenario_str}}}")
+                    else:
+                        print(f"      {{}} (base scenario)")
 
 def main():
     """Main entry point supporting multiple input files."""
@@ -189,17 +324,14 @@ def main():
         if not Path(input_file).exists():
             print(f"Error: File '{input_file}' not found")
             continue
-        
-        print(f"\n{'='*60}")
-        print(f"Processing: {input_file}")
-        print('='*60)
-        
         generated_files = preprocess_scenarios(input_file)
         all_generated_files.extend(generated_files)
     
-    # Run ProVerif on all generated files
+    # Run ProVerif on all generated files and collect results
     if all_generated_files:
-        run_proverif_on_files(all_generated_files)
+        results = run_proverif_on_files(all_generated_files)
+        analysis = analyze_minimal_false_combinations(results, input_files)
+        print_analysis(analysis)
 
 if __name__ == '__main__':
     main()
