@@ -184,6 +184,7 @@ def run_proverif_on_files(generated_files):
         List[dict]: List of results, one per file, containing:
             - path: Path to the file
             - included_scenarios: List of included scenario names
+            - costs: Cost dictionary
             - status: 'success', 'error', 'timeout', or 'exception'
             - query_results: List of dicts with 'tag', 'result' (True/False), and optionally 'error'
             - error_message: Error message if status is not 'success'
@@ -198,6 +199,7 @@ def run_proverif_on_files(generated_files):
         file_result = {
             'path': file_path,
             'included_scenarios': file['included_scenarios'],
+            'costs': file.get('costs', {}),
             'status': None,
             'query_results': [],
             'error_message': None
@@ -262,14 +264,14 @@ def analyze_minimal_false_combinations(results, input_files):
     
     For each input file and query, finds all minimal sets of included scenarios
     that result in a false query (where minimal means no other false-making 
-    combination is a strict subset).
+    combination has pointwise lower or equal costs in all dimensions).
     
     Args:
         results: List of result dicts from run_proverif_on_files
         input_files: List of original input file paths
     
     Returns:
-        Dict mapping input_file -> query_tag -> list of minimal scenario sets
+        Dict mapping input_file -> query_tag -> list of dicts with 'scenarios' and 'costs'
     """
     # Group results by input file
     analysis = {}
@@ -294,23 +296,47 @@ def analyze_minimal_false_combinations(results, input_files):
             for result in file_results:
                 if query_idx < len(result['query_results']):
                     query_result = result['query_results'][query_idx]
-                    # Collect false results
+                    # Collect false results with their costs
                     if query_result['result'] is False:
-                        false_combinations.append(set(result['included_scenarios']))
+                        false_combinations.append({
+                            'scenarios': set(result['included_scenarios']),
+                            'costs': result.get('costs', {})
+                        })
             
-            # Find minimal combinations (no subset relationships)
+            # Find minimal combinations using pointwise cost comparison
+            # A combination is minimal if no other combination has costs
+            # pointwise <= in all dimensions AND strictly < in at least one
             minimal_combinations = []
             for combo in false_combinations:
                 is_minimal = True
                 for other_combo in false_combinations:
-                    if other_combo < combo:  # other_combo is strict subset
+                    if combo == other_combo:
+                        continue
+                    
+                    # Check if other_combo dominates combo (costs pointwise <=)
+                    all_dims = set(combo['costs'].keys()) | set(other_combo['costs'].keys())
+                    dominates = True
+                    strictly_less = False
+                    
+                    for dim in all_dims:
+                        combo_val = combo['costs'].get(dim, 0)
+                        other_val = other_combo['costs'].get(dim, 0)
+                        
+                        if other_val > combo_val:
+                            # other is worse in this dimension
+                            dominates = False
+                            break
+                        elif other_val < combo_val:
+                            # other is strictly better in this dimension
+                            strictly_less = True
+                    
+                    if dominates and strictly_less:
+                        # other_combo dominates combo
                         is_minimal = False
                         break
+                
                 if is_minimal:
                     minimal_combinations.append(combo)
-            
-            # Remove duplicates
-            minimal_combinations = list({frozenset(c): c for c in minimal_combinations}.values())
             
             analysis[input_file][query_tag] = minimal_combinations
     
@@ -330,11 +356,15 @@ def print_analysis(analysis):
                 print(f"    (No false results found)")
             else:
                 for i, combo in enumerate(minimal_combos, 1):
-                    if combo:
-                        scenario_str = ", ".join(sorted(combo))
-                        print(f"      {{{scenario_str}}}")
+                    scenarios = combo['scenarios']
+                    costs = combo['costs']
+                    
+                    if scenarios:
+                        scenario_str = ", ".join(sorted(scenarios))
+                        cost_str = ", ".join(f"{v} {k}" for k, v in sorted(costs.items())) if costs else "no cost"
+                        print(f"      {{{scenario_str}}} (cost: {cost_str})")
                     else:
-                        print(f"      {{}} (base scenario)")
+                        print(f"      {{}} (base scenario, no cost)")
 
 def main():
     """Main entry point supporting multiple input files."""
