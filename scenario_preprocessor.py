@@ -21,7 +21,7 @@ def print_subheading(title, char='-', width=60):
 def preprocess_scenarios(input_file, output_dir=None):
     """
     Preprocessor that finds magical comments of the form:
-    (*** <Some heading>
+    (*** <Some heading> [<quantity> <cost dimension>]
       <Some source> ***)
     and generates versions of the file with different source combinations.
     
@@ -30,7 +30,7 @@ def preprocess_scenarios(input_file, output_dir=None):
         output_dir: Output directory (defaults to _scenarios/<input_filename>)
     
     Returns:
-        List[dict]: List of generated file info
+        List[dict]: List of generated file info (including costs per scenario)
     """
     print_headline(f"Processing: {input_file}")
 
@@ -68,10 +68,30 @@ def preprocess_scenarios(input_file, output_dir=None):
                 'content': content[last_pos:match.start()]
             })
         
+        # Parse heading and costs from the header
+        header = match.group(1).strip()
+        
+        # Pattern to extract costs: [<quantity> <dimension>]
+        cost_pattern = r'\[([0-9]+(?:\.[0-9]+)?)\s+(\w+)\]'
+        cost_matches = re.findall(cost_pattern, header)
+        
+        # Build costs dictionary
+        costs = {}
+        for quantity, dimension in cost_matches:
+            # Convert to int if possible, else float
+            try:
+                costs[dimension] = int(quantity)
+            except ValueError:
+                costs[dimension] = float(quantity)
+        
+        # Remove cost annotations from heading to get clean name
+        clean_heading = re.sub(r'\s*\[[0-9]+(?:\.[0-9]+)?\s+\w+\]', '', header).strip()
+        
         # Add the magical comment as a chunk
         chunks.append({
             'type': 'magical',
-            'heading': match.group(1).strip(),
+            'heading': clean_heading,
+            'costs': costs,
             'content': match.group(2).strip()
         })
         
@@ -100,11 +120,15 @@ def preprocess_scenarios(input_file, output_dir=None):
     for perm in combinations:
         output_content = ''
         
-        # Build filename from included scenarios
+        # Build filename from included scenarios and track costs
         included_names = []
+        total_costs = {}
         for i, include in enumerate(perm):
             if include:
                 included_names.append(magical_chunks[i]['heading'])
+                # Accumulate costs from this scenario
+                for cost_dim, cost_val in magical_chunks[i]['costs'].items():
+                    total_costs[cost_dim] = total_costs.get(cost_dim, 0) + cost_val
         
         # Generate content based on combinations
         for chunk in chunks:
@@ -144,9 +168,11 @@ def preprocess_scenarios(input_file, output_dir=None):
         generated_files.append({
             'path': output_path,
             'included_scenarios': included_names,
+            'costs': total_costs,
             'queries': queries_with_tags
         })
-        print(f"Generated: {output_path}")
+        cost_str = ', '.join(f"{v} {k}" for k, v in total_costs.items()) if total_costs else "no cost"
+        print(f"Generated: {output_path} (cost: {cost_str})")
     
     print(f"Total scenarios generated: {len(combinations)}")
     return generated_files
