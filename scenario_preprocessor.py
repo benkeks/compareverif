@@ -109,6 +109,32 @@ def preprocess_scenarios(input_file, output_dir=None):
     
     # Collect all magical chunks for scenario generation
     magical_chunks = [chunk for chunk in chunks if chunk['type'] == 'magical']
+
+    # Collect all unique cost dimensions from magical chunks
+    all_dimensions = set()
+    for chunk in magical_chunks:
+        all_dimensions.update(chunk['costs'].keys())
+    all_dimensions = sorted(all_dimensions)
+    
+    # Create a table showing chunks by cost dimension
+    if all_dimensions:
+        print_subheading("Attacker capabilities with costs", width=60)
+        
+        # Header row with chunk names
+        header = "Capability".ljust(37)
+        for cost_dim in all_dimensions:
+            header += cost_dim[:11].rjust(13)
+        print(header)
+        print('-' * (37 + len(all_dimensions) * 13))
+        
+        # One column per dimension showing costs
+        for chunk in magical_chunks:
+            row = chunk['heading'][:36].ljust(37)
+            for dimension in all_dimensions:
+                cost = chunk['costs'].get(dimension, '-')
+                row += str(cost).rjust(13)
+            print(row)
+        print()
     
     # Generate all combinations (2^n combinations for n magical chunks)
     # Each combinations is a tuple of booleans indicating whether to include each magical chunk
