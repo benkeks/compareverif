@@ -20,7 +20,7 @@ def print_subheading(title, char='-', width=60):
 
 def preprocess_scenarios(input_file, output_dir=None):
     """
-    Preprocessor that finds magical comments of the form:
+    Preprocessor that finds magical comments of the form, which represent attacker capabilities:
     (*** <Some heading> [<quantity> <cost dimension>]
       <Some source> ***)
     and generates versions of the file with different source combinations.
@@ -49,14 +49,14 @@ def preprocess_scenarios(input_file, output_dir=None):
     # Pattern to match magical comments
     pattern = r'\(\*\*\*\s*(.*?)\s*\n(.*?)\*\*\*\)'
     
-    # Find all magical comment blocks
+    # Find all attacker capability chuns
     matches = list(re.finditer(pattern, content, re.DOTALL))
     
     if not matches:
-        print("No magical comments found")
+        print("No magical comments for attacker capabilities found")
         return []
     
-    # Build a sequence of chunks (base content or magical comments)
+    # Build a sequence of chunks for attacker capabilities (base content or magical comments)
     chunks = []
     last_pos = 0
     
@@ -87,9 +87,9 @@ def preprocess_scenarios(input_file, output_dir=None):
         # Remove cost annotations from heading to get clean name
         clean_heading = re.sub(r'\s*\[[0-9]+(?:\.[0-9]+)?\s+\w+\]', '', header).strip()
         
-        # Add the magical comment as a chunk
+        # Add the magical comment as attacker capability chunk
         chunks.append({
-            'type': 'magical',
+            'type': 'attacker_capability',
             'heading': clean_heading,
             'costs': costs,
             'content': match.group(2).strip()
@@ -107,16 +107,16 @@ def preprocess_scenarios(input_file, output_dir=None):
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Collect all magical chunks for scenario generation
-    magical_chunks = [chunk for chunk in chunks if chunk['type'] == 'magical']
+    # Collect all attacker chunks for scenario generation
+    attacker_chunks = [chunk for chunk in chunks if chunk['type'] == 'attacker_capability']
 
-    # Collect all unique cost dimensions from magical chunks
+    # Collect all unique cost dimensions from attacker capabilities
     all_dimensions = set()
-    for chunk in magical_chunks:
+    for chunk in attacker_chunks:
         all_dimensions.update(chunk['costs'].keys())
     all_dimensions = sorted(all_dimensions)
     
-    # Create a table showing chunks by cost dimension
+    # Create a table showing capabilities and their costs dimension
     if all_dimensions:
         print_subheading("Attacker capabilities with costs", width=60)
         
@@ -128,7 +128,7 @@ def preprocess_scenarios(input_file, output_dir=None):
         print('-' * (37 + len(all_dimensions) * 13))
         
         # One column per dimension showing costs
-        for chunk in magical_chunks:
+        for chunk in attacker_chunks:
             row = chunk['heading'][:36].ljust(37)
             for dimension in all_dimensions:
                 cost = chunk['costs'].get(dimension, '-')
@@ -136,10 +136,10 @@ def preprocess_scenarios(input_file, output_dir=None):
             print(row)
         print()
     
-    # Generate all combinations (2^n combinations for n magical chunks)
-    # Each combinations is a tuple of booleans indicating whether to include each magical chunk
-    num_scenarios = len(magical_chunks)
-    combinations = list(product([False, True], repeat=num_scenarios))
+    # Generate all combinations (2^n combinations for n capabilities)
+    # Each combinations is a tuple of booleans indicating whether to include each attacker capability
+    num_capabilities = len(attacker_chunks)
+    combinations = list(product([False, True], repeat=num_capabilities))
     
     generated_files = []
     
@@ -151,18 +151,18 @@ def preprocess_scenarios(input_file, output_dir=None):
         total_costs = {}
         for i, include in enumerate(perm):
             if include:
-                included_names.append(magical_chunks[i]['heading'])
+                included_names.append(attacker_chunks[i]['heading'])
                 # Accumulate costs from this scenario
-                for cost_dim, cost_val in magical_chunks[i]['costs'].items():
+                for cost_dim, cost_val in attacker_chunks[i]['costs'].items():
                     total_costs[cost_dim] = total_costs.get(cost_dim, 0) + cost_val
         
         # Generate content based on combinations
         for chunk in chunks:
             if chunk['type'] == 'base':
                 output_content += chunk['content']
-            elif chunk['type'] == 'magical':
-                # Find index of this magical chunk
-                idx = magical_chunks.index(chunk)
+            elif chunk['type'] == 'attacker_capability':
+                # Find index of this attacker chunk
+                idx = attacker_chunks.index(chunk)
                 if perm[idx]:
                     output_content += chunk['content']
                 else:
