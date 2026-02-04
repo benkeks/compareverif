@@ -60,6 +60,24 @@ def preprocess_scenarios(input_file, output_dir=None):
     chunks = []
     last_pos = 0
     
+    def parse_costs(header_part):
+        costs = {}
+        bracket_contents = re.findall(r'\[([^\]]+)\]', header_part)
+        for content in bracket_contents:
+            for item in content.split(','):
+                item = item.strip()
+                if not item:
+                    continue
+                m = re.match(r'([0-9]+(?:\.[0-9]+)?)\s+(\w+)', item)
+                if not m:
+                    continue
+                quantity, dimension = m.groups()
+                try:
+                    costs[dimension] = int(quantity)
+                except ValueError:
+                    costs[dimension] = float(quantity)
+        return costs
+
     for match in matches:
         # Add base content before this match
         if match.start() > last_pos:
@@ -68,30 +86,24 @@ def preprocess_scenarios(input_file, output_dir=None):
                 'content': content[last_pos:match.start()]
             })
         
-        # Parse heading and costs from the header
+        # Parse heading and costs from the header (supporting aliases)
         header = match.group(1).strip()
-        
-        # Pattern to extract costs: [<quantity> <dimension>]
-        cost_pattern = r'\[([0-9]+(?:\.[0-9]+)?)\s+(\w+)\]'
-        cost_matches = re.findall(cost_pattern, header)
-        
-        # Build costs dictionary
-        costs = {}
-        for quantity, dimension in cost_matches:
-            # Convert to int if possible, else float
-            try:
-                costs[dimension] = int(quantity)
-            except ValueError:
-                costs[dimension] = float(quantity)
-        
-        # Remove cost annotations from heading to get clean name
-        clean_heading = re.sub(r'\s*\[[0-9]+(?:\.[0-9]+)?\s+\w+\]', '', header).strip()
-        
+        header_parts = [part.strip() for part in header.split('/') if part.strip()]
+
+        variants = []
+        for part in header_parts:
+            costs = parse_costs(part)
+            clean_name = re.sub(r'\s*\[[^\]]+\]', '', part).strip()
+            variants.append({
+                'name': clean_name,
+                'costs': costs
+            })
+
         # Add the magical comment as attacker capability chunk
         chunks.append({
             'type': 'attacker_capability',
-            'heading': clean_heading,
-            'costs': costs,
+            'heading': variants[0]['name'],
+            'variants': variants,
             'content': match.group(2).strip()
         })
         
@@ -113,7 +125,8 @@ def preprocess_scenarios(input_file, output_dir=None):
     # Collect all unique cost dimensions from attacker capabilities
     all_dimensions = set()
     for chunk in attacker_chunks:
-        all_dimensions.update(chunk['costs'].keys())
+        for variant in chunk['variants']:
+            all_dimensions.update(variant['costs'].keys())
     all_dimensions = sorted(all_dimensions)
     
     # Create a table showing capabilities and their costs dimension
@@ -129,17 +142,20 @@ def preprocess_scenarios(input_file, output_dir=None):
         
         # One column per dimension showing costs
         for chunk in attacker_chunks:
-            row = chunk['heading'][:36].ljust(37)
-            for dimension in all_dimensions:
-                cost = chunk['costs'].get(dimension, '-')
-                row += str(cost).rjust(13)
-            print(row)
+            for idx, variant in enumerate(chunk['variants']):
+                label = chunk['heading'] if idx == 0 else f"  - {variant['name']}"
+                row = label[:36].ljust(37)
+                for dimension in all_dimensions:
+                    cost = variant['costs'].get(dimension, '-')
+                    row += str(cost).rjust(13)
+                print(row)
         print()
     
-    # Generate all combinations (2^n combinations for n capabilities)
-    # Each combinations is a tuple of booleans indicating whether to include each attacker capability
+    # Generate all combinations with variant choices per capability
+    # Each combination is a tuple of integers indicating which variant to include (0 = exclude)
     num_capabilities = len(attacker_chunks)
-    combinations = list(product([False, True], repeat=num_capabilities))
+    choices_per_capability = [list(range(len(chunk['variants']) + 1)) for chunk in attacker_chunks]
+    combinations = list(product(*choices_per_capability))
     
     generated_files = []
     
@@ -148,12 +164,20 @@ def preprocess_scenarios(input_file, output_dir=None):
         
         # Build filename from included scenarios and track costs
         included_names = []
+        included_scenarios = []
         total_costs = {}
-        for i, include in enumerate(perm):
-            if include:
-                included_names.append(attacker_chunks[i]['heading'])
-                # Accumulate costs from this scenario
-                for cost_dim, cost_val in attacker_chunks[i]['costs'].items():
+        for i, choice in enumerate(perm):
+            if choice > 0:
+                variant = attacker_chunks[i]['variants'][choice - 1]
+                scenario = {
+                    'primary': attacker_chunks[i]['heading'],
+                    'variant': variant['name'],
+                    'costs': variant['costs']
+                }
+                included_scenarios.append(scenario)
+                included_names.append(scenario['primary'])
+                # Accumulate costs from this scenario variant
+                for cost_dim, cost_val in scenario['costs'].items():
                     total_costs[cost_dim] = total_costs.get(cost_dim, 0) + cost_val
         
         # Generate content based on combinations
@@ -163,7 +187,7 @@ def preprocess_scenarios(input_file, output_dir=None):
             elif chunk['type'] == 'attacker_capability':
                 # Find index of this attacker chunk
                 idx = attacker_chunks.index(chunk)
-                if perm[idx]:
+                if perm[idx] > 0:
                     output_content += chunk['content']
                 else:
                     output_content += f'(* No {chunk["heading"]}*)'  # Exclude this chunk
@@ -193,7 +217,7 @@ def preprocess_scenarios(input_file, output_dir=None):
         
         generated_files.append({
             'path': output_path,
-            'included_scenarios': included_names,
+            'included_scenarios': included_scenarios,
             'costs': total_costs,
             'queries': queries_with_tags
         })
@@ -324,8 +348,9 @@ def analyze_minimal_false_combinations(results, input_files):
                     query_result = result['query_results'][query_idx]
                     # Collect false results with their costs
                     if query_result['result'] is False:
+                        scenario_variants = [s['variant'] for s in result['included_scenarios']]
                         false_combinations.append({
-                            'scenarios': set(result['included_scenarios']),
+                            'scenarios': set(scenario_variants),
                             'costs': result.get('costs', {})
                         })
             
