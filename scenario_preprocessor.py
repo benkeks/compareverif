@@ -3,22 +3,219 @@ from pathlib import Path
 from itertools import product
 import subprocess
 import sys
+from dataclasses import dataclass
+from typing import List, Dict, Tuple, Set, Optional, Any
 
-# Some utility functions for pretty printing
+DEFAULT_TABLE_WIDTH = 60
+DEFAULT_LABEL_WIDTH = 37
+DEFAULT_COST_COLUMN_WIDTH = 13
+DEFAULT_PROVERIF_TIMEOUT = 300  # 5 minutes
 
-def print_headline(title, char='=', width=60):
+@dataclass
+class AttackVariant:
+    """Represents a cost variant of an attacker capability."""
+    name: str
+    costs: Dict[str, float]
+
+@dataclass
+class AttackerCapability:
+    """Represents an attacker capability with multiple cost variants."""
+    primary_name: str
+    variants: List[AttackVariant]
+    content: str
+
+@dataclass
+class GeneratedScenario:
+    """Result of generating a scenario file."""
+    path: Path
+    included_scenarios: List[AttackVariant]
+    costs: Dict[str, float]
+    queries: List[Dict[str, str]]
+
+# Utility functions for pretty printing
+
+def print_headline(title: str, char: str = '=', width: int = DEFAULT_TABLE_WIDTH) -> None:
     border = char * width
     print(f"\n{border}")
     print(title)
     print(border)
 
-def print_subheading(title, char='-', width=60):
+def print_subheading(title: str, char: str = '-', width: int = DEFAULT_TABLE_WIDTH) -> None:
     print(title)
     print(char * width)
 
+# Parsing functions
+
+def parse_costs(header_part: str) -> Dict[str, float]:
+    """Extract costs from a header part like '[100 time, 10 obstime]'."""
+    costs: Dict[str, float] = {}
+    bracket_contents = re.findall(r'\[([^\]]+)\]', header_part)
+    for content in bracket_contents:
+        for item in content.split(','):
+            item = item.strip()
+            if not item:
+                continue
+            m = re.match(r'([0-9]+(?:\.[0-9]+)?)\s+(\w+)', item)
+            if not m:
+                continue
+            quantity, dimension = m.groups()
+            try:
+                costs[dimension] = int(quantity)
+            except ValueError:
+                costs[dimension] = float(quantity)
+    return costs
+
+def parse_magical_comment(header: str) -> List[AttackVariant]:
+    """Parse a magical comment header into variants.
+    
+    Supports syntax like 'Rainbow table attack [100 time] / Side-channel attack [10 time]'
+    """
+    variants: List[AttackVariant] = []
+    header_parts = [part.strip() for part in header.split('/') if part.strip()]
+    
+    for part in header_parts:
+        costs = parse_costs(part)
+        clean_name = re.sub(r'\s*\[[^\]]+\]', '', part).strip()
+        variants.append(AttackVariant(name=clean_name, costs=costs))
+    
+    return variants
+
+def extract_attacker_capabilities(content: str) -> Tuple[List[AttackerCapability], List[Optional[str]]]:
+    """Extract all attacker capabilities and base content chunks from file.
+    
+    Returns:
+        (attacker_capabilities, content_chunks)
+    """
+    pattern = r'\(\*\*\*\s*(.*?)\s*\n(.*?)\*\*\*\)'
+    matches = list(re.finditer(pattern, content, re.DOTALL))
+    
+    if not matches:
+        return [], [content]
+    
+    capabilities: List[AttackerCapability] = []
+    content_chunks: List[Optional[str]] = []
+    last_pos = 0
+    
+    for match in matches:
+        # Add base content before this match
+        if match.start() > last_pos:
+            content_chunks.append(content[last_pos:match.start()])
+        
+        # Parse capability
+        header = match.group(1).strip()
+        variants = parse_magical_comment(header)
+        
+        if variants:
+            capability = AttackerCapability(
+                primary_name=variants[0].name,
+                variants=variants,
+                content=match.group(2).strip()
+            )
+            capabilities.append(capability)
+            content_chunks.append(None)  # Placeholder for this capability
+        
+        last_pos = match.end()
+    
+    # Add remaining base content after last match
+    if last_pos < len(content):
+        content_chunks.append(content[last_pos:])
+    
+    return capabilities, content_chunks
+
+def print_capabilities_table(capabilities: List[AttackerCapability]) -> None:
+    """Print a formatted table of capabilities and their costs."""
+    # Collect all unique cost dimensions
+    all_dimensions: Set[str] = set()
+    for cap in capabilities:
+        for variant in cap.variants:
+            all_dimensions.update(variant.costs.keys())
+    all_dimensions = sorted(all_dimensions)
+    
+    if not all_dimensions:
+        return
+    
+    print_subheading("Attacker capabilities with costs", width=DEFAULT_TABLE_WIDTH)
+    
+    # Header row
+    header = "Capability".ljust(DEFAULT_LABEL_WIDTH)
+    for cost_dim in all_dimensions:
+        header += cost_dim[:11].rjust(DEFAULT_COST_COLUMN_WIDTH)
+    print(header)
+    print('-' * (DEFAULT_LABEL_WIDTH + len(all_dimensions) * DEFAULT_COST_COLUMN_WIDTH))
+    
+    # Data rows
+    for cap in capabilities:
+        for idx, variant in enumerate(cap.variants):
+            label = cap.primary_name if idx == 0 else f"  - {variant.name}"
+            row = label[:DEFAULT_LABEL_WIDTH - 1].ljust(DEFAULT_LABEL_WIDTH)
+            for dimension in all_dimensions:
+                cost = variant.costs.get(dimension, '-')
+                row += str(cost).rjust(DEFAULT_COST_COLUMN_WIDTH)
+            print(row)
+    print()
+
+def generate_scenario_combinations(capabilities: List[AttackerCapability]) -> List[Tuple[int, ...]]:
+    """Generate all possible combinations of capability variants.
+    
+    Returns list of tuples where each element is an index (0 = exclude, 1+ = variant index).
+    """
+    choices_per_capability = [list(range(len(cap.variants) + 1)) for cap in capabilities]
+    return list(product(*choices_per_capability))
+
+def build_scenario_content(
+    combination: Tuple[int, ...],
+    capabilities: List[AttackerCapability],
+    content_chunks: List[Optional[str]]
+) -> Tuple[str, List[AttackVariant], Dict[str, float]]:
+    """Build output content for a scenario combination.
+    
+    Returns:
+        (output_content, included_scenarios, total_costs)
+    """
+    output_content = ''
+    included_scenarios: List[AttackVariant] = []
+    total_costs: Dict[str, float] = {}
+    
+    # Build content by processing capabilities and their content chunks
+    chunk_idx = 0
+    for i, cap in enumerate(capabilities):
+        choice = combination[i]
+        if choice > 0:
+            variant = cap.variants[choice - 1]
+            included_scenarios.append(variant)
+            output_content += variant.content
+            
+            # Accumulate costs
+            for cost_dim, cost_val in variant.costs.items():
+                total_costs[cost_dim] = total_costs.get(cost_dim, 0) + cost_val
+        else:
+            output_content += f'(* No {cap.primary_name}*)'
+    
+    # Add base content chunks
+    for chunk in content_chunks:
+        if chunk is not None:
+            output_content += chunk
+    
+    return output_content, included_scenarios, total_costs
+
+def extract_queries(content: str) -> List[Dict[str, str]]:
+    """Extract query statements and their tags from content."""
+    query_pattern = r'(?:\(\*\s*([^*)]+?)\s*\*\)\s*)?query\s+.*?(?=\n|$)'
+    query_matches = re.finditer(query_pattern, content, re.MULTILINE)
+    queries: List[Dict[str, str]] = []
+    
+    for match in query_matches:
+        tag = match.group(1).strip() if match.group(1) else "query"
+        queries.append({
+            'tag': tag,
+            'query': match.group(0)
+        })
+    
+    return queries
+
 # Main preprocessor function
 
-def preprocess_scenarios(input_file, output_dir=None):
+def preprocess_scenarios(input_file: str, output_dir: Optional[str] = None) -> List[GeneratedScenario]:
     """
     Preprocessor that finds magical comments of the form, which represent attacker capabilities:
     (*** <Some heading> [<quantity> <cost dimension>]
@@ -215,25 +412,25 @@ def preprocess_scenarios(input_file, output_dir=None):
         with open(output_path, 'w') as f:
             f.write(output_content)
         
-        generated_files.append({
-            'path': output_path,
-            'included_scenarios': included_scenarios,
-            'costs': total_costs,
-            'queries': queries_with_tags
-        })
+        generated_files.append(GeneratedScenario(
+            path=output_path,
+            included_scenarios=[AttackVariant(name=s['variant'], costs=s['costs']) for s in included_scenarios],
+            costs=total_costs,
+            queries=queries_with_tags
+        ))
         cost_str = ', '.join(f"{v} {k}" for k, v in total_costs.items()) if total_costs else "no cost"
         print(f"Generated: {output_path} (cost: {cost_str})")
     
     print(f"Total scenarios generated: {len(combinations)}")
     return generated_files
 
-def run_proverif_on_files(generated_files):
+def run_proverif_on_files(generated_files: List[GeneratedScenario]) -> List[Dict[str, Any]]:
     """Run ProVerif on all generated files and return results.
     
     Returns:
         List[dict]: List of results, one per file, containing:
             - path: Path to the file
-            - included_scenarios: List of included scenario names
+            - included_scenarios: List of included scenario objects
             - costs: Cost dictionary
             - status: 'success', 'error', 'timeout', or 'exception'
             - query_results: List of dicts with 'tag', 'result' (True/False), and optionally 'error'
@@ -243,13 +440,12 @@ def run_proverif_on_files(generated_files):
     results = []
     
     for file in generated_files:
-        file_path = file['path']
-        print_subheading(f"\nVerifying: {file_path}")
+        print_subheading(f"\nVerifying: {file.path}")
         
         file_result = {
-            'path': file_path,
-            'included_scenarios': file['included_scenarios'],
-            'costs': file.get('costs', {}),
+            'path': file.path,
+            'included_scenarios': file.included_scenarios,
+            'costs': file.costs,
             'status': None,
             'query_results': [],
             'error_message': None
@@ -257,10 +453,10 @@ def run_proverif_on_files(generated_files):
         
         try:
             result = subprocess.run(
-                ['proverif', str(file_path)],
+                ['proverif', str(file.path)],
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minute timeout per file
+                timeout=DEFAULT_PROVERIF_TIMEOUT
             )
             
             if result.returncode == 0:
@@ -268,13 +464,13 @@ def run_proverif_on_files(generated_files):
             else:
                 file_result['status'] = 'error'
                 file_result['error_message'] = result.stderr
-                print(f"✗ Failed: {file_path.name}")
+                print(f"✗ Failed: {file.path.name}")
                 print(f"Error output:\n{result.stderr}")
             
             # Parse ProVerif output for query results
             if result.stdout:
                 result_lines = [line for line in result.stdout.splitlines() if line.startswith("RESULT")]
-                for query, res_line in zip(file['queries'], result_lines):
+                for query, res_line in zip(file.queries, result_lines):
                     query_passed = res_line.endswith("true.")
                     file_result['query_results'].append({
                         'tag': query["tag"],
@@ -284,7 +480,7 @@ def run_proverif_on_files(generated_files):
                     print(f"\t{query['tag']}: {value}")
             else:
                 # No output but success - initialize empty query results
-                for query in file['queries']:
+                for query in file.queries:
                     file_result['query_results'].append({
                         'tag': query["tag"],
                         'result': None
@@ -293,7 +489,7 @@ def run_proverif_on_files(generated_files):
         except subprocess.TimeoutExpired:
             file_result['status'] = 'timeout'
             file_result['error_message'] = 'Exceeded 5 minute timeout'
-            print(f"⏱ Timeout: {file_path.name} (exceeded 5 minutes)")
+            print(f"⏱ Timeout: {file.path.name} (exceeded 5 minutes)")
         except FileNotFoundError:
             file_result['status'] = 'exception'
             file_result['error_message'] = 'ProVerif command not found. Please ensure ProVerif is installed and in PATH.'
@@ -303,13 +499,16 @@ def run_proverif_on_files(generated_files):
         except Exception as e:
             file_result['status'] = 'exception'
             file_result['error_message'] = str(e)
-            print(f"Error running proverif on {file_path.name}: {e}")
+            print(f"Error running proverif on {file.path.name}: {e}")
         
         results.append(file_result)
     
     return results
 
-def analyze_minimal_false_combinations(results, input_files):
+def analyze_minimal_false_combinations(
+    results: List[Dict[str, Any]],
+    input_files: List[str]
+) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
     """Analyze results to find minimal scenario combinations that make queries false.
     
     For each input file and query, finds all minimal sets of included scenarios
@@ -348,9 +547,9 @@ def analyze_minimal_false_combinations(results, input_files):
                     query_result = result['query_results'][query_idx]
                     # Collect false results with their costs
                     if query_result['result'] is False:
-                        scenario_variants = [s['variant'] for s in result['included_scenarios']]
+                        scenario_names = [s.name for s in result['included_scenarios']]
                         false_combinations.append({
-                            'scenarios': set(scenario_variants),
+                            'scenarios': set(scenario_names),
                             'costs': result.get('costs', {})
                         })
             
@@ -393,7 +592,7 @@ def analyze_minimal_false_combinations(results, input_files):
     
     return analysis
 
-def print_analysis(analysis):
+def print_analysis(analysis: Dict[str, Dict[str, List[Dict[str, Any]]]]) -> None:
     """Pretty print the minimal breaking combinations analysis."""
     print_headline("Minimal combinations to break queries")
     
@@ -417,7 +616,7 @@ def print_analysis(analysis):
                     else:
                         print(f"      {{}} (base scenario, no cost)")
 
-def main():
+def main() -> None:
     """Main entry point supporting multiple input files."""
     if len(sys.argv) < 2:
         print("Usage: python scenario_preprocessor.py <input_file1.pv> [input_file2.pv ...]")
@@ -425,18 +624,18 @@ def main():
         sys.exit(1)
     
     input_files = sys.argv[1:]
-    all_generated_files = []
+    all_generated_scenarios: List[GeneratedScenario] = []
     
     for input_file in input_files:
         if not Path(input_file).exists():
             print(f"Error: File '{input_file}' not found")
             continue
-        generated_files = preprocess_scenarios(input_file)
-        all_generated_files.extend(generated_files)
+        generated_scenarios = preprocess_scenarios(input_file)
+        all_generated_scenarios.extend(generated_scenarios)
     
     # Run ProVerif on all generated files and collect results
-    if all_generated_files:
-        results = run_proverif_on_files(all_generated_files)
+    if all_generated_scenarios:
+        results = run_proverif_on_files(all_generated_scenarios)
         analysis = analyze_minimal_false_combinations(results, input_files)
         print_analysis(analysis)
 
