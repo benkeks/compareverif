@@ -3,7 +3,8 @@ from pathlib import Path
 from itertools import product
 import subprocess
 import sys
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Tuple, Set, Optional, Any
 
 DEFAULT_TABLE_WIDTH = 60
@@ -225,7 +226,7 @@ def extract_queries(content: str) -> List[Dict[str, str]]:
 
 # Main preprocessor function
 
-def preprocess_scenarios(input_file: str, output_dir: Optional[str] = None) -> List[ScenarioFile]:
+def preprocess_scenarios(input_file: str, output_dir: Optional[str] = None) -> Tuple[List[ScenarioFile], Path]:
     """
     Preprocessor that finds magical comments of the form, which represent attacker capabilities:
     (*** <Some heading> [<quantity> <cost dimension>]
@@ -237,7 +238,7 @@ def preprocess_scenarios(input_file: str, output_dir: Optional[str] = None) -> L
         output_dir: Output directory (defaults to _scenarios/<input_filename>)
     
     Returns:
-        List[ScenarioFile]: List of generated file info (including costs per scenario)
+        Tuple[List[ScenarioFile], Path]: List of generated file info (including costs per scenario) and output directory
     """
     print_headline(f"Processing: {input_file}")
 
@@ -245,9 +246,9 @@ def preprocess_scenarios(input_file: str, output_dir: Optional[str] = None) -> L
     
     # Default output directory based on input filename
     if output_dir is None:
-        output_dir = Path('_scenarios') / input_path.stem
+        output_dir_path = Path('_scenarios') / input_path.stem
     else:
-        output_dir = Path(output_dir)
+        output_dir_path = Path(output_dir)
     
     # Read the input file
     with open(input_file, 'r') as f:
@@ -258,10 +259,10 @@ def preprocess_scenarios(input_file: str, output_dir: Optional[str] = None) -> L
     
     if not attacker_capabilities:
         print("No magical comments for attacker capabilities found")
-        return []
+        return [], output_dir_path
     
     # Create output directory
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
 
     # Collect all unique cost dimensions from attacker capabilities
     all_dimensions = set()
@@ -314,7 +315,7 @@ def preprocess_scenarios(input_file: str, output_dir: Optional[str] = None) -> L
             filename = '+'.join(re.sub(r'[^a-zA-Z0-9_]', '_', name.lower()) 
                               for name in included_names)
         
-        output_path = Path(output_dir) / f"{filename}.pv"
+        output_path = Path(output_dir_path) / f"{filename}.pv"
         
         with open(output_path, 'w') as f:
             f.write(output_content)
@@ -329,7 +330,7 @@ def preprocess_scenarios(input_file: str, output_dir: Optional[str] = None) -> L
         print(f"Generated: {output_path} (cost: {cost_str})")
     
     print(f"Total scenarios generated: {len(combinations)}")
-    return generated_files
+    return generated_files, output_dir_path
 
 def run_proverif_on_files(generated_files: List[ScenarioFile]) -> List[ScenarioResult]:
     """Run ProVerif on all generated files and return results.
@@ -509,6 +510,83 @@ def print_analysis(analysis: Dict[str, Dict[str, List[Dict[str, Any]]]]) -> None
                     else:
                         print(f"      {{}} (base scenario, no cost)")
 
+def dump_manifest(
+    generated_files: List[ScenarioFile],
+    results: Optional[List[ScenarioResult]],
+    output_dir: Path,
+    input_file: str
+) -> None:
+    """Dump a manifest JSON file with information about all generated scenarios.
+    
+    Args:
+        generated_files: List of generated scenario files
+        results: Optional list of verification results
+        output_dir: Directory where manifest should be written
+        input_file: Original input file name
+    """
+    manifest = {
+        'input_file': str(input_file),
+        'generated_at': None,  # Could add timestamp if needed
+        'scenarios': []
+    }
+    
+    # Create results lookup
+    results_map = {}
+    if results:
+        for result in results:
+            results_map[str(result.scenario.path)] = result
+    
+    for scenario_file in generated_files:
+        scenario_info = {
+            'file': str(scenario_file.path.name),
+            'path': str(scenario_file.path),
+            'capabilities': [
+                {
+                    'name': variant.name,
+                    'costs': variant.costs
+                }
+                for variant in scenario_file.capabilities
+            ],
+            'total_costs': scenario_file.costs,
+            'queries': [
+                {
+                    'tag': query['tag'],
+                    'query': query['query']
+                }
+                for query in scenario_file.queries
+            ]
+        }
+        
+        # Add verification results if available
+        result = results_map.get(str(scenario_file.path))
+        if result:
+            scenario_info['verification'] = {
+                'status': result.status,
+                'query_results': [
+                    {
+                        'tag': qr['tag'],
+                        'result': qr['result']
+                    }
+                    for qr in result.query_results
+                ],
+                'error_message': result.error_message
+            }
+        
+        manifest['scenarios'].append(scenario_info)
+    
+    # Write manifest
+    manifest_path = output_dir / 'manifest.json'
+    with open(manifest_path, 'w') as f:
+        json.dump(manifest, f, indent=2)
+    
+    print(f"\nManifest written to: {manifest_path}")
+    print(f"  Total scenarios: {len(manifest['scenarios'])}")
+    if results:
+        successful = sum(1 for s in manifest['scenarios'] 
+                        if s.get('verification', {}).get('status') == 'success')
+        print(f"  Verified successfully: {successful}/{len(manifest['scenarios'])}")
+
+
 def main() -> None:
     """Main entry point supporting multiple input files."""
     if len(sys.argv) < 2:
@@ -518,17 +596,28 @@ def main() -> None:
     
     input_files = sys.argv[1:]
     all_generated_scenarios: List[ScenarioFile] = []
+    file_to_scenarios: Dict[str, Tuple[List[ScenarioFile], Path]] = {}
     
     for input_file in input_files:
         if not Path(input_file).exists():
             print(f"Error: File '{input_file}' not found")
             continue
-        generated_scenarios = preprocess_scenarios(input_file)
+        generated_scenarios, output_dir = preprocess_scenarios(input_file)
         all_generated_scenarios.extend(generated_scenarios)
+        file_to_scenarios[input_file] = (generated_scenarios, output_dir)
     
     # Run ProVerif on all generated files and collect results
     if all_generated_scenarios:
         results = run_proverif_on_files(all_generated_scenarios)
+        
+        # Dump manifests for each input file
+        for input_file, (scenarios, output_dir) in file_to_scenarios.items():
+            # Filter results for this input file
+            input_stem = Path(input_file).stem
+            file_results = [r for r in results if input_stem in str(r.scenario.path)]
+            dump_manifest(scenarios, file_results, output_dir, input_file)
+        
+        # Analyze and print minimal combinations
         analysis = analyze_minimal_false_combinations(results, input_files)
         print_analysis(analysis)
 
