@@ -74,15 +74,60 @@ class TreeNode:
             # Generate unique ID based on fact content and variant
             variant_suffix = f"_{self.variant_id}" if self.variant_id else ""
             self.node_id = f"node_{abs(hash(self.fact + variant_suffix)) % 100000}"
+    
+    @staticmethod
+    def to_readable_format(fact: str) -> str:
+        """Convert ProVerif fact to readable natural language format.
+        
+        Examples:
+            attacker(the_password[]) -> Attacker learns the_password.
+            attacker((a, b)) -> Attacker learns a and b.
+            table(passwd(a, b)) -> Table passwd contains (a,b).
+        """
+        import re
+        
+        # Handle attacker(...) pattern
+        attacker_match = re.match(r'attacker\((.+)\)\s*$', fact, re.DOTALL)
+        if attacker_match:
+            content = attacker_match.group(1).strip()
+            # Remove [] from variable names
+            content = content.replace('[]', '')
+            
+            # Check for tuple: attacker((a, b, ...))
+            tuple_match = re.match(r'\((.+)\)$', content, re.DOTALL)
+            if tuple_match:
+                # Extract tuple elements
+                elements = tuple_match.group(1)
+                # Simple split by comma (may need refinement for nested structures)
+                parts = [p.strip() for p in elements.split(',')]
+                if len(parts) > 1:
+                    items = ' and '.join(parts)
+                    return f"Attacker learns {items}."
+            
+            # Single value
+            return f"Attacker learns {content}."
+        
+        # Handle table(NAME(args)) pattern
+        table_match = re.match(r'table\((\w+)\((.*)\)\)\s*$', fact, re.DOTALL)
+        if table_match:
+            table_name = table_match.group(1)
+            args = table_match.group(2)
+            # Remove [] from variable names
+            args = args.replace('[]', '')
+            return f"Table {table_name} contains ({args})."
+        
+        # Default: return as-is (with [] removed)
+        return fact.replace('[]', '')
 
 
 class DerivationTree:
     """Represents a derivation as a DAG (directed acyclic graph)."""
 
-    def __init__(self, goal: str, query_tag: Optional[str] = None, capability_costs: Optional[Dict[str, Dict[str, int]]] = None):
+    def __init__(self, goal: str, query_tag: Optional[str] = None, capability_costs: Optional[Dict[str, Dict[str, int]]] = None, readable_nodes: bool = False):
         self.goal = goal
         self.query_tag = query_tag  # Tag/name of the violated query
         self.capability_costs = capability_costs or {}  # Map: capability name -> {"time": X, "hack": Y, ...}
+        self.readable_nodes = readable_nodes  # Whether to use readable node labels
         self.nodes: Dict[Tuple[str, Optional[str]], TreeNode] = {}  # Key: (fact, variant_id)
         self.edges: List[Tuple[Tuple[str, Optional[str]], Tuple[str, Optional[str]], Optional[str]]] = []  # (source, target, rule)
         self.add_node(goal, "goal")
@@ -128,8 +173,15 @@ class DerivationTree:
         
         # Add all nodes
         for (fact, variant_id), node in self.nodes.items():
-            # Truncate long facts for display
-            label = fact if len(fact) <= 50 else fact[:47] + "..."
+            # Convert to readable format if requested
+            if self.readable_nodes:
+                label = TreeNode.to_readable_format(fact)
+            else:
+                label = fact
+            
+            # Truncate long labels for display
+            if len(label) > 50:
+                label = label[:47] + "..."
             
             # Add query tag to goal node
             if node.rule == "goal" and self.query_tag:
@@ -193,7 +245,7 @@ class DerivationTree:
                 if is_disjunctive:
                     # For disjunctive edges, show costs and OR
                     if cost_label:
-                        label = f' [label="(OR) {cost_label}", style=dashed]'
+                        label = f' [label="{cost_label} (OR)", style=dashed]'
                     else:
                         label = ' [label="OR", style=dashed]'
                 elif cost_label:
@@ -698,7 +750,7 @@ class GraphvizRenderer:
     """Renders derivations as graphviz diagrams."""
 
     @staticmethod
-    def build_tree_from_derivations(derivations: List[Derivation], query_tag: Optional[str] = None, capability_costs: Optional[Dict[str, Dict[str, int]]] = None) -> Optional[DerivationTree]:
+    def build_tree_from_derivations(derivations: List[Derivation], query_tag: Optional[str] = None, capability_costs: Optional[Dict[str, Dict[str, int]]] = None, readable_nodes: bool = False) -> Optional[DerivationTree]:
         """
         Build a derivation tree from a list of derivations.
         
@@ -739,7 +791,7 @@ class GraphvizRenderer:
         # Find the goal
         goal = first_tree_derivs[0].conclusion
 
-        tree = DerivationTree(goal, query_tag, capability_costs)
+        tree = DerivationTree(goal, query_tag, capability_costs, readable_nodes)
 
         # Filter to significant derivations (non-transformations)
         significant_derivs = []
@@ -924,6 +976,11 @@ def main():
         metavar="FILE",
         help="Manifest.json file for capability analysis (annotates attack trees with capabilities)",
     )
+    parser.add_argument(
+        "--original-terms",
+        action="store_true",
+        help="Use original ProVerif syntax for node labels (default is human-readable format)",
+    )
 
     args = parser.parse_args()
 
@@ -1073,7 +1130,9 @@ def main():
                     # Truncate long queries
                     query_tag = output.query[:50] + "..." if len(output.query) > 50 else output.query
             
-            tree = renderer.build_tree_from_derivations(output.derivations, query_tag, capability_costs)
+            # Use readable nodes by default, unless --original-terms is specified
+            use_readable = not args.original_terms
+            tree = renderer.build_tree_from_derivations(output.derivations, query_tag, capability_costs, use_readable)
             if tree:
                 # Annotate with capabilities if analyzer is available
                 if capability_analyzer:
