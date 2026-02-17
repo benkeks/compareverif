@@ -35,6 +35,7 @@ class Derivation:
     conclusion: str
     premises: List[str] = field(default_factory=list)
     rule_name: Optional[str] = None
+    indent_level: int = 0  # Track nesting depth for tree structure
 
     def __repr__(self) -> str:
         if self.premises:
@@ -152,6 +153,8 @@ class ProVerifRunner:
         cmd = ["proverif"]
         if verbose_clauses:
             cmd.extend(["-set", "verboseClauses", "short"])
+        # Use simpler derivation format for uniform parsing
+        cmd.extend(["-set", "explainDerivation", "false"])
         cmd.append(str(scenario_file))
 
         try:
@@ -285,130 +288,86 @@ class ProVerifOutputParser:
 
     def _parse_derivation_block(self, lines: List[str]) -> None:
         """
-        Parse a block of derivation lines (can be tree-structured or numbered list format).
+        Parse a block of derivation lines (tree-structured with indentation from explainDerivation = false).
 
         Args:
             lines: List of lines from the derivation section
         """
-        # Detect format type: tree-based (with "clause", "apply", etc.) or numbered list
-        has_tree_format = any(
-            line.strip().startswith(("clause ", "apply ", "goal ", "duplicate "))
-            for line in lines
-        )
-        
-        if has_tree_format:
-            # Parse tree-structured derivation
-            self._parse_derivation_tree(lines)
-        else:
-            # Parse numbered list format derivation
-            self._parse_derivation_numbered_list(lines)
-
-    def _parse_derivation_tree(self, lines: List[str]) -> None:
-        """Parse tree-structured derivation format."""
+        # With explainDerivation = false, ProVerif outputs a tree-structured derivation with indentation
         for line in lines:
-            line = line.strip()
-            if not line:
+            # Preserve original indentation
+            stripped_line = line.lstrip()
+            if not stripped_line:
                 continue
             
-            # Extract goal facts
-            if line.startswith("goal "):
-                match = re.search(r"goal\s+(.+?)(?:\s+clause|$)", line)
+            # Calculate indentation level (4 spaces = 1 level)
+            indent_level = (len(line) - len(stripped_line)) // 4
+            
+            # Extract goal facts (e.g., "goal  event(server_user_authenticated(user1[]))")
+            if stripped_line.startswith("goal "):
+                match = re.search(r"goal\s+(.+?)$", stripped_line)
                 if match:
                     fact = match.group(1).strip()
                     derivation = Derivation(
                         conclusion=fact,
                         premises=[],
-                        rule_name="goal"
+                        rule_name="goal",
+                        indent_level=indent_level
                     )
                     self.output.derivations.append(derivation)
             
-            # Extract clause references (e.g., "clause 0 attacker(...)")
-            if line.startswith("clause "):
-                match = re.search(r"clause\s+\d+\s+(.+?)$", line)
+            # Extract clause references (e.g., "clause 26 event(...)")
+            elif stripped_line.startswith("clause "):
+                match = re.search(r"clause\s+\d+\s+(.+?)$", stripped_line)
                 if match:
                     fact = match.group(1).strip()
                     derivation = Derivation(
                         conclusion=fact,
                         premises=[],
-                        rule_name="clause"
+                        rule_name="clause",
+                        indent_level=indent_level
                     )
                     self.output.derivations.append(derivation)
             
             # Extract application/transformation steps (e.g., "apply 1-proj-2-tuple attacker(...)")
-            if line.startswith("apply "):
-                match = re.search(r"apply\s+(\S+)\s+(.+?)$", line)
+            elif stripped_line.startswith("apply "):
+                match = re.search(r"apply\s+(\S+)\s+(.+?)$", stripped_line)
                 if match:
                     operation = match.group(1)
                     fact = match.group(2).strip()
                     derivation = Derivation(
                         conclusion=fact,
                         premises=[],
-                        rule_name=f"apply {operation}"
+                        rule_name=f"apply {operation}",
+                        indent_level=indent_level
                     )
                     self.output.derivations.append(derivation)
             
             # Extract duplicate operations
-            if line.startswith("duplicate "):
-                match = re.search(r"duplicate\s+(.+?)$", line)
+            elif stripped_line.startswith("duplicate "):
+                match = re.search(r"duplicate\s+(.+?)$", stripped_line)
                 if match:
                     fact = match.group(1).strip()
                     derivation = Derivation(
                         conclusion=fact,
                         premises=[],
-                        rule_name="duplicate"
+                        rule_name="duplicate",
+                        indent_level=indent_level
                     )
                     self.output.derivations.append(derivation)
-
-    def _parse_derivation_numbered_list(self, lines: List[str]) -> None:
-        """Parse numbered list format derivation (with descriptions and facts)."""
-        current_fact = None
-        
-        for line in lines:
-            # Look for lines starting with facts (attacker, table, mess, etc.)
-            line_stripped = line.strip()
-            if not line_stripped:
-                continue
             
-            # Check if this line is a fact (starts with attacker, table, mess, or other predicates)
-            fact_match = re.match(r'^(attacker|table|mess|event)\(.+?\)\s*\.?\s*$', line_stripped)
-            if fact_match:
-                fact = line_stripped.rstrip('.')
-                derivation = Derivation(
-                    conclusion=fact,
-                    premises=[],
-                    rule_name=None
-                )
-                self.output.derivations.append(derivation)
-
-    def _parse_derivation_line(self, line: str) -> None:
-        """Parse a single derivation/attack trace line (for simpler format)."""
-        line = line.strip()
-        if not line or line.startswith(";") or line.startswith("--"):
-            return
-
-        # Extract attacker facts (the most important parts of the derivation)
-        if line.startswith("attacker("):
-            # Simple fact extraction
-            match = re.search(r"attacker\((.+?)\)", line)
-            if match:
-                fact_content = match.group(1)
-                derivation = Derivation(
-                    conclusion=f"attacker({fact_content})",
-                    premises=[],
-                    rule_name=None
-                )
-                self.output.derivations.append(derivation)
-        elif "goal reachable:" in line.lower():
-            # Extract the goal from "goal reachable: ..." lines
-            parts = line.split("goal reachable:", 1)
-            if len(parts) > 1:
-                goal = parts[1].strip()
-                derivation = Derivation(
-                    conclusion=goal,
-                    premises=[],
-                    rule_name="goal"
-                )
-                self.output.derivations.append(derivation)
+            # Extract initial knowledge facts
+            elif stripped_line.startswith("initial knowledge "):
+                match = re.search(r"initial knowledge\s+(.+?)$", stripped_line)
+                if match:
+                    fact = match.group(1).strip()
+                    derivation = Derivation(
+                        conclusion=fact,
+                        premises=[],
+                        rule_name="initial",
+                        indent_level=indent_level
+                    )
+                    self.output.derivations.append(derivation)
 
 
 class GraphvizRenderer:
@@ -419,11 +378,12 @@ class GraphvizRenderer:
         """
         Build a derivation tree from a list of derivations.
         
-        This creates a DAG where facts are connected based on their
-        order in the derivation sequence and the rules applied.
+        With explainDerivation = false, derivations have hierarchical structure via indentation.
+        ProVerif may output multiple derivation trees (one per failed query), so we extract
+        only the first complete tree.
         
         Args:
-            derivations: List of Derivation objects
+            derivations: List of Derivation objects with indent_level information
             
         Returns:
             DerivationTree object or None if no derivations
@@ -431,30 +391,69 @@ class GraphvizRenderer:
         if not derivations:
             return None
 
-        # Find the goal (typically first derivation with rule="goal")
-        goal = None
+        # Find the first derivation tree (starts with goal at indent 0)
+        # and ends when we see another goal at indent 0
+        first_tree_derivs = []
+        started = False
+        
         for deriv in derivations:
-            if deriv.rule_name == "goal":
-                goal = deriv.conclusion
-                break
+            if deriv.rule_name == "goal" and deriv.indent_level == 0:
+                if started:
+                    # Found start of second tree, stop
+                    break
+                else:
+                    # Found start of first tree
+                    started = True
+                    first_tree_derivs.append(deriv)
+            elif started:
+                first_tree_derivs.append(deriv)
+        
+        if not first_tree_derivs:
+            return None
 
-        if not goal:
-            # If no explicit goal, use the first one
-            goal = derivations[0].conclusion
+        # Find the goal
+        goal = first_tree_derivs[0].conclusion
 
         tree = DerivationTree(goal)
 
-        # Add all derivations as nodes and create edges between them
-        # Each derivation represents a step in building the attack
-        prev_deriv = None
-        for deriv in derivations:
+        # Filter to significant derivations (non-transformations)
+        significant_derivs = []
+        
+        for deriv in first_tree_derivs:
+            # Skip transformation steps (apply, duplicate)
+            is_transformation = (
+                deriv.rule_name and 
+                (deriv.rule_name.startswith("apply ") or 
+                 deriv.rule_name == "duplicate")
+            )
+            
+            if not is_transformation:
+                significant_derivs.append(deriv)
+        
+        if not significant_derivs:
+            return tree
+        
+        # Add all nodes first
+        for deriv in significant_derivs:
             tree.add_node(deriv.conclusion, deriv.rule_name)
+        
+        # Build parent-child relationships based on indentation
+        # For each derivation, find its parent (the closest previous derivation with lower indent)
+        for i, deriv in enumerate(significant_derivs):
+            current_indent = deriv.indent_level
             
-            # Connect to previous step (simple chain)
-            if prev_deriv and prev_deriv.conclusion != deriv.conclusion:
-                tree.add_edge(prev_deriv.conclusion, deriv.conclusion, deriv.rule_name)
+            # Find parent: look backwards for first item with lower indent level
+            parent_idx = None
+            for j in range(i - 1, -1, -1):
+                if significant_derivs[j].indent_level < current_indent:
+                    parent_idx = j
+                    break
             
-            prev_deriv = deriv
+            # If parent found, create edge
+            if parent_idx is not None:
+                parent = significant_derivs[parent_idx]
+                # Use child's rule_name as the edge label
+                tree.add_edge(parent.conclusion, deriv.conclusion, deriv.rule_name)
 
         return tree
 
