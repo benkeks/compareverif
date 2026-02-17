@@ -55,6 +55,8 @@ class ProVerifOutput:
     derivations: List[Derivation] = field(default_factory=list)
     raw_output: str = ""
     errors: List[str] = field(default_factory=list)
+    query: Optional[str] = None  # The query being checked
+    query_tag: Optional[str] = None  # Human-readable tag for the query
 
 
 @dataclass
@@ -65,41 +67,45 @@ class TreeNode:
     node_id: Optional[str] = None
     capabilities: Set[str] = field(default_factory=set)  # Capabilities that introduce this node
     clause_number: Optional[int] = None  # Clause number if derived from a clause
+    variant_id: Optional[str] = None  # Variant identifier for disjunctive alternatives
 
     def __post_init__(self):
         if self.node_id is None:
-            # Generate unique ID based on fact content
-            self.node_id = f"node_{abs(hash(self.fact)) % 100000}"
+            # Generate unique ID based on fact content and variant
+            variant_suffix = f"_{self.variant_id}" if self.variant_id else ""
+            self.node_id = f"node_{abs(hash(self.fact + variant_suffix)) % 100000}"
 
 
 class DerivationTree:
     """Represents a derivation as a DAG (directed acyclic graph)."""
 
-    def __init__(self, goal: str):
+    def __init__(self, goal: str, query_tag: Optional[str] = None):
         self.goal = goal
-        self.nodes: Dict[str, TreeNode] = {}
-        self.edges: List[Tuple[str, str, Optional[str]]] = []  # (source, target, rule)
+        self.query_tag = query_tag  # Tag/name of the violated query
+        self.nodes: Dict[Tuple[str, Optional[str]], TreeNode] = {}  # Key: (fact, variant_id)
+        self.edges: List[Tuple[Tuple[str, Optional[str]], Tuple[str, Optional[str]], Optional[str]]] = []  # (source, target, rule)
         self.add_node(goal, "goal")
 
-    def add_node(self, fact: str, rule: Optional[str] = None, capabilities: Optional[Set[str]] = None, clause_number: Optional[int] = None) -> TreeNode:
+    def add_node(self, fact: str, rule: Optional[str] = None, capabilities: Optional[Set[str]] = None, clause_number: Optional[int] = None, variant_id: Optional[str] = None) -> TreeNode:
         """Add a node to the graph if not already present."""
-        if fact not in self.nodes:
-            node = TreeNode(fact=fact, rule=rule, capabilities=capabilities or set(), clause_number=clause_number)
-            self.nodes[fact] = node
+        key = (fact, variant_id)
+        if key not in self.nodes:
+            node = TreeNode(fact=fact, rule=rule, capabilities=capabilities or set(), clause_number=clause_number, variant_id=variant_id)
+            self.nodes[key] = node
         else:
             # Merge capabilities if node already exists
             if capabilities:
-                self.nodes[fact].capabilities.update(capabilities)
+                self.nodes[key].capabilities.update(capabilities)
             # Update clause number if provided
             if clause_number is not None:
-                self.nodes[fact].clause_number = clause_number
-        return self.nodes[fact]
+                self.nodes[key].clause_number = clause_number
+        return self.nodes[key]
 
-    def add_edge(self, source_fact: str, target_fact: str, rule: Optional[str] = None, capabilities: Optional[Set[str]] = None, clause_number: Optional[int] = None) -> None:
+    def add_edge(self, source_fact: str, target_fact: str, rule: Optional[str] = None, capabilities: Optional[Set[str]] = None, clause_number: Optional[int] = None, source_variant: Optional[str] = None, target_variant: Optional[str] = None) -> None:
         """Add an edge from source to target."""
-        self.add_node(source_fact)
-        self.add_node(target_fact, rule, capabilities, clause_number)
-        self.edges.append((source_fact, target_fact, rule))
+        self.add_node(source_fact, variant_id=source_variant)
+        self.add_node(target_fact, rule, capabilities, clause_number, variant_id=target_variant)
+        self.edges.append(((source_fact, source_variant), (target_fact, target_variant), rule))
 
     def to_graphviz(self) -> str:
         """Generate graphviz dot format representation."""
@@ -120,9 +126,13 @@ class DerivationTree:
         ]
         
         # Add all nodes
-        for fact, node in self.nodes.items():
+        for (fact, variant_id), node in self.nodes.items():
             # Truncate long facts for display
             label = fact if len(fact) <= 50 else fact[:47] + "..."
+            
+            # Add query tag to goal node
+            if node.rule == "goal" and self.query_tag:
+                label = f"{label}\n(❌ {self.query_tag})"
             
             # Add capability annotations to label
             if node.capabilities:
@@ -152,15 +162,23 @@ class DerivationTree:
         
         # Add edges
         visited = set()
-        for source_fact, target_fact, rule in self.edges:
-            source_node = self.nodes[source_fact]
-            target_node = self.nodes[target_fact]
+        for source_key, target_key, rule in self.edges:
+            source_node = self.nodes[source_key]
+            target_node = self.nodes[target_key]
             edge_key = f"{source_node.node_id}-{target_node.node_id}"
             
             if edge_key not in visited:
                 visited.add(edge_key)
+                # Check if target has multiple variants (disjunctive)
+                target_fact = target_key[0]
+                variants = [k for k in self.nodes.keys() if k[0] == target_fact and k[1] is not None]
+                is_disjunctive = len(variants) > 1 and target_key[1] is not None
+                
                 label = ""
-                if rule:
+                style = ""
+                if is_disjunctive:
+                    label = f' [label="{rule} (OR)", style=dashed]' if rule else ' [label="OR", style=dashed]'
+                elif rule:
                     label = f' [label="{rule}"]'
                 dot_lines.append(f"  {source_node.node_id} -> {target_node.node_id}{label};")
         
@@ -242,12 +260,27 @@ class ProVerifOutputParser:
         current_section = None
         i = 0
         in_derivation_block = False
+        current_query = None  # Track the most recent query for the next derivation
 
         while i < len(lines):
             line = lines[i].rstrip()
+            
+            # Extract query information from "goal reachable" line (appears right before Derivation:)
+            # This is more accurate than "Starting query" which may be for a different query
+            if line.strip().startswith("goal reachable: "):
+                goal_text = line.strip().replace("goal reachable: ", "").strip()
+                current_query = goal_text
+            elif line.strip().startswith("Starting query ") and not current_query:
+                # Fallback to "Starting query" if we haven't seen "goal reachable" yet
+                query_text = line.strip().replace("Starting query ", "").strip()
+                current_query = query_text
 
             # Detect start of derivation section
             if line.strip() == "Derivation:":
+                # Store the query for this derivation
+                if current_query and not self.output.query:
+                    self.output.query = current_query
+                
                 in_derivation_block = True
                 current_section = "derivations"
                 i += 1
@@ -486,6 +519,7 @@ class CapabilityAnalyzer:
     def annotate_tree_with_capabilities(self, tree: DerivationTree, scenario_path: Path) -> DerivationTree:
         """
         Annotate tree nodes with the capabilities that introduced them.
+        Creates separate variant nodes when multiple capabilities can achieve the same result.
         
         Uses clause analysis to determine capabilities:
         1. Clause text comparison for capabilities that add new inference rules
@@ -549,16 +583,92 @@ class CapabilityAnalyzer:
             if matching_caps:
                 clause_num_to_caps[clause.clause_number] = matching_caps
         
-        # Annotate nodes based on their clause numbers or facts
-        for fact, node in tree.nodes.items():
+        # First pass: collect capabilities for each fact
+        fact_capabilities: Dict[str, Set[str]] = {}
+        
+        for key, node in list(tree.nodes.items()):
+            fact, variant_id = key
+            # Skip if already a variant
+            if variant_id is not None:
+                continue
+                
+            capabilities = set()
+            
             # Method 1: Check clause number
             if node.clause_number is not None and node.clause_number in clause_num_to_caps:
-                node.capabilities.update(clause_num_to_caps[node.clause_number])
+                capabilities.update(clause_num_to_caps[node.clause_number])
             
             # Method 2: Check if the node fact matches a capability-attributed derivation
             normalized_fact = ' '.join(fact.split())
             if normalized_fact in fact_to_caps:
-                node.capabilities.update(fact_to_caps[normalized_fact])
+                capabilities.update(fact_to_caps[normalized_fact])
+            
+            if capabilities:
+                fact_capabilities[fact] = capabilities
+        
+        # Second pass: split nodes with multiple capabilities into variants
+        nodes_to_split: Dict[str, Set[str]] = {}
+        for fact, caps in fact_capabilities.items():
+            if len(caps) > 1:
+                nodes_to_split[fact] = caps
+        
+        # Create variant nodes and update edges
+        for fact, caps in nodes_to_split.items():
+            original_key = (fact, None)
+            if original_key not in tree.nodes:
+                continue
+            
+            original_node = tree.nodes[original_key]
+            
+            # Create a variant node for each capability
+            for cap in sorted(caps):  # Sort for consistency
+                variant_node = tree.add_node(
+                    fact, 
+                    original_node.rule, 
+                    {cap}, 
+                    original_node.clause_number, 
+                    variant_id=cap
+                )
+            
+            # Remove the original non-variant node
+            del tree.nodes[original_key]
+        
+        # Update all edges to reference variant nodes where applicable
+        new_edges = []
+        for source_key, target_key, rule in tree.edges:
+            source_fact, source_variant = source_key
+            target_fact, target_variant = target_key
+            
+            # If source was split, create edges from all variants
+            if source_fact in nodes_to_split and source_variant is None:
+                source_variants = sorted(nodes_to_split[source_fact])
+                # If target was also split, create edges from all source variants to all target variants  
+                if target_fact in nodes_to_split and target_variant is None:
+                    for source_cap in source_variants:
+                        for target_cap in sorted(nodes_to_split[target_fact]):
+                            new_edges.append(((source_fact, source_cap), (target_fact, target_cap), rule))
+                else:
+                    # Create edge from all source variants to the target
+                    for source_cap in source_variants:
+                        new_edges.append(((source_fact, source_cap), target_key, rule))
+            # If only target was split, create edges to all target variants
+            elif target_fact in nodes_to_split and target_variant is None:
+                for target_cap in sorted(nodes_to_split[target_fact]):
+                    new_edges.append((source_key, (target_fact, target_cap), rule))
+            else:
+                new_edges.append((source_key, target_key, rule))
+        
+        tree.edges = new_edges
+        
+        # Third pass: annotate remaining single-capability nodes
+        for key, node in tree.nodes.items():
+            fact, variant_id = key
+            if variant_id is not None:
+                # Already annotated during split
+                continue
+            
+            if fact in fact_capabilities:
+                node.capabilities.update(fact_capabilities[fact])
         
         return tree
 
@@ -567,7 +677,7 @@ class GraphvizRenderer:
     """Renders derivations as graphviz diagrams."""
 
     @staticmethod
-    def build_tree_from_derivations(derivations: List[Derivation]) -> Optional[DerivationTree]:
+    def build_tree_from_derivations(derivations: List[Derivation], query_tag: Optional[str] = None) -> Optional[DerivationTree]:
         """
         Build a derivation tree from a list of derivations.
         
@@ -577,6 +687,7 @@ class GraphvizRenderer:
         
         Args:
             derivations: List of Derivation objects with indent_level information
+            query_tag: Optional tag/name describing the violated query
             
         Returns:
             DerivationTree object or None if no derivations
@@ -607,7 +718,7 @@ class GraphvizRenderer:
         # Find the goal
         goal = first_tree_derivs[0].conclusion
 
-        tree = DerivationTree(goal)
+        tree = DerivationTree(goal, query_tag)
 
         # Filter to significant derivations (non-transformations)
         significant_derivs = []
@@ -825,6 +936,7 @@ def main():
     
     # Capability analysis setup
     capability_analyzer = None
+    manifest_data = None
     if args.manifest:
         manifest_path = Path(args.manifest)
         if not manifest_path.exists():
@@ -838,6 +950,11 @@ def main():
         
         capability_analyzer = CapabilityAnalyzer()
         capability_analyzer.analyze_from_manifest(manifest_path)
+        
+        # Load manifest data for query tag lookup
+        import json
+        with open(manifest_path) as f:
+            manifest_data = json.load(f)
         print()
 
     for scenario_path in args.files:
@@ -849,7 +966,83 @@ def main():
 
         # Generate graphviz files if requested
         if output.derivations:
-            tree = renderer.build_tree_from_derivations(output.derivations)
+            # Try to find a query tag from manifest
+            query_tag = None
+            if manifest_data and output.query:
+                # Try multiple scenario name variations (for cost-annotated files)
+                scenario_name = scenario_file.name
+                # Strip cost annotations like ___100_time_ to find base scenario
+                base_scenario_name = scenario_name
+                import re
+                base_scenario_name = re.sub(r'___\d+_\w+_', '', base_scenario_name)  # Remove cost annotations
+                
+                # Try to find matching scenario in manifest
+                matching_scenarios = []
+                for scenario in manifest_data.get("scenarios", []):
+                    if scenario.get("file") in [scenario_name, base_scenario_name]:
+                        matching_scenarios.append(scenario)
+                
+                # If no exact match, try to find any scenario with similar name
+                if not matching_scenarios:
+                    for scenario in manifest_data.get("scenarios", []):
+                        scenario_file_base = scenario.get("file", "").replace(".pv", "")
+                        our_file_base = base_scenario_name.replace(".pv", "")
+                        # Remove cost annotations for comparison
+                        scenario_file_base = re.sub(r'___\d+_\w+_', '', scenario_file_base)
+                        if scenario_file_base in our_file_base or our_file_base in scenario_file_base:
+                            matching_scenarios.append(scenario)
+                
+                # Search for matching query in all candidate scenarios
+                for scenario in matching_scenarios:
+                    for query_info in scenario.get("queries", []):
+                        query_text = query_info.get("query", "")
+                        
+                        # Normalize both queries for comparison
+                        # Remove comments, query prefix, whitespace, brackets, punctuation
+                        normalized_manifest = re.sub(r'\(\*.*?\*\)', '', query_text)  # Remove comments
+                        normalized_manifest = normalized_manifest.replace("query ", "").replace("not ", "")
+                        normalized_manifest = normalized_manifest.replace("\n", "").replace(" ", "")
+                        normalized_manifest = normalized_manifest.replace("[", "").replace("]", "")
+                        normalized_manifest = normalized_manifest.replace(";", "").replace(".", "")
+                        normalized_manifest = normalized_manifest.lower()
+                        
+                        normalized_output = output.query.replace("not ", "").replace(" ", "")
+                        normalized_output = normalized_output.replace("[", "").replace("]", "")
+                        normalized_output = normalized_output.lower()
+                        
+                        # Check if they match
+                        if normalized_output == normalized_manifest or \
+                           (len(normalized_output) > 10 and normalized_output in normalized_manifest) or \
+                           (len(normalized_manifest) > 10 and normalized_manifest in normalized_output):
+                            tag = query_info.get("tag", "")
+                            # Prefer meaningful tags over generic "query" tag
+                            if tag and tag != "query":
+                                query_tag = tag
+                                break
+                            elif tag == "query" and not query_tag:
+                                # Use generic tag as fallback, but allow better matches to override it
+                                # Extract a better tag from the comment if available
+                                comment_match = re.search(r'\(\*\s*([^*]+?)\s*\*\)', query_text)
+                                if comment_match:
+                                    query_tag = comment_match.group(1).strip()
+                    if query_tag and query_tag != "query":
+                        break
+            
+            # If no tag from manifest, extract a short version of the query
+            if not query_tag and output.query:
+                # Use a simplified version: just show what's being queried
+                import re
+                # Extract the main predicate (e.g., "attacker(...)" from "not attacker(...)")
+                match = re.search(r'(not\s+)?(\w+)\(', output.query)
+                if match:
+                    negation = "not " if match.group(1) else ""
+                    predicate = match.group(2)
+                    query_tag = f"{negation}{predicate}(...)"
+                else:
+                    # Truncate long queries
+                    query_tag = output.query[:50] + "..." if len(output.query) > 50 else output.query
+            
+            tree = renderer.build_tree_from_derivations(output.derivations, query_tag)
             if tree:
                 # Annotate with capabilities if analyzer is available
                 if capability_analyzer:
