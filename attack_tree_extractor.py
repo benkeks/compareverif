@@ -79,9 +79,10 @@ class TreeNode:
 class DerivationTree:
     """Represents a derivation as a DAG (directed acyclic graph)."""
 
-    def __init__(self, goal: str, query_tag: Optional[str] = None):
+    def __init__(self, goal: str, query_tag: Optional[str] = None, capability_costs: Optional[Dict[str, Dict[str, int]]] = None):
         self.goal = goal
         self.query_tag = query_tag  # Tag/name of the violated query
+        self.capability_costs = capability_costs or {}  # Map: capability name -> {"time": X, "hack": Y, ...}
         self.nodes: Dict[Tuple[str, Optional[str]], TreeNode] = {}  # Key: (fact, variant_id)
         self.edges: List[Tuple[Tuple[str, Optional[str]], Tuple[str, Optional[str]], Optional[str]]] = []  # (source, target, rule)
         self.add_node(goal, "goal")
@@ -174,12 +175,31 @@ class DerivationTree:
                 variants = [k for k in self.nodes.keys() if k[0] == target_fact and k[1] is not None]
                 is_disjunctive = len(variants) > 1 and target_key[1] is not None
                 
+                # Generate edge label based on capabilities and costs
                 label = ""
-                style = ""
+                cost_label = ""
+                
+                # Calculate costs from target node capabilities
+                if target_node.capabilities:
+                    cost_parts = []
+                    for cap in sorted(target_node.capabilities):
+                        if cap in self.capability_costs:
+                            costs = self.capability_costs[cap]
+                            for cost_type, cost_value in sorted(costs.items()):
+                                cost_parts.append(f"{cost_value} {cost_type}")
+                    if cost_parts:
+                        cost_label = " + ".join(cost_parts)
+                
                 if is_disjunctive:
-                    label = f' [label="{rule} (OR)", style=dashed]' if rule else ' [label="OR", style=dashed]'
-                elif rule:
-                    label = f' [label="{rule}"]'
+                    # For disjunctive edges, show costs and OR
+                    if cost_label:
+                        label = f' [label="(OR) {cost_label}", style=dashed]'
+                    else:
+                        label = ' [label="OR", style=dashed]'
+                elif cost_label:
+                    label = f' [label="{cost_label}"]'
+                # If no capabilities or costs, leave edge blank (no label)
+                
                 dot_lines.append(f"  {source_node.node_id} -> {target_node.node_id}{label};")
         
         dot_lines.append("}")
@@ -453,10 +473,11 @@ class CapabilityAnalyzer:
         'singularizations': 'Intruder at singularization database',
     }
 
-    def __init__(self):
+    def __init__(self, capability_costs: Optional[Dict[str, Dict[str, int]]] = None):
         self.base_clauses: Set[str] = set()
         self.capability_clauses: Dict[str, Set[str]] = {}
         self.table_capabilities: Dict[str, str] = self.TABLE_CAPABILITIES.copy()
+        self.capability_costs = capability_costs or {}  # Map: capability name -> {"time": X, "hack": Y, ...}
 
     def analyze_from_manifest(self, manifest_path: Path) -> Dict[str, Set[str]]:
         """
@@ -677,7 +698,7 @@ class GraphvizRenderer:
     """Renders derivations as graphviz diagrams."""
 
     @staticmethod
-    def build_tree_from_derivations(derivations: List[Derivation], query_tag: Optional[str] = None) -> Optional[DerivationTree]:
+    def build_tree_from_derivations(derivations: List[Derivation], query_tag: Optional[str] = None, capability_costs: Optional[Dict[str, Dict[str, int]]] = None) -> Optional[DerivationTree]:
         """
         Build a derivation tree from a list of derivations.
         
@@ -718,7 +739,7 @@ class GraphvizRenderer:
         # Find the goal
         goal = first_tree_derivs[0].conclusion
 
-        tree = DerivationTree(goal, query_tag)
+        tree = DerivationTree(goal, query_tag, capability_costs)
 
         # Filter to significant derivations (non-transformations)
         significant_derivs = []
@@ -948,13 +969,23 @@ def main():
         print(f"{'='*60}")
         print(f"Analyzing capabilities from: {manifest_path}")
         
-        capability_analyzer = CapabilityAnalyzer()
-        capability_analyzer.analyze_from_manifest(manifest_path)
-        
-        # Load manifest data for query tag lookup
+        # Load manifest data for query tag lookup and capability costs
         import json
         with open(manifest_path) as f:
             manifest_data = json.load(f)
+        
+        # Extract capability costs from all scenarios in manifest
+        capability_costs = {}
+        for scenario in manifest_data.get("scenarios", []):
+            for cap_info in scenario.get("capabilities", []):
+                cap_name = cap_info.get("name")
+                costs = cap_info.get("costs", {})
+                if cap_name and costs:
+                    # Store the costs (overwriting duplicates is fine, they should be the same)
+                    capability_costs[cap_name] = costs
+        
+        capability_analyzer = CapabilityAnalyzer(capability_costs)
+        capability_analyzer.analyze_from_manifest(manifest_path)
         print()
 
     for scenario_path in args.files:
@@ -1042,7 +1073,7 @@ def main():
                     # Truncate long queries
                     query_tag = output.query[:50] + "..." if len(output.query) > 50 else output.query
             
-            tree = renderer.build_tree_from_derivations(output.derivations, query_tag)
+            tree = renderer.build_tree_from_derivations(output.derivations, query_tag, capability_costs)
             if tree:
                 # Annotate with capabilities if analyzer is available
                 if capability_analyzer:
