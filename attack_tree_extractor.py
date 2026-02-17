@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Set
 from dataclasses import dataclass, field
 import argparse
+import json
 
 
 @dataclass
@@ -22,6 +23,8 @@ class Clause:
     head: str
     body: List[str] = field(default_factory=list)
     original_text: str = ""
+    clause_number: Optional[int] = None
+    capabilities: Set[str] = field(default_factory=set)  # Capabilities that introduce this clause
 
     def __repr__(self) -> str:
         if self.body:
@@ -36,6 +39,7 @@ class Derivation:
     premises: List[str] = field(default_factory=list)
     rule_name: Optional[str] = None
     indent_level: int = 0  # Track nesting depth for tree structure
+    clause_number: Optional[int] = None  # Track which clause was used
 
     def __repr__(self) -> str:
         if self.premises:
@@ -59,6 +63,8 @@ class TreeNode:
     fact: str
     rule: Optional[str] = None
     node_id: Optional[str] = None
+    capabilities: Set[str] = field(default_factory=set)  # Capabilities that introduce this node
+    clause_number: Optional[int] = None  # Clause number if derived from a clause
 
     def __post_init__(self):
         if self.node_id is None:
@@ -75,17 +81,24 @@ class DerivationTree:
         self.edges: List[Tuple[str, str, Optional[str]]] = []  # (source, target, rule)
         self.add_node(goal, "goal")
 
-    def add_node(self, fact: str, rule: Optional[str] = None) -> TreeNode:
+    def add_node(self, fact: str, rule: Optional[str] = None, capabilities: Optional[Set[str]] = None, clause_number: Optional[int] = None) -> TreeNode:
         """Add a node to the graph if not already present."""
         if fact not in self.nodes:
-            node = TreeNode(fact=fact, rule=rule)
+            node = TreeNode(fact=fact, rule=rule, capabilities=capabilities or set(), clause_number=clause_number)
             self.nodes[fact] = node
+        else:
+            # Merge capabilities if node already exists
+            if capabilities:
+                self.nodes[fact].capabilities.update(capabilities)
+            # Update clause number if provided
+            if clause_number is not None:
+                self.nodes[fact].clause_number = clause_number
         return self.nodes[fact]
 
-    def add_edge(self, source_fact: str, target_fact: str, rule: Optional[str] = None) -> None:
+    def add_edge(self, source_fact: str, target_fact: str, rule: Optional[str] = None, capabilities: Optional[Set[str]] = None, clause_number: Optional[int] = None) -> None:
         """Add an edge from source to target."""
         self.add_node(source_fact)
-        self.add_node(target_fact, rule)
+        self.add_node(target_fact, rule, capabilities, clause_number)
         self.edges.append((source_fact, target_fact, rule))
 
     def to_graphviz(self) -> str:
@@ -94,19 +107,46 @@ class DerivationTree:
         dot_lines.append('  rankdir=TD;')  # Top-down layout
         dot_lines.append('  node [shape=box, style=rounded];')
         
+        # Define colors for different capabilities (use a palette)
+        capability_colors = [
+            "#FFB6C1",  # Light pink
+            "#FFD700",  # Gold
+            "#98FB98",  # Pale green
+            "#87CEEB",  # Sky blue
+            "#DDA0DD",  # Plum
+            "#F0E68C",  # Khaki
+            "#FFA07A",  # Light salmon
+            "#20B2AA",  # Light sea green
+        ]
+        
         # Add all nodes
         for fact, node in self.nodes.items():
             # Truncate long facts for display
             label = fact if len(fact) <= 50 else fact[:47] + "..."
+            
+            # Add capability annotations to label
+            if node.capabilities:
+                cap_str = ", ".join(sorted(node.capabilities))
+                label = f"{label}\n[{cap_str}]"
+            
             label = label.replace('"', '\\"')
             
-            # Use different colors for goal
-            if node.rule == "goal":
-                dot_lines.append(f'  {node.node_id} [label="{label}", fillcolor=lightgreen, style="rounded,filled"];')
+            # Choose color based on capabilities
+            fillcolor = None
+            if node.capabilities:
+                # Use first capability for color (could be enhanced)
+                cap_list = sorted(node.capabilities)
+                cap_index = hash(cap_list[0]) % len(capability_colors)
+                fillcolor = capability_colors[cap_index]
+            elif node.rule == "goal":
+                fillcolor = "lightgreen"
             elif node.rule and "apply" in node.rule:
-                dot_lines.append(f'  {node.node_id} [label="{label}", fillcolor=lightyellow, style="rounded,filled"];')
+                fillcolor = "lightyellow"
             elif node.rule and "clause" in node.rule:
-                dot_lines.append(f'  {node.node_id} [label="{label}", fillcolor=lightblue, style="rounded,filled"];')
+                fillcolor = "lightblue"
+            
+            if fillcolor:
+                dot_lines.append(f'  {node.node_id} [label="{label}", fillcolor="{fillcolor}", style="rounded,filled"];')
             else:
                 dot_lines.append(f'  {node.node_id} [label="{label}"];')
         
@@ -136,13 +176,14 @@ class ProVerifRunner:
     def __init__(self, timeout: int = DEFAULT_TIMEOUT):
         self.timeout = timeout
 
-    def run(self, scenario_file: Path, verbose_clauses: bool = True) -> Tuple[int, str, str]:
+    def run(self, scenario_file: Path, verbose_clauses: bool = True, clause_verbosity: str = "short") -> Tuple[int, str, str]:
         """
         Run ProVerif on a scenario file.
 
         Args:
             scenario_file: Path to the ProVerif file (.pv)
-            verbose_clauses: Whether to use -set verboseClauses short
+            verbose_clauses: Whether to use -set verboseClauses
+            clause_verbosity: Verbosity level for clauses: "short" (initial clauses only) or "explained" (all clauses including completed)
 
         Returns:
             Tuple of (return_code, stdout, stderr)
@@ -152,7 +193,7 @@ class ProVerifRunner:
 
         cmd = ["proverif"]
         if verbose_clauses:
-            cmd.extend(["-set", "verboseClauses", "short"])
+            cmd.extend(["-set", "verboseClauses", clause_verbosity])
         # Use simpler derivation format for uniform parsing
         cmd.extend(["-set", "explainDerivation", "false"])
         cmd.append(str(scenario_file))
@@ -237,22 +278,19 @@ class ProVerifOutputParser:
                 i += 1
                 continue
 
-            # Stop collecting clauses at section break
-            if current_section == "clauses" and ("--" == line.strip() or (line.startswith("--") and len(line) <= 3)):
+            # Stop collecting clauses when we reach completion phase
+            if "Completing..." in line or "Starting query" in line:
                 current_section = None
                 i += 1
                 continue
 
-            # Process clause lines
-            if current_section == "clauses":
-                match = self.CLAUSE_LINE_PATTERN.match(line)
-                if match:
-                    clause_id = match.group(1)
-                    clause_content = match.group(2)
-                    self._parse_clause_line(clause_content)
-                elif line.startswith("Abbreviations:"):
-                    # Skip abbreviations block
-                    current_section = None
+            # Process clause lines (can appear anywhere before "Completing...")
+            # With verboseClauses explained, completed clauses can appear after "--" markers
+            match = self.CLAUSE_LINE_PATTERN.match(line)
+            if match:
+                clause_id = match.group(1)
+                clause_content = match.group(2)
+                self._parse_clause_line(clause_content, int(clause_id))
                 i += 1
                 continue
 
@@ -260,12 +298,13 @@ class ProVerifOutputParser:
 
         return self.output
 
-    def _parse_clause_line(self, clause_str: str) -> None:
+    def _parse_clause_line(self, clause_str: str, clause_number: Optional[int] = None) -> None:
         """
         Parse a clause line in format: premises -> conclusion or just conclusion.
 
         Args:
             clause_str: The clause content (without "Clause N:" prefix)
+            clause_number: The clause number from ProVerif output
         """
         clause_str = clause_str.strip().rstrip(".")
 
@@ -277,12 +316,12 @@ class ProVerifOutputParser:
                 conclusion = parts[1].strip()
                 premises = [p.strip() for p in premises_str.split("&&")]
                 clause = Clause(
-                    head=conclusion, body=premises, original_text=clause_str
+                    head=conclusion, body=premises, original_text=clause_str, clause_number=clause_number
                 )
             else:
-                clause = Clause(head=clause_str, original_text=clause_str)
+                clause = Clause(head=clause_str, original_text=clause_str, clause_number=clause_number)
         else:
-            clause = Clause(head=clause_str, original_text=clause_str)
+            clause = Clause(head=clause_str, original_text=clause_str, clause_number=clause_number)
 
         self.output.clauses.append(clause)
 
@@ -318,14 +357,16 @@ class ProVerifOutputParser:
             
             # Extract clause references (e.g., "clause 26 event(...)")
             elif stripped_line.startswith("clause "):
-                match = re.search(r"clause\s+\d+\s+(.+?)$", stripped_line)
+                match = re.search(r"clause\s+(\d+)\s+(.+?)$", stripped_line)
                 if match:
-                    fact = match.group(1).strip()
+                    clause_num = int(match.group(1))
+                    fact = match.group(2).strip()
                     derivation = Derivation(
                         conclusion=fact,
                         premises=[],
                         rule_name="clause",
-                        indent_level=indent_level
+                        indent_level=indent_level,
+                        clause_number=clause_num
                     )
                     self.output.derivations.append(derivation)
             
@@ -368,6 +409,158 @@ class ProVerifOutputParser:
                         indent_level=indent_level
                     )
                     self.output.derivations.append(derivation)
+
+
+class CapabilityAnalyzer:
+    """Analyzes which clauses and facts are introduced by specific capabilities."""
+
+    # Map table names to the capabilities that enable access to them
+    TABLE_CAPABILITIES = {
+        'passwd': 'Intruder at database',
+        'singularizations': 'Intruder at singularization database',
+    }
+
+    def __init__(self):
+        self.base_clauses: Set[str] = set()
+        self.capability_clauses: Dict[str, Set[str]] = {}
+        self.table_capabilities: Dict[str, str] = self.TABLE_CAPABILITIES.copy()
+
+    def analyze_from_manifest(self, manifest_path: Path) -> Dict[str, Set[str]]:
+        """
+        Analyze capabilities by comparing base scenario with single-capability scenarios.
+        
+        Args:
+            manifest_path: Path to manifest.json file
+            
+        Returns:
+            Dict mapping capability names to sets of clause text introduced by that capability
+        """
+        with open(manifest_path, 'r') as f:
+            manifest = json.load(f)
+        
+        # Find base scenario (no capabilities)
+        base_scenario = None
+        single_capability_scenarios = []
+        
+        for scenario in manifest['scenarios']:
+            if len(scenario['capabilities']) == 0:
+                base_scenario = scenario
+            elif len(scenario['capabilities']) == 1:
+                single_capability_scenarios.append(scenario)
+        
+        if not base_scenario:
+            print(f"Warning: No base scenario found in {manifest_path}")
+            return {}
+        
+        # Extract clauses from base scenario
+        base_output = self._extract_clauses_from_scenario(Path(base_scenario['path']))
+        self.base_clauses = set(c.original_text for c in base_output.clauses)
+        
+        # Compare each single-capability scenario with base
+        for scenario in single_capability_scenarios:
+            cap_name = scenario['capabilities'][0]['name']
+            cap_output = self._extract_clauses_from_scenario(Path(scenario['path']))
+            cap_clauses = set(c.original_text for c in cap_output.clauses)
+            
+            # Find clauses only in capability scenario
+            new_clauses = cap_clauses - self.base_clauses
+            self.capability_clauses[cap_name] = new_clauses
+            
+            print(f"  {cap_name}: {len(new_clauses)} new clauses")
+        
+        return self.capability_clauses
+
+    def _extract_clauses_from_scenario(self, scenario_path: Path) -> ProVerifOutput:
+        """Extract clauses from a scenario file, including completed clauses."""
+        runner = ProVerifRunner()
+        parser = ProVerifOutputParser()
+        
+        try:
+            # Use verboseClauses to get ALL clauses, including those generated during saturation
+            return_code, stdout, stderr = runner.run(scenario_path, verbose_clauses=True, clause_verbosity="short")
+            return parser.parse(stdout)
+        except Exception as e:
+            print(f"Warning: Failed to extract clauses from {scenario_path}: {e}")
+            return ProVerifOutput()
+
+    def annotate_tree_with_capabilities(self, tree: DerivationTree, scenario_path: Path) -> DerivationTree:
+        """
+        Annotate tree nodes with the capabilities that introduced them.
+        
+        Uses clause analysis to determine capabilities:
+        1. Clause text comparison for capabilities that add new inference rules
+        2. Clause head/conclusion analysis for capabilities that enable table access
+        
+        Args:
+            tree: DerivationTree to annotate
+            scenario_path: Path to the scenario file
+            
+        Returns:
+            Annotated tree (modifies in place, but also returns for convenience)
+        """
+        import re
+        
+        # Extract clauses and derivations from the scenario
+        output = self._extract_clauses_from_scenario(scenario_path)
+        
+        # Build mapping from derivation facts to capabilities
+        # This maps the CONCLUSION of each derivation to the capabilities it requires
+        fact_to_caps: Dict[str, Set[str]] = {}
+        
+        for deriv in output.derivations:
+            if not deriv.conclusion:
+                continue
+            
+            normalized_fact = ' '.join(deriv.conclusion.split())
+            matching_caps = set()
+            
+            # Check if this derivation's conclusion involves capability-specific tables
+            # by analyzing the table name in the fact
+            for table_name, cap_name in self.table_capabilities.items():
+                # Check for table access patterns in the derivation conclusion
+                if f'table({table_name}(' in normalized_fact.replace(' ', ''):
+                    matching_caps.add(cap_name)
+            
+            if matching_caps:
+                fact_to_caps[normalized_fact] = matching_caps
+        
+        # Also build mapping from clause number to capabilities for text-compared clauses
+        clause_num_to_caps: Dict[int, Set[str]] = {}
+        
+        for clause in output.clauses:
+            if clause.clause_number is None:
+                continue
+            
+            matching_caps = set()
+            clause_text = clause.original_text
+            
+            # Check if clause text appears only in capability scenarios (clause comparison)
+            for cap_name, cap_clauses in self.capability_clauses.items():
+                if clause_text in cap_clauses:
+                    matching_caps.add(cap_name)
+            
+            # Also check clause head for table references
+            if clause.head:
+                normalized_head = ' '.join(clause.head.split())
+                for table_name, cap_name in self.table_capabilities.items():
+                    if f'table({table_name}(' in normalized_head.replace(' ', ''):
+                        matching_caps.add(cap_name)
+            
+            if matching_caps:
+                clause_num_to_caps[clause.clause_number] = matching_caps
+        
+        # Annotate nodes based on their clause numbers or facts
+        for fact, node in tree.nodes.items():
+            # Method 1: Check clause number
+            if node.clause_number is not None and node.clause_number in clause_num_to_caps:
+                node.capabilities.update(clause_num_to_caps[node.clause_number])
+            
+            # Method 2: Check if the node fact matches a capability-attributed derivation
+            normalized_fact = ' '.join(fact.split())
+            if normalized_fact in fact_to_caps:
+                node.capabilities.update(fact_to_caps[normalized_fact])
+        
+        return tree
 
 
 class GraphvizRenderer:
@@ -435,7 +628,7 @@ class GraphvizRenderer:
         
         # Add all nodes first
         for deriv in significant_derivs:
-            tree.add_node(deriv.conclusion, deriv.rule_name)
+            tree.add_node(deriv.conclusion, deriv.rule_name, clause_number=deriv.clause_number)
         
         # Build parent-child relationships based on indentation
         # For each derivation, find its parent (the closest previous derivation with lower indent)
@@ -452,8 +645,8 @@ class GraphvizRenderer:
             # If parent found, create edge
             if parent_idx is not None:
                 parent = significant_derivs[parent_idx]
-                # Use child's rule_name as the edge label
-                tree.add_edge(parent.conclusion, deriv.conclusion, deriv.rule_name)
+                # Use child's rule_name as the edge label and pass clause number
+                tree.add_edge(parent.conclusion, deriv.conclusion, deriv.rule_name, clause_number=deriv.clause_number)
 
         return tree
 
@@ -594,15 +787,27 @@ def main():
         action="store_true",
         help="Skip printing the summary to console",
     )
+    parser.add_argument(
+        "--manifest",
+        metavar="FILE",
+        help="Manifest.json file for capability analysis (annotates attack trees with capabilities)",
+    )
 
     args = parser.parse_args()
 
-    if not args.files:
+    if not args.files and not args.manifest:
         print("Usage: python3 attack_tree_extractor.py <scenario_file.pv> [scenario_file2.pv ...]")
         print("\nOptions:")
         print("  --graphviz-dot DIR      Output graphviz dot files to DIR")
         print("  --graphviz-pdf DIR      Output graphviz PDF files to DIR (requires graphviz)")
         print("  --no-summary            Skip printing the summary")
+        print("  --manifest FILE         Use manifest.json for capability analysis")
+        print("\nExamples:")
+        print("  # Basic extraction")
+        print("  python3 attack_tree_extractor.py scenario.pv --graphviz-pdf output/")
+        print("\n  # With capability analysis")
+        print("  python3 attack_tree_extractor.py --manifest _scenarios/hashed_passwords/manifest.json \\")
+        print("      _scenarios/hashed_passwords/*.pv --graphviz-pdf annotated/")
         sys.exit(1)
 
     # Create output directories if needed
@@ -617,6 +822,23 @@ def main():
 
     extractor = AttackTreeExtractor()
     renderer = GraphvizRenderer()
+    
+    # Capability analysis setup
+    capability_analyzer = None
+    if args.manifest:
+        manifest_path = Path(args.manifest)
+        if not manifest_path.exists():
+            print(f"Error: Manifest file not found: {manifest_path}")
+            sys.exit(1)
+        
+        print(f"\n{'='*60}")
+        print("Capability Analysis")
+        print(f"{'='*60}")
+        print(f"Analyzing capabilities from: {manifest_path}")
+        
+        capability_analyzer = CapabilityAnalyzer()
+        capability_analyzer.analyze_from_manifest(manifest_path)
+        print()
 
     for scenario_path in args.files:
         scenario_file = Path(scenario_path)
@@ -629,6 +851,10 @@ def main():
         if output.derivations:
             tree = renderer.build_tree_from_derivations(output.derivations)
             if tree:
+                # Annotate with capabilities if analyzer is available
+                if capability_analyzer:
+                    tree = capability_analyzer.annotate_tree_with_capabilities(tree, scenario_file)
+                
                 base_name = scenario_file.stem
 
                 if dot_dir:

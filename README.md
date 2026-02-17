@@ -189,3 +189,20 @@ The attack tree visualizations show:
 - `--graphviz-dot DIR` - Output directory for graphviz dot files
 - `--graphviz-pdf DIR` - Output directory for PDF files (requires graphviz package)
 - `--no-summary` - Skip printing the console summary
+- `--manifest FILE` - Use manifest.json for capability analysis (annotates clauses with capabilities)
+
+#### Capability Analysis
+
+The attack tree extractor can annotate attack trees with the capabilities that enable each attack step. It compares clauses between the base scenario and single-capability scenarios to identify which clauses are introduced by each capability (including completed clauses generated during ProVerif's saturation phase). Nodes are color-coded by capability for visual distinction.
+
+**Usage:**
+
+```bash
+# Generate capability-annotated attack trees
+python3 attack_tree_extractor.py \
+  --manifest _scenarios/hashed_passwords/manifest.json \
+  _scenarios/hashed_passwords/rainbow_table_attack+intruder_at_database.pv \
+  --graphviz-pdf annotated_trees/
+```
+
+Attack tree nodes annotated with capabilities show labels like `[Rainbow table attack]` or `[Intruder at database]`, helping identify which attack steps depend on specific capabilities.
