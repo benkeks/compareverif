@@ -610,28 +610,7 @@ class CapabilityAnalyzer:
         # Extract clauses and derivations from the scenario
         output = self._extract_clauses_from_scenario(scenario_path)
         
-        # Build mapping from derivation facts to capabilities
-        # This maps the CONCLUSION of each derivation to the capabilities it requires
-        fact_to_caps: Dict[str, Set[str]] = {}
-        
-        for deriv in output.derivations:
-            if not deriv.conclusion:
-                continue
-            
-            normalized_fact = ' '.join(deriv.conclusion.split())
-            matching_caps = set()
-            
-            # Check if this derivation's conclusion involves capability-specific tables
-            # by analyzing the table name in the fact
-            for table_name, cap_name in self.table_capabilities.items():
-                # Check for table access patterns in the derivation conclusion
-                if f'table({table_name}(' in normalized_fact.replace(' ', ''):
-                    matching_caps.add(cap_name)
-            
-            if matching_caps:
-                fact_to_caps[normalized_fact] = matching_caps
-        
-        # Also build mapping from clause number to capabilities for text-compared clauses
+        # Build mapping from clause number to capabilities for text-compared clauses
         clause_num_to_caps: Dict[int, Set[str]] = {}
         
         for clause in output.clauses:
@@ -646,17 +625,18 @@ class CapabilityAnalyzer:
                 if clause_text in cap_clauses:
                     matching_caps.add(cap_name)
             
-            # Also check clause head for table references
-            if clause.head:
-                normalized_head = ' '.join(clause.head.split())
+            # Also check clause body (premises) for capability-specific patterns
+            # For example, clauses that require table access indicate database intrusion capabilities
+            for premise in clause.body:
+                normalized_premise = ' '.join(premise.split())
                 for table_name, cap_name in self.table_capabilities.items():
-                    if f'table({table_name}(' in normalized_head.replace(' ', ''):
+                    if f'table({table_name}(' in normalized_premise.replace(' ', ''):
                         matching_caps.add(cap_name)
             
             if matching_caps:
                 clause_num_to_caps[clause.clause_number] = matching_caps
         
-        # First pass: collect capabilities for each fact
+        # First pass: collect capabilities for each fact based on the clause used to derive it
         fact_capabilities: Dict[str, Set[str]] = {}
         
         for key, node in list(tree.nodes.items()):
@@ -667,14 +647,9 @@ class CapabilityAnalyzer:
                 
             capabilities = set()
             
-            # Method 1: Check clause number
+            # Check clause number to see if this node was derived using a capability-specific clause
             if node.clause_number is not None and node.clause_number in clause_num_to_caps:
                 capabilities.update(clause_num_to_caps[node.clause_number])
-            
-            # Method 2: Check if the node fact matches a capability-attributed derivation
-            normalized_fact = ' '.join(fact.split())
-            if normalized_fact in fact_to_caps:
-                capabilities.update(fact_to_caps[normalized_fact])
             
             if capabilities:
                 fact_capabilities[fact] = capabilities
