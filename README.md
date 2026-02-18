@@ -8,10 +8,10 @@ Formal verification of password authentication protocols using ProVerif.
 
 This project contains ProVerif models for analyzing the security of password authentication systems:
 
-- **hashed_passwords.pv** - Models a basic password authentication system with hashed passwords
-- **singularized_passwords.pv** - Models a more sophisticated system using password singularization
+- **examples/hashed_passwords.pv** - Models a basic password authentication system with hashed passwords
+- **examples/singularized_passwords.pv** - Models a more sophisticated system using password singularization
 
-The `scenario_preprocessor.py` script automates the generation and verification of multiple attack scenarios.
+The `scenario_preprocessor.py` script automates the generation and verification of multiple attack scenarios. For attack tree extraction and visualization, use `attack_tree_extractor.py`.
 
 ## Requirements
 
@@ -33,14 +33,14 @@ python3 scenario_preprocessor.py <input_file.pv> [additional_files.pv ...]
 
 **Examples:**
 
-Process a single file:
+Process a single example file:
 ```bash
-python3 scenario_preprocessor.py hashed_passwords.pv
+python3 scenario_preprocessor.py examples/hashed_passwords.pv
 ```
 
-Process multiple files:
+Process multiple example files:
 ```bash
-python3 scenario_preprocessor.py hashed_passwords.pv singularized_passwords.pv
+python3 scenario_preprocessor.py examples/hashed_passwords.pv examples/singularized_passwords.pv
 ```
 
 ### How It Works
@@ -146,7 +146,7 @@ python3 attack_tree_extractor.py <scenario_file.pv> --graphviz-dot <dir> --graph
 
 **Examples:**
 
-Extract clauses and derivations from a single scenario:
+Extract clauses and derivations from a generated scenario:
 ```bash
 python3 attack_tree_extractor.py _scenarios/hashed_passwords/brute_force_attack.pv
 ```
