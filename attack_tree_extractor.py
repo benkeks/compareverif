@@ -199,6 +199,24 @@ class DerivationTree:
             # Merge capabilities if node already exists
             if capabilities:
                 self.nodes[key].capabilities.update(capabilities)
+            # Update rule if the new rule is more specific/informative
+            # Rule priority (highest to lowest): goal > clause > initial > duplicate > apply*
+            rule_priority = {
+                "goal": 5,
+                "clause": 4,
+                "initial": 3,
+                "duplicate": 2,
+            }
+            current_priority = rule_priority.get(self.nodes[key].rule, 0)
+            new_priority = rule_priority.get(rule, 0) if rule else 0
+            # Also check if rule contains "apply"
+            if self.nodes[key].rule and "apply" in self.nodes[key].rule:
+                current_priority = 1
+            if rule and "apply" in rule:
+                new_priority = 1
+            
+            if new_priority > current_priority:
+                self.nodes[key].rule = rule
             # Update clause number if provided
             if clause_number is not None:
                 self.nodes[key].clause_number = clause_number
@@ -730,17 +748,10 @@ class ProVerifOutputParser:
 class CapabilityAnalyzer:
     """Analyzes which clauses and facts are introduced by specific capabilities."""
 
-    # Map table names to the capabilities that enable access to them
-    TABLE_CAPABILITIES = {
-        'passwd': 'Intruder at database',
-        'singularizations': 'Intruder at singularization database',
-    }
-
     def __init__(self, capability_costs: Optional[Dict[str, Dict[str, int]]] = None):
         self.base_clauses: Set[str] = set()
         self.capability_clauses: Dict[str, Set[str]] = {}
         self.capability_clause_numbers: Dict[str, List[Tuple[Optional[Set[int]], int, str]]] = {}
-        self.table_capabilities: Dict[str, str] = self.TABLE_CAPABILITIES.copy()
         self.capability_costs = capability_costs or {}  # Map: capability name -> {"time": X, "hack": Y, ...}
 
     def analyze_from_manifest(self, manifest_path: Path) -> Dict[str, Set[str]]:
@@ -781,36 +792,94 @@ class CapabilityAnalyzer:
             cap_clauses = set(c.original_text for c in cap_output.clauses)
             
             # Find clauses only in capability scenario
-            new_clauses = cap_clauses - self.base_clauses
+            # Use fuzzy matching: if base has a structurally similar clause, don't mark as new
+            new_clauses = set()
+            for cap_clause in cap_clauses:
+                is_new = True
+                for base_clause in self.base_clauses:
+                    if cap_clause == base_clause or self._clauses_structurally_match(cap_clause, base_clause):
+                        is_new = False
+                        break
+                if is_new:
+                    new_clauses.add(cap_clause)
+            
             self.capability_clauses[cap_name] = new_clauses
 
             print(f"  {cap_name}: {len(new_clauses)} new clauses")
         
         return self.capability_clauses
 
+    def _clauses_structurally_match(self, clause1: str, clause2: str) -> bool:
+        """
+        Check if two clauses have the same structure, ignoring variable names.
+        
+        Example: 
+            "table(singularizations(uid0_1,r0_2))" matches 
+            "table(singularizations(uid0_2,r0_2))" (same structure, different var names)
+        """
+        import re
+        
+        # Normalize: replace all variable-like names with a placeholder
+        def normalize_clause(clause: str) -> str:
+            # Replace variable names (lowercase identifiers) with X
+            normalized = re.sub(r'\b[a-z_]\w*\d*(?![_(])\b', 'X', clause)
+            return normalized
+        
+        return normalize_clause(clause1) == normalize_clause(clause2)
+
     def update_capability_clause_numbers_from_output(self, output: ProVerifOutput) -> None:
-        """Populate and print capability clause numbers from the main scenario output."""
+        """Populate and print capability clause numbers based on the scenario's derivations."""
         self.capability_clause_numbers = {}
+        all_clause_initial: Dict[Tuple[int, str], bool] = {}
 
-        for cap_name, cap_clauses in self.capability_clauses.items():
-            clause_map: Dict[Tuple[int, str], Set[int]] = {}
-            clause_initial: Dict[Tuple[int, str], bool] = {}
-            for clause in output.clauses:
-                if clause.clause_number is None:
-                    continue
-                if clause.original_text in cap_clauses:
-                    key = (clause.clause_number, clause.original_text)
-                    scope_set = clause_map.setdefault(key, set())
-                    if clause.clause_scope is not None:
-                        scope_set.add(clause.clause_scope)
-                    if key not in clause_initial:
-                        clause_initial[key] = clause.is_initial
-            clause_numbers: List[Tuple[Optional[Set[int]], int, str]] = []
-            for (clause_number, clause_text), scopes in clause_map.items():
-                clause_numbers.append((scopes if scopes else None, clause_number, clause_text))
-            clause_numbers.sort(key=lambda item: (item[1], item[2]))
-            self.capability_clause_numbers[cap_name] = clause_numbers
+        # First, collect all clauses that are actually used in derivations
+        clauses_in_derivations: Set[int] = set()
+        for deriv in output.derivations:
+            if deriv.clause_number is not None:
+                clauses_in_derivations.add(deriv.clause_number)
 
+        # For each clause used in derivations, find which capabilities introduced it and track all query scopes
+        clause_to_caps: Dict[Tuple[int, str], Tuple[Set[str], Set[int]]] = {}  # (clause_num, text) -> (cap_names, query_scopes)
+        
+        for clause in output.clauses:
+            if clause.clause_number is None or clause.clause_number not in clauses_in_derivations:
+                continue
+            
+            # Check which capabilities have a clause with similar text (fuzzy match for variable differences)
+            clause_text = clause.original_text
+            matching_caps = set()
+            
+            for cap_name, cap_clauses in self.capability_clauses.items():
+                # Try exact match first
+                if clause_text in cap_clauses:
+                    matching_caps.add(cap_name)
+                else:
+                    # Try fuzzy match: same structure, ignoring variable names
+                    for cap_clause_text in cap_clauses:
+                        if self._clauses_structurally_match(clause_text, cap_clause_text):
+                            matching_caps.add(cap_name)
+                            break
+            
+            if matching_caps:
+                key = (clause.clause_number, clause_text)
+                if key not in clause_to_caps:
+                    clause_to_caps[key] = (matching_caps, set())
+                caps, scopes = clause_to_caps[key]
+                if clause.clause_scope is not None:
+                    scopes.add(clause.clause_scope)
+                all_clause_initial[key] = clause.is_initial
+
+        # Reorganize by capability  
+        for cap_name in sorted(self.capability_clauses.keys()):
+            cap_clauses_list = []
+            for (clause_num, clause_text), (caps, scopes) in clause_to_caps.items():
+                if cap_name in caps:
+                    cap_clauses_list.append((scopes if scopes else None, clause_num, clause_text))
+            
+            cap_clauses_list.sort(key=lambda item: (item[1], item[2]))
+            self.capability_clause_numbers[cap_name] = cap_clauses_list
+
+        # Print capability-attributed clauses
         if self.capability_clause_numbers:
             print("\nCapability clauses (by capability):")
             for cap_name in sorted(self.capability_clause_numbers.keys()):
@@ -820,13 +889,13 @@ class CapabilityAnalyzer:
                     print("  (none)")
                     continue
                 for clause_scopes, clause_number, clause_text in entries:
+                    clause_tag = "initial" if all_clause_initial.get((clause_number, clause_text), False) else "derived"
                     if clause_scopes:
                         query_indices = ", ".join(str(scope - 1) for scope in sorted(clause_scopes))
-                        clause_tag = "initial" if clause_initial.get((clause_number, clause_text), False) else "derived"
                         print(f"  Clause {clause_number} (Query {query_indices}) [{clause_tag}]: {clause_text}")
                     else:
-                        clause_tag = "initial" if clause_initial.get((clause_number, clause_text), False) else "derived"
                         print(f"  Clause {clause_number} [{clause_tag}]: {clause_text}")
+
 
     def _extract_clauses_from_scenario(self, scenario_path: Path) -> ProVerifOutput:
         """Extract clauses from a scenario file, including completed clauses."""
@@ -846,9 +915,7 @@ class CapabilityAnalyzer:
         Annotate tree nodes with the capabilities that introduced them.
         Creates separate variant nodes when multiple capabilities can achieve the same result.
         
-        Uses clause analysis to determine capabilities:
-        1. Clause text comparison for capabilities that add new inference rules
-        2. Clause head/conclusion analysis for capabilities that enable table access
+        Uses clause text comparison to determine which capabilities introduce new clauses.
         
         Args:
             tree: DerivationTree to annotate
@@ -862,7 +929,7 @@ class CapabilityAnalyzer:
         # Extract clauses and derivations from the scenario
         output = self._extract_clauses_from_scenario(scenario_path)
         
-        # Build mapping from clause number to capabilities for text-compared clauses
+        # Build mapping from clause number to capabilities
         clause_num_to_caps: Dict[Tuple[Optional[int], int], Set[str]] = {}
         
         for clause in output.clauses:
@@ -872,18 +939,17 @@ class CapabilityAnalyzer:
             matching_caps = set()
             clause_text = clause.original_text
             
-            # Check if clause text appears only in capability scenarios (clause comparison)
+            # Check if clause text appears in any capability's new clauses
             for cap_name, cap_clauses in self.capability_clauses.items():
+                # Try exact match first
                 if clause_text in cap_clauses:
                     matching_caps.add(cap_name)
-            
-            # Also check clause body (premises) for capability-specific patterns
-            # For example, clauses that require table access indicate database intrusion capabilities
-            for premise in clause.body:
-                normalized_premise = ' '.join(premise.split())
-                for table_name, cap_name in self.table_capabilities.items():
-                    if f'table({table_name}(' in normalized_premise.replace(' ', ''):
-                        matching_caps.add(cap_name)
+                else:
+                    # Try fuzzy match: same structure, ignoring variable names
+                    for cap_clause_text in cap_clauses:
+                        if self._clauses_structurally_match(clause_text, cap_clause_text):
+                            matching_caps.add(cap_name)
+                            break
             
             if matching_caps:
                 clause_key = (clause.clause_scope, clause.clause_number)
@@ -1032,25 +1098,14 @@ class GraphvizRenderer:
 
         tree = DerivationTree(goal, query_tag, capability_costs, readable_nodes, show_clause_ids)
 
-        # Filter to significant derivations (non-transformations)
-        significant_derivs = []
+        # Separate derivations into different categories
+        all_derivs = first_tree_derivs
         
-        for deriv in first_tree_derivs:
-            # Skip transformation steps (apply, duplicate)
-            is_transformation = (
-                deriv.rule_name and 
-                (deriv.rule_name.startswith("apply ") or 
-                 deriv.rule_name == "duplicate")
-            )
-            
-            if not is_transformation:
-                significant_derivs.append(deriv)
-        
-        if not significant_derivs:
-            return tree
-        
-        # Add all nodes first
-        for deriv in significant_derivs:
+        # Add all nodes (including duplicates and transformations)
+        for deriv in all_derivs:
+            # Skip "apply" transformations - they don't represent real derivation steps
+            if deriv.rule_name and deriv.rule_name.startswith("apply "):
+                continue
             tree.add_node(
                 deriv.conclusion,
                 deriv.rule_name,
@@ -1060,26 +1115,33 @@ class GraphvizRenderer:
         
         # Build parent-child relationships based on indentation
         # For each derivation, find its parent (the closest previous derivation with lower indent)
-        for i, deriv in enumerate(significant_derivs):
+        for i, deriv in enumerate(all_derivs):
+            # Skip "apply" transformations
+            if deriv.rule_name and deriv.rule_name.startswith("apply "):
+                continue
+                
             current_indent = deriv.indent_level
             
-            # Find parent: look backwards for first item with lower indent level
+            # Find parent: look backwards for first item with lower indent level, skipping apply steps
             parent_idx = None
             for j in range(i - 1, -1, -1):
-                if significant_derivs[j].indent_level < current_indent:
+                if all_derivs[j].rule_name and all_derivs[j].rule_name.startswith("apply "):
+                    continue
+                if all_derivs[j].indent_level < current_indent:
                     parent_idx = j
                     break
             
-            # If parent found, create edge
+            # If parent found and it's not a self-loop, create edge
             if parent_idx is not None:
-                parent = significant_derivs[parent_idx]
-                # Use child's rule_name as the edge label and pass clause number
-                tree.add_edge(
-                    parent.conclusion,
-                    deriv.conclusion,
-                    deriv.rule_name,
-                    clause_number=deriv.clause_number,
-                    clause_scope=deriv.query_scope,
+                parent = all_derivs[parent_idx]
+                # Don't create self-loops
+                if parent.conclusion != deriv.conclusion:
+                    tree.add_edge(
+                        parent.conclusion,
+                        deriv.conclusion,
+                        deriv.rule_name,
+                        clause_number=deriv.clause_number,
+                        clause_scope=deriv.query_scope,
                 )
 
         return tree

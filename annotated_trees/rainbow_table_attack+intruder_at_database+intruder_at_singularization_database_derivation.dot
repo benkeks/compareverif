@@ -1,0 +1,37 @@
+digraph DerivationTree {
+  rankdir=TD;
+  node [shape=box, style=rounded];
+  node_42334 [label=<Event <FONT FACE="courier">server_user_authenticated(user1)</FONT> happens.<BR/>(❌ event(...))<BR/>Clause 38>, fillcolor="lightgreen", style="rounded,filled"];
+  node_54530 [label=<Table <FONT FACE="courier">passwd</FONT> contains (<FONT FACE="courier">user1,hashed(singularized(the_password,the_singularization),the_salt),the_salt</FONT>).<BR/>Clause 35>, fillcolor="lightblue", style="rounded,filled"];
+  node_60579 [label=<Channel <FONT FACE="courier">answer_channel[x = aenc((user1,the_password),pk(app_server_secret)),!1 = @sid],singularized(senc(the_password,elgamal_secret[x = aenc((user1,the_password),pk(app_server_secret)),!1 = @sid])</FONT> transports <FONT FACE="courier">the_singularization)</FONT>.<BR/>Clause 42>, fillcolor="lightblue", style="rounded,filled"];
+  node_96082 [label=<Table <FONT FACE="courier">singularizations</FONT> contains (<FONT FACE="courier">user1,the_singularization</FONT>).<BR/>Clause 34>, fillcolor="lightblue", style="rounded,filled"];
+  node_52065 [label=<Attacker learns <FONT FACE="courier">aenc((user1,senc(the_password,elgamal_secret[x = aenc((user1,the_password),pk(app_server_secret)),!1 = @sid]),answer_channel[x = aenc((user1,the_password),pk(app_server_secret)),!1 = @sid]),pk(singularization_server_secret))</FONT>.<BR/>Clause 37>, fillcolor="lightblue", style="rounded,filled"];
+  node_67269 [label=<Attacker learns <FONT FACE="courier">aenc((user1,the_password),pk(app_server_secret))</FONT>.<BR/>Clause 10>, fillcolor="lightblue", style="rounded,filled"];
+  node_97622 [label=<Attacker learns <FONT FACE="courier">the_password</FONT>.<BR/>Clause 0>, fillcolor="lightblue", style="rounded,filled"];
+  node_4937 [label=<Attacker learns <FONT FACE="courier">pk(app_server_secret)</FONT>.<BR/>Clause 32>, fillcolor="lightblue", style="rounded,filled"];
+  node_73515 [label=<Channel <FONT FACE="courier">loop</FONT> transports <FONT FACE="courier">()</FONT>.<BR/>Clause 36>, fillcolor="lightblue", style="rounded,filled"];
+  node_94664 [label=<Channel <FONT FACE="courier">loop_1</FONT> transports <FONT FACE="courier">()</FONT>.<BR/>Clause 41>, fillcolor="lightblue", style="rounded,filled"];
+  node_38634 [label=<Attacker learns <FONT FACE="courier">hashed(singularized(the_password,the_singularization),the_salt)</FONT> and<BR/><FONT FACE="courier">the_salt</FONT>.<BR/>Clause 47<BR/><B>Intruder at database</B>>, fillcolor="#DDA0DD", style="rounded,filled"];
+  node_3556 [label=<Attacker learns <FONT FACE="courier">user1</FONT> and <FONT FACE="courier">the_singularization</FONT>.<BR/>Clause 48<BR/><B>Intruder at singularization database</B>>, fillcolor="#DDA0DD", style="rounded,filled"];
+  node_78287 [label=<Attacker learns <FONT FACE="courier">singularized(the_password,the_singularization)</FONT>.<BR/>Clause 1<BR/><B>Rainbow table attack</B>>, fillcolor="#DDA0DD", style="rounded,filled"];
+  node_2168 [label=<Attacker learns <FONT FACE="courier">singularized(the_password,the_singularization)</FONT>.<BR/>Clause 1<BR/><B>Side-channel attack</B>>, fillcolor="#DDA0DD", style="rounded,filled"];
+  node_42334 -> node_54530;
+  node_42334 -> node_60579;
+  node_60579 -> node_96082;
+  node_60579 -> node_52065;
+  node_52065 -> node_67269;
+  node_67269 -> node_97622;
+  node_67269 -> node_4937;
+  node_52065 -> node_73515;
+  node_60579 -> node_94664;
+  node_42334 -> node_67269;
+  node_97622 -> node_78287 [label="100 time (OR)", style=dashed];
+  node_97622 -> node_2168 [label="1 hack + 10 observation + 10 time (OR)", style=dashed];
+  node_78287 -> node_38634 [label="1 hack"];
+  node_2168 -> node_38634 [label="1 hack"];
+  node_38634 -> node_54530;
+  node_78287 -> node_3556 [label="1 hack"];
+  node_2168 -> node_3556 [label="1 hack"];
+  node_3556 -> node_96082;
+  node_42334 -> node_73515;
+}

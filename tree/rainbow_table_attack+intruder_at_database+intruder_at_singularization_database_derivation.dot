@@ -1,0 +1,16 @@
+digraph DerivationTree {
+  rankdir=TD;
+  node [shape=box, style=rounded];
+  node_67213 [label="attacker(the_password[])", fillcolor=lightgreen, style="rounded,filled"];
+  node_60427 [label="attacker(singularized(the_password[],the_singul...", fillcolor=lightblue, style="rounded,filled"];
+  node_19473 [label="attacker((hashed(singularized(the_password[],th...", fillcolor=lightblue, style="rounded,filled"];
+  node_42148 [label="table(passwd(user1[],hashed(singularized(the_pa...", fillcolor=lightblue, style="rounded,filled"];
+  node_56561 [label="attacker((user1[],the_singularization[]))", fillcolor=lightblue, style="rounded,filled"];
+  node_72936 [label="table(singularizations(user1[],the_singularizat...", fillcolor=lightblue, style="rounded,filled"];
+  node_67213 -> node_67213 [label="clause"];
+  node_67213 -> node_60427 [label="clause"];
+  node_60427 -> node_19473 [label="clause"];
+  node_19473 -> node_42148 [label="clause"];
+  node_60427 -> node_56561 [label="clause"];
+  node_56561 -> node_72936 [label="clause"];
+}
