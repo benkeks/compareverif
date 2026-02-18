@@ -143,6 +143,24 @@ class TreeNode:
             args = args.replace('[]', '')
             return f"Table {mono(table_name)} contains ({mono(args)})."
         
+        # Handle mess(chan, msg) pattern
+        mess_match = re.match(r'mess\((.+),\s*(.+)\)\s*$', fact, re.DOTALL)
+        if mess_match:
+            chan = mess_match.group(1).strip()
+            msg = mess_match.group(2).strip()
+            # Remove [] from variable names
+            chan = chan.replace('[]', '')
+            msg = msg.replace('[]', '')
+            return f"Channel {mono(chan)} transports {mono(msg)}."
+        
+        # Handle event(e) pattern
+        event_match = re.match(r'event\((.+)\)\s*$', fact, re.DOTALL)
+        if event_match:
+            event_content = event_match.group(1).strip()
+            # Remove [] from variable names
+            event_content = event_content.replace('[]', '')
+            return f"Event {mono(event_content)} happens."
+        
         # Default: return as-is (with [] removed, in monospace)
         return mono(fact.replace('[]', ''))
 
