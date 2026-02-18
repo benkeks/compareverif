@@ -18,6 +18,37 @@ The `scenario_preprocessor.py` script automates the generation and verification 
 - Python 3 (tested with Python 3.13.9)
 - [ProVerif](https://bblanche.gitlabpages.inria.fr/proverif/) - Protocol verification tool
 - [Graphviz](https://graphviz.org/) - Optional, required for PDF rendering of attack trees
+- [pytest](https://pytest.org/) - Test framework (optional, for running tests)
+
+## Setup
+
+Install pytest for testing (optional):
+
+```bash
+pip install pytest
+```
+
+Coverage reporting uses the built-in `coverage` module if available.
+
+## Testing
+
+The project includes a comprehensive test suite with 89 unit tests covering the core modules.
+
+**Run all tests:**
+
+```bash
+python3 -m pytest
+```
+
+**Run tests and show coverage** (alternative method):
+
+```bash
+# Run tests with coverage tracking
+python3 -m coverage run -m pytest tests/
+
+# View coverage report
+python3 -m coverage report -m
+```
 
 ## Usage
 
