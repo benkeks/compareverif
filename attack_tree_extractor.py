@@ -24,6 +24,8 @@ class Clause:
     body: List[str] = field(default_factory=list)
     original_text: str = ""
     clause_number: Optional[int] = None
+    clause_scope: Optional[int] = None  # Query-scope identifier for this clause list
+    is_initial: bool = False  # True if clause is listed under "Initial clauses:"
     capabilities: Set[str] = field(default_factory=set)  # Capabilities that introduce this clause
 
     def __repr__(self) -> str:
@@ -41,6 +43,7 @@ class Derivation:
     indent_level: int = 0  # Track nesting depth for tree structure
     clause_number: Optional[int] = None  # Track which clause was used
     query: Optional[str] = None  # The query this derivation belongs to
+    query_scope: Optional[int] = None  # Query-scope identifier for clause numbering
 
     def __repr__(self) -> str:
         if self.premises:
@@ -68,6 +71,7 @@ class TreeNode:
     node_id: Optional[str] = None
     capabilities: Set[str] = field(default_factory=set)  # Capabilities that introduce this node
     clause_number: Optional[int] = None  # Clause number if derived from a clause
+    clause_scope: Optional[int] = None  # Query-scope identifier for the clause number
     variant_id: Optional[str] = None  # Variant identifier for disjunctive alternatives
 
     def __post_init__(self):
@@ -168,20 +172,28 @@ class TreeNode:
 class DerivationTree:
     """Represents a derivation as a DAG (directed acyclic graph)."""
 
-    def __init__(self, goal: str, query_tag: Optional[str] = None, capability_costs: Optional[Dict[str, Dict[str, int]]] = None, readable_nodes: bool = False):
+    def __init__(self, goal: str, query_tag: Optional[str] = None, capability_costs: Optional[Dict[str, Dict[str, int]]] = None, readable_nodes: bool = False, show_clause_ids: bool = False):
         self.goal = goal
         self.query_tag = query_tag  # Tag/name of the violated query
         self.capability_costs = capability_costs or {}  # Map: capability name -> {"time": X, "hack": Y, ...}
         self.readable_nodes = readable_nodes  # Whether to use readable node labels
+        self.show_clause_ids = show_clause_ids  # Whether to display clause numbers in node labels
         self.nodes: Dict[Tuple[str, Optional[str]], TreeNode] = {}  # Key: (fact, variant_id)
         self.edges: List[Tuple[Tuple[str, Optional[str]], Tuple[str, Optional[str]], Optional[str]]] = []  # (source, target, rule)
         self.add_node(goal, "goal")
 
-    def add_node(self, fact: str, rule: Optional[str] = None, capabilities: Optional[Set[str]] = None, clause_number: Optional[int] = None, variant_id: Optional[str] = None) -> TreeNode:
+    def add_node(self, fact: str, rule: Optional[str] = None, capabilities: Optional[Set[str]] = None, clause_number: Optional[int] = None, variant_id: Optional[str] = None, clause_scope: Optional[int] = None) -> TreeNode:
         """Add a node to the graph if not already present."""
         key = (fact, variant_id)
         if key not in self.nodes:
-            node = TreeNode(fact=fact, rule=rule, capabilities=capabilities or set(), clause_number=clause_number, variant_id=variant_id)
+            node = TreeNode(
+                fact=fact,
+                rule=rule,
+                capabilities=capabilities or set(),
+                clause_number=clause_number,
+                clause_scope=clause_scope,
+                variant_id=variant_id,
+            )
             self.nodes[key] = node
         else:
             # Merge capabilities if node already exists
@@ -190,12 +202,14 @@ class DerivationTree:
             # Update clause number if provided
             if clause_number is not None:
                 self.nodes[key].clause_number = clause_number
+            if clause_scope is not None:
+                self.nodes[key].clause_scope = clause_scope
         return self.nodes[key]
 
-    def add_edge(self, source_fact: str, target_fact: str, rule: Optional[str] = None, capabilities: Optional[Set[str]] = None, clause_number: Optional[int] = None, source_variant: Optional[str] = None, target_variant: Optional[str] = None) -> None:
+    def add_edge(self, source_fact: str, target_fact: str, rule: Optional[str] = None, capabilities: Optional[Set[str]] = None, clause_number: Optional[int] = None, source_variant: Optional[str] = None, target_variant: Optional[str] = None, clause_scope: Optional[int] = None) -> None:
         """Add an edge from source to target."""
         self.add_node(source_fact, variant_id=source_variant)
-        self.add_node(target_fact, rule, capabilities, clause_number, variant_id=target_variant)
+        self.add_node(target_fact, rule, capabilities, clause_number, variant_id=target_variant, clause_scope=clause_scope)
         self.edges.append(((source_fact, source_variant), (target_fact, target_variant), rule))
 
     @staticmethod
@@ -322,6 +336,11 @@ class DerivationTree:
                 tag_html = self._format_label_html(f"(❌ {self.query_tag})")
                 html_parts.append(tag_html)
             
+            # Add clause id if enabled
+            if self.show_clause_ids and node.clause_number is not None:
+                clause_html = self._format_label_html(f"Clause {node.clause_number}")
+                html_parts.append(clause_html)
+
             # Add capability annotations in bold
             if node.capabilities:
                 cap_str = ", ".join(sorted(node.capabilities))
@@ -421,6 +440,9 @@ class ProVerifRunner:
             cmd.extend(["-set", "verboseClauses", clause_verbosity])
         # Use simpler derivation format for uniform parsing
         cmd.extend(["-set", "explainDerivation", "false"])
+        cmd.extend(["-set", "simplifyDerivation", "false"])
+        cmd.extend(["-set", "abbreviateDerivation", "false"])
+        cmd.extend(["-set", "abbreviateClauses", "false"])
         cmd.append(str(scenario_file))
 
         try:
@@ -468,7 +490,10 @@ class ProVerifOutputParser:
         current_section = None
         i = 0
         in_derivation_block = False
-        current_query = None  # Track the most recent query for the next derivation
+        current_query = None  # Track the most recent query for the next derivation/clauses
+        current_query_scope: Optional[int] = None
+        query_scope_counter = 0
+        in_initial_clauses = False
 
         while i < len(lines):
             line = lines[i].rstrip()
@@ -482,6 +507,11 @@ class ProVerifOutputParser:
                 # Fallback to "Starting query" if we haven't seen "goal reachable" yet
                 query_text = line.strip().replace("Starting query ", "").strip()
                 current_query = query_text
+            elif line.strip().startswith("-- Query "):
+                query_text = line.strip().replace("-- Query ", "").strip()
+                current_query = query_text
+                query_scope_counter += 1
+                current_query_scope = query_scope_counter
 
             # Detect start of derivation section
             if line.strip() == "Derivation:":
@@ -508,20 +538,28 @@ class ProVerifOutputParser:
                     i += 1
                 
                 # Parse all collected derivation lines with the current query
-                self._parse_derivation_block(derivation_lines, current_query)
+                self._parse_derivation_block(derivation_lines, current_query, current_query_scope)
                 in_derivation_block = False
                 continue
 
             # Detect section headers for clauses
-            if "Initial clauses:" in line or "clauses:" in line.lower():
+            if "Initial clauses:" in line:
                 in_derivation_block = False
                 current_section = "clauses"
+                in_initial_clauses = True
+                i += 1
+                continue
+            if "clauses:" in line.lower():
+                in_derivation_block = False
+                current_section = "clauses"
+                in_initial_clauses = False
                 i += 1
                 continue
 
             # Stop collecting clauses when we reach completion phase
             if "Completing..." in line or "Starting query" in line:
                 current_section = None
+                in_initial_clauses = False
                 i += 1
                 continue
 
@@ -531,7 +569,12 @@ class ProVerifOutputParser:
             if match:
                 clause_id = match.group(1)
                 clause_content = match.group(2)
-                self._parse_clause_line(clause_content, int(clause_id))
+                self._parse_clause_line(
+                    clause_content,
+                    int(clause_id),
+                    clause_scope=current_query_scope,
+                    is_initial=in_initial_clauses,
+                )
                 i += 1
                 continue
 
@@ -539,13 +582,15 @@ class ProVerifOutputParser:
 
         return self.output
 
-    def _parse_clause_line(self, clause_str: str, clause_number: Optional[int] = None) -> None:
+    def _parse_clause_line(self, clause_str: str, clause_number: Optional[int] = None, clause_scope: Optional[int] = None, is_initial: bool = False) -> None:
         """
         Parse a clause line in format: premises -> conclusion or just conclusion.
 
         Args:
             clause_str: The clause content (without "Clause N:" prefix)
             clause_number: The clause number from ProVerif output
+            clause_scope: Query-scope identifier for this clause list
+            is_initial: True if clause is listed under "Initial clauses:"
         """
         clause_str = clause_str.strip().rstrip(".")
 
@@ -557,22 +602,40 @@ class ProVerifOutputParser:
                 conclusion = parts[1].strip()
                 premises = [p.strip() for p in premises_str.split("&&")]
                 clause = Clause(
-                    head=conclusion, body=premises, original_text=clause_str, clause_number=clause_number
+                    head=conclusion,
+                    body=premises,
+                    original_text=clause_str,
+                    clause_number=clause_number,
+                    clause_scope=clause_scope,
+                    is_initial=is_initial,
                 )
             else:
-                clause = Clause(head=clause_str, original_text=clause_str, clause_number=clause_number)
+                clause = Clause(
+                    head=clause_str,
+                    original_text=clause_str,
+                    clause_number=clause_number,
+                    clause_scope=clause_scope,
+                    is_initial=is_initial,
+                )
         else:
-            clause = Clause(head=clause_str, original_text=clause_str, clause_number=clause_number)
+            clause = Clause(
+                head=clause_str,
+                original_text=clause_str,
+                clause_number=clause_number,
+                clause_scope=clause_scope,
+                is_initial=is_initial,
+            )
 
         self.output.clauses.append(clause)
 
-    def _parse_derivation_block(self, lines: List[str], query: Optional[str] = None) -> None:
+    def _parse_derivation_block(self, lines: List[str], query: Optional[str] = None, query_scope: Optional[int] = None) -> None:
         """
         Parse a block of derivation lines (tree-structured with indentation from explainDerivation = false).
 
         Args:
             lines: List of lines from the derivation section
             query: The query this derivation block belongs to
+            query_scope: Query-scope identifier for clause numbering
         """
         # Track unique queries
         if query and query not in self.queries_seen:
@@ -597,7 +660,8 @@ class ProVerifOutputParser:
                         premises=[],
                         rule_name="goal",
                         indent_level=indent_level,
-                        query=query
+                        query=query,
+                        query_scope=query_scope,
                     )
                     self.output.derivations.append(derivation)
             
@@ -613,7 +677,8 @@ class ProVerifOutputParser:
                         rule_name="clause",
                         indent_level=indent_level,
                         clause_number=clause_num,
-                        query=query
+                        query=query,
+                        query_scope=query_scope,
                     )
                     self.output.derivations.append(derivation)
             
@@ -628,7 +693,8 @@ class ProVerifOutputParser:
                         premises=[],
                         rule_name=f"apply {operation}",
                         indent_level=indent_level,
-                        query=query
+                        query=query,
+                        query_scope=query_scope,
                     )
                     self.output.derivations.append(derivation)
             
@@ -642,7 +708,8 @@ class ProVerifOutputParser:
                         premises=[],
                         rule_name="duplicate",
                         indent_level=indent_level,
-                        query=query
+                        query=query,
+                        query_scope=query_scope,
                     )
                     self.output.derivations.append(derivation)
             
@@ -672,6 +739,7 @@ class CapabilityAnalyzer:
     def __init__(self, capability_costs: Optional[Dict[str, Dict[str, int]]] = None):
         self.base_clauses: Set[str] = set()
         self.capability_clauses: Dict[str, Set[str]] = {}
+        self.capability_clause_numbers: Dict[str, List[Tuple[Optional[Set[int]], int, str]]] = {}
         self.table_capabilities: Dict[str, str] = self.TABLE_CAPABILITIES.copy()
         self.capability_costs = capability_costs or {}  # Map: capability name -> {"time": X, "hack": Y, ...}
 
@@ -715,10 +783,50 @@ class CapabilityAnalyzer:
             # Find clauses only in capability scenario
             new_clauses = cap_clauses - self.base_clauses
             self.capability_clauses[cap_name] = new_clauses
-            
+
             print(f"  {cap_name}: {len(new_clauses)} new clauses")
         
         return self.capability_clauses
+
+    def update_capability_clause_numbers_from_output(self, output: ProVerifOutput) -> None:
+        """Populate and print capability clause numbers from the main scenario output."""
+        self.capability_clause_numbers = {}
+
+        for cap_name, cap_clauses in self.capability_clauses.items():
+            clause_map: Dict[Tuple[int, str], Set[int]] = {}
+            clause_initial: Dict[Tuple[int, str], bool] = {}
+            for clause in output.clauses:
+                if clause.clause_number is None:
+                    continue
+                if clause.original_text in cap_clauses:
+                    key = (clause.clause_number, clause.original_text)
+                    scope_set = clause_map.setdefault(key, set())
+                    if clause.clause_scope is not None:
+                        scope_set.add(clause.clause_scope)
+                    if key not in clause_initial:
+                        clause_initial[key] = clause.is_initial
+            clause_numbers: List[Tuple[Optional[Set[int]], int, str]] = []
+            for (clause_number, clause_text), scopes in clause_map.items():
+                clause_numbers.append((scopes if scopes else None, clause_number, clause_text))
+            clause_numbers.sort(key=lambda item: (item[1], item[2]))
+            self.capability_clause_numbers[cap_name] = clause_numbers
+
+        if self.capability_clause_numbers:
+            print("\nCapability clauses (by capability):")
+            for cap_name in sorted(self.capability_clause_numbers.keys()):
+                entries = self.capability_clause_numbers[cap_name]
+                print(f"\n{cap_name}:")
+                if not entries:
+                    print("  (none)")
+                    continue
+                for clause_scopes, clause_number, clause_text in entries:
+                    if clause_scopes:
+                        query_indices = ", ".join(str(scope - 1) for scope in sorted(clause_scopes))
+                        clause_tag = "initial" if clause_initial.get((clause_number, clause_text), False) else "derived"
+                        print(f"  Clause {clause_number} (Query {query_indices}) [{clause_tag}]: {clause_text}")
+                    else:
+                        clause_tag = "initial" if clause_initial.get((clause_number, clause_text), False) else "derived"
+                        print(f"  Clause {clause_number} [{clause_tag}]: {clause_text}")
 
     def _extract_clauses_from_scenario(self, scenario_path: Path) -> ProVerifOutput:
         """Extract clauses from a scenario file, including completed clauses."""
@@ -755,7 +863,7 @@ class CapabilityAnalyzer:
         output = self._extract_clauses_from_scenario(scenario_path)
         
         # Build mapping from clause number to capabilities for text-compared clauses
-        clause_num_to_caps: Dict[int, Set[str]] = {}
+        clause_num_to_caps: Dict[Tuple[Optional[int], int], Set[str]] = {}
         
         for clause in output.clauses:
             if clause.clause_number is None:
@@ -778,7 +886,8 @@ class CapabilityAnalyzer:
                         matching_caps.add(cap_name)
             
             if matching_caps:
-                clause_num_to_caps[clause.clause_number] = matching_caps
+                clause_key = (clause.clause_scope, clause.clause_number)
+                clause_num_to_caps[clause_key] = matching_caps
         
         # First pass: collect capabilities for each fact based on the clause used to derive it
         fact_capabilities: Dict[str, Set[str]] = {}
@@ -792,8 +901,18 @@ class CapabilityAnalyzer:
             capabilities = set()
             
             # Check clause number to see if this node was derived using a capability-specific clause
-            if node.clause_number is not None and node.clause_number in clause_num_to_caps:
-                capabilities.update(clause_num_to_caps[node.clause_number])
+            if node.clause_number is not None:
+                clause_key = (node.clause_scope, node.clause_number)
+                if clause_key in clause_num_to_caps:
+                    capabilities.update(clause_num_to_caps[clause_key])
+                else:
+                    fallback_key = (None, node.clause_number)
+                    if fallback_key in clause_num_to_caps:
+                        print(
+                            f"Warning: Using unscoped clause match for clause {node.clause_number} "
+                            f"(node fact: {fact})"
+                        )
+                        capabilities.update(clause_num_to_caps[fallback_key])
             
             if capabilities:
                 fact_capabilities[fact] = capabilities
@@ -815,11 +934,12 @@ class CapabilityAnalyzer:
             # Create a variant node for each capability
             for cap in sorted(caps):  # Sort for consistency
                 variant_node = tree.add_node(
-                    fact, 
-                    original_node.rule, 
-                    {cap}, 
-                    original_node.clause_number, 
-                    variant_id=cap
+                    fact,
+                    original_node.rule,
+                    {cap},
+                    original_node.clause_number,
+                    variant_id=cap,
+                    clause_scope=original_node.clause_scope,
                 )
             
             # Remove the original non-variant node
@@ -869,7 +989,7 @@ class GraphvizRenderer:
     """Renders derivations as graphviz diagrams."""
 
     @staticmethod
-    def build_tree_from_derivations(derivations: List[Derivation], query_tag: Optional[str] = None, capability_costs: Optional[Dict[str, Dict[str, int]]] = None, readable_nodes: bool = False) -> Optional[DerivationTree]:
+    def build_tree_from_derivations(derivations: List[Derivation], query_tag: Optional[str] = None, capability_costs: Optional[Dict[str, Dict[str, int]]] = None, readable_nodes: bool = False, show_clause_ids: bool = False) -> Optional[DerivationTree]:
         """
         Build a derivation tree from a list of derivations.
         
@@ -910,7 +1030,7 @@ class GraphvizRenderer:
         # Find the goal
         goal = first_tree_derivs[0].conclusion
 
-        tree = DerivationTree(goal, query_tag, capability_costs, readable_nodes)
+        tree = DerivationTree(goal, query_tag, capability_costs, readable_nodes, show_clause_ids)
 
         # Filter to significant derivations (non-transformations)
         significant_derivs = []
@@ -931,7 +1051,12 @@ class GraphvizRenderer:
         
         # Add all nodes first
         for deriv in significant_derivs:
-            tree.add_node(deriv.conclusion, deriv.rule_name, clause_number=deriv.clause_number)
+            tree.add_node(
+                deriv.conclusion,
+                deriv.rule_name,
+                clause_number=deriv.clause_number,
+                clause_scope=deriv.query_scope,
+            )
         
         # Build parent-child relationships based on indentation
         # For each derivation, find its parent (the closest previous derivation with lower indent)
@@ -949,7 +1074,13 @@ class GraphvizRenderer:
             if parent_idx is not None:
                 parent = significant_derivs[parent_idx]
                 # Use child's rule_name as the edge label and pass clause number
-                tree.add_edge(parent.conclusion, deriv.conclusion, deriv.rule_name, clause_number=deriv.clause_number)
+                tree.add_edge(
+                    parent.conclusion,
+                    deriv.conclusion,
+                    deriv.rule_name,
+                    clause_number=deriv.clause_number,
+                    clause_scope=deriv.query_scope,
+                )
 
         return tree
 
@@ -1046,7 +1177,8 @@ class AttackTreeExtractor:
                 # Truncate if necessary
                 if len(clause_str) > 70:
                     clause_str = clause_str[:67] + "..."
-                print(f"  {i}. {clause_str}")
+                clause_tag = "initial" if clause.is_initial else "derived"
+                print(f"  {i}. {clause_str} [{clause_tag}]")
             if len(output.clauses) > 10:
                 print(f"  ... and {len(output.clauses) - 10} more")
 
@@ -1106,6 +1238,11 @@ def main():
         type=int,
         help="Select which query to visualize (0=first, 1=second, etc.) when multiple queries exist",
     )
+    parser.add_argument(
+        "--show-clause-ids",
+        action="store_true",
+        help="Include ProVerif clause IDs in node labels",
+    )
 
     args = parser.parse_args()
 
@@ -1118,6 +1255,7 @@ def main():
         print("  --manifest FILE         Use manifest.json for capability analysis")
         print("  --original-terms        Use original ProVerif syntax for node labels")
         print("  --query INDEX           Select query by index when multiple queries exist (0=first)")
+        print("  --show-clause-ids       Include ProVerif clause IDs in node labels")
         print("\nExamples:")
         print("  # Basic extraction")
         print("  python3 attack_tree_extractor.py scenario.pv --graphviz-pdf output/")
@@ -1181,6 +1319,9 @@ def main():
 
         if not args.no_summary:
             extractor.print_summary(output)
+
+        if capability_analyzer:
+            capability_analyzer.update_capability_clause_numbers_from_output(output)
 
         # Handle multiple queries: filter derivations if --query specified
         if output.derivations:
@@ -1308,7 +1449,7 @@ def main():
             
             # Use readable nodes by default, unless --original-terms is specified
             use_readable = not args.original_terms
-            tree = renderer.build_tree_from_derivations(output.derivations, query_tag, capability_costs, use_readable)
+            tree = renderer.build_tree_from_derivations(output.derivations, query_tag, capability_costs, use_readable, args.show_clause_ids)
             if tree:
                 # Annotate with capabilities if analyzer is available
                 if capability_analyzer:
