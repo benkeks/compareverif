@@ -40,6 +40,7 @@ class Derivation:
     rule_name: Optional[str] = None
     indent_level: int = 0  # Track nesting depth for tree structure
     clause_number: Optional[int] = None  # Track which clause was used
+    query: Optional[str] = None  # The query this derivation belongs to
 
     def __repr__(self) -> str:
         if self.premises:
@@ -431,6 +432,7 @@ class ProVerifOutputParser:
 
     def __init__(self):
         self.output = ProVerifOutput()
+        self.queries_seen = []  # Track all queries in order
 
     def parse(self, raw_output: str) -> ProVerifOutput:
         """
@@ -487,8 +489,8 @@ class ProVerifOutputParser:
                         derivation_lines.append(deriv_line)
                     i += 1
                 
-                # Parse all collected derivation lines
-                self._parse_derivation_block(derivation_lines)
+                # Parse all collected derivation lines with the current query
+                self._parse_derivation_block(derivation_lines, current_query)
                 in_derivation_block = False
                 continue
 
@@ -546,13 +548,17 @@ class ProVerifOutputParser:
 
         self.output.clauses.append(clause)
 
-    def _parse_derivation_block(self, lines: List[str]) -> None:
+    def _parse_derivation_block(self, lines: List[str], query: Optional[str] = None) -> None:
         """
         Parse a block of derivation lines (tree-structured with indentation from explainDerivation = false).
 
         Args:
             lines: List of lines from the derivation section
+            query: The query this derivation block belongs to
         """
+        # Track unique queries
+        if query and query not in self.queries_seen:
+            self.queries_seen.append(query)
         # With explainDerivation = false, ProVerif outputs a tree-structured derivation with indentation
         for line in lines:
             # Preserve original indentation
@@ -572,7 +578,8 @@ class ProVerifOutputParser:
                         conclusion=fact,
                         premises=[],
                         rule_name="goal",
-                        indent_level=indent_level
+                        indent_level=indent_level,
+                        query=query
                     )
                     self.output.derivations.append(derivation)
             
@@ -587,7 +594,8 @@ class ProVerifOutputParser:
                         premises=[],
                         rule_name="clause",
                         indent_level=indent_level,
-                        clause_number=clause_num
+                        clause_number=clause_num,
+                        query=query
                     )
                     self.output.derivations.append(derivation)
             
@@ -601,7 +609,8 @@ class ProVerifOutputParser:
                         conclusion=fact,
                         premises=[],
                         rule_name=f"apply {operation}",
-                        indent_level=indent_level
+                        indent_level=indent_level,
+                        query=query
                     )
                     self.output.derivations.append(derivation)
             
@@ -614,7 +623,8 @@ class ProVerifOutputParser:
                         conclusion=fact,
                         premises=[],
                         rule_name="duplicate",
-                        indent_level=indent_level
+                        indent_level=indent_level,
+                        query=query
                     )
                     self.output.derivations.append(derivation)
             
@@ -1072,6 +1082,12 @@ def main():
         action="store_true",
         help="Use original ProVerif syntax for node labels (default is human-readable format)",
     )
+    parser.add_argument(
+        "--query",
+        metavar="INDEX",
+        type=int,
+        help="Select which query to visualize (0=first, 1=second, etc.) when multiple queries exist",
+    )
 
     args = parser.parse_args()
 
@@ -1082,12 +1098,16 @@ def main():
         print("  --graphviz-pdf DIR      Output graphviz PDF files to DIR (requires graphviz)")
         print("  --no-summary            Skip printing the summary")
         print("  --manifest FILE         Use manifest.json for capability analysis")
+        print("  --original-terms        Use original ProVerif syntax for node labels")
+        print("  --query INDEX           Select query by index when multiple queries exist (0=first)")
         print("\nExamples:")
         print("  # Basic extraction")
         print("  python3 attack_tree_extractor.py scenario.pv --graphviz-pdf output/")
         print("\n  # With capability analysis")
         print("  python3 attack_tree_extractor.py --manifest _scenarios/hashed_passwords/manifest.json \\")
         print("      _scenarios/hashed_passwords/*.pv --graphviz-pdf annotated/")
+        print("\n  # Select specific query (if multiple exist)")
+        print("  python3 attack_tree_extractor.py scenario.pv --query 1 --graphviz-pdf output/")
         sys.exit(1)
 
     # Create output directories if needed
@@ -1143,6 +1163,52 @@ def main():
 
         if not args.no_summary:
             extractor.print_summary(output)
+
+        # Handle multiple queries: filter derivations if --query specified
+        if output.derivations:
+            # Collect unique queries from derivations
+            unique_queries = []
+            for deriv in output.derivations:
+                if deriv.query and deriv.query not in unique_queries:
+                    unique_queries.append(deriv.query)
+            
+            # Validate --query argument if provided
+            if args.query is not None:
+                # User explicitly requested a query index
+                if args.query < 0 or args.query >= len(unique_queries):
+                    print(f"Error: --query {args.query} out of range.")
+                    if unique_queries:
+                        print(f"Available queries (0-{len(unique_queries)-1}):")
+                        for i, q in enumerate(unique_queries):
+                            print(f"  {i}: {q}")
+                    else:
+                        print("No queries found in derivations!")
+                    continue
+                # Select the requested query
+                selected_query = unique_queries[args.query]
+                output.derivations = [d for d in output.derivations if d.query == selected_query]
+                output.query = selected_query
+                if not args.no_summary:
+                    print(f"Selected query {args.query}: {selected_query}")
+            
+            # If multiple queries and user didn't specify one
+            elif len(unique_queries) > 1:
+                # Multiple queries found, inform user
+                if not args.no_summary:
+                    print(f"\nWarning: Multiple queries found ({len(unique_queries)} total).")
+                    print("Available queries:")
+                    for i, q in enumerate(unique_queries):
+                        print(f"  {i}: {q}")
+                    print(f"Using first query. To select another, use: --query <index>")
+                # Use first query by default
+                selected_query = unique_queries[0]
+                output.derivations = [d for d in output.derivations if d.query == selected_query]
+                output.query = selected_query
+            
+            elif len(unique_queries) == 1:
+                # Single query, update output.query if not already set
+                if not output.query:
+                    output.query = unique_queries[0]
 
         # Generate graphviz files if requested
         if output.derivations:
