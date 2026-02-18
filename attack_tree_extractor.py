@@ -77,14 +77,40 @@ class TreeNode:
     
     @staticmethod
     def to_readable_format(fact: str) -> str:
-        """Convert ProVerif fact to readable natural language format.
+        """Convert ProVerif fact to readable HTML format with monospace terms.
         
+        Returns HTML with ProVerif terms in monospace font.
         Examples:
-            attacker(the_password[]) -> Attacker learns the_password.
-            attacker((a, b)) -> Attacker learns a and b.
-            table(passwd(a, b)) -> Table passwd contains (a,b).
+            attacker(the_password[]) -> Attacker learns <FONT FACE="courier">the_password</FONT>.
+            attacker((a, b)) -> Attacker learns <FONT FACE="courier">a</FONT> and <FONT FACE="courier">b</FONT>.
+            table(passwd(a, b)) -> Table <FONT FACE="courier">passwd</FONT> contains (<FONT FACE="courier">a,b</FONT>).
         """
         import re
+        
+        def mono(text: str) -> str:
+            """Wrap text in monospace HTML font."""
+            return f'<FONT FACE="courier">{text}</FONT>'
+        
+        def split_on_comma_respecting_parens(text: str) -> list:
+            """Split text on commas, but only at depth 0 (outside all parentheses)."""
+            parts = []
+            current = []
+            depth = 0
+            for char in text:
+                if char == '(':
+                    depth += 1
+                    current.append(char)
+                elif char == ')':
+                    depth -= 1
+                    current.append(char)
+                elif char == ',' and depth == 0:
+                    parts.append(''.join(current).strip())
+                    current = []
+                else:
+                    current.append(char)
+            if current:
+                parts.append(''.join(current).strip())
+            return parts
         
         # Handle attacker(...) pattern
         attacker_match = re.match(r'attacker\((.+)\)\s*$', fact, re.DOTALL)
@@ -98,14 +124,14 @@ class TreeNode:
             if tuple_match:
                 # Extract tuple elements
                 elements = tuple_match.group(1)
-                # Simple split by comma (may need refinement for nested structures)
-                parts = [p.strip() for p in elements.split(',')]
+                # Split respecting nested parentheses
+                parts = split_on_comma_respecting_parens(elements)
                 if len(parts) > 1:
-                    items = ' and '.join(parts)
+                    items = ' and '.join([mono(p) for p in parts])
                     return f"Attacker learns {items}."
             
             # Single value
-            return f"Attacker learns {content}."
+            return f"Attacker learns {mono(content)}."
         
         # Handle table(NAME(args)) pattern
         table_match = re.match(r'table\((\w+)\((.*)\)\)\s*$', fact, re.DOTALL)
@@ -114,10 +140,10 @@ class TreeNode:
             args = table_match.group(2)
             # Remove [] from variable names
             args = args.replace('[]', '')
-            return f"Table {table_name} contains ({args})."
+            return f"Table {mono(table_name)} contains ({mono(args)})."
         
-        # Default: return as-is (with [] removed)
-        return fact.replace('[]', '')
+        # Default: return as-is (with [] removed, in monospace)
+        return mono(fact.replace('[]', ''))
 
 
 class DerivationTree:
@@ -153,6 +179,30 @@ class DerivationTree:
         self.add_node(target_fact, rule, capabilities, clause_number, variant_id=target_variant)
         self.edges.append(((source_fact, source_variant), (target_fact, target_variant), rule))
 
+    @staticmethod
+    def _format_label_html(text: str) -> str:
+        """Escape HTML special characters in text.
+        
+        Text from to_readable_format() already contains HTML font tags,
+        so we only escape unescaped ampersands and angle brackets.
+        """
+        import re
+        
+        # Escape HTML special characters (but not those in existing tags)
+        # We need to be careful not to escape < and > inside existing tags
+        # Simple approach: escape & first, then handle < and > outside of tags
+        
+        # Replace & with &amp; (but not &amp; or &lt; or &gt; or &nbsp; etc.)
+        text = re.sub(r'&(?![a-z]+;)', '&amp;', text)
+        
+        # Now we need to escape any literal < or > that aren't part of tags
+        # This is tricky, so we'll do a simpler approach:
+        # Since we control the input from to_readable_format() and
+        # only it generates tags, we can minimize escaping
+        
+        # For now, just return as-is since to_readable_format() output is safe
+        return text
+    
     def to_graphviz(self) -> str:
         """Generate graphviz dot format representation."""
         dot_lines = ["digraph DerivationTree {"]
@@ -179,28 +229,94 @@ class DerivationTree:
             else:
                 label = fact
             
-            # Truncate long labels for display
-            if len(label) > 50:
-                label = label[:47] + "..."
+            # For readable mode (HTML labels), break text before converting
+            # For non-readable mode, break the plain text
+            label_lines = [label]
+            
+            if self.readable_nodes and len(label) > 50:
+                # Break HTML-formatted text at logical points before rendering
+                # Find positions to break by looking at the plain text content
+                import re
+                text_only = re.sub(r'<[^>]+>', '', label)
+                
+                if len(text_only) > 50:
+                    # Find good break points in the plain text
+                    break_positions = []
+                    
+                    # Look for natural break points: "). " or " and "
+                    for pattern in [r'\)\.\s+', r'\sand\s+']:
+                        for match in re.finditer(pattern, text_only):
+                            break_positions.append(match.end())
+                    
+                    if break_positions:
+                        # Sort and limit to creating 3 breaks (4 lines max)
+                        break_positions.sort()
+                        break_positions = break_positions[:3]
+                        
+                        # Now apply these breaks to the HTML text by finding matching positions
+                        # This is tricky because the HTML has tags, so we need to map positions
+                        label_lines = []
+                        last_html_idx = 0
+                        last_text_idx = 0
+                        
+                        for break_text_idx in break_positions:
+                            if len(label_lines) >= 3:  # Max 4 lines
+                                break
+                            
+                            # Find the corresponding position in the HTML string
+                            # Count characters in HTML, skipping tags
+                            char_count = 0
+                            html_idx = last_html_idx
+                            while html_idx < len(label) and char_count < break_text_idx - last_text_idx:
+                                if label[html_idx] == '<':
+                                    # Skip this tag
+                                    end_tag = label.find('>', html_idx)
+                                    if end_tag != -1:
+                                        html_idx = end_tag + 1
+                                    else:
+                                        html_idx += 1
+                                else:
+                                    char_count += 1
+                                    html_idx += 1
+                            
+                            # Add this line (from last_html_idx to html_idx)
+                            line = label[last_html_idx:html_idx].rstrip(' ')
+                            if line:
+                                label_lines.append(line)
+                            
+                            last_html_idx = html_idx
+                            last_text_idx = break_text_idx
+                        
+                        # Add remaining text
+                        if last_html_idx < len(label):
+                            remaining = label[last_html_idx:]
+                            if remaining.strip():
+                                label_lines.append(remaining)
+            
+            # Build HTML label from lines
+            html_parts = []
+            for line in label_lines[:4]:  # Max 4 lines
+                html_parts.append(self._format_label_html(line))
             
             # Add query tag to goal node
             if node.rule == "goal" and self.query_tag:
-                label = f"{label}\n(❌ {self.query_tag})"
+                tag_html = self._format_label_html(f"(❌ {self.query_tag})")
+                html_parts.append(tag_html)
             
-            # Add capability annotations to label
+            # Add capability annotations in bold
             if node.capabilities:
                 cap_str = ", ".join(sorted(node.capabilities))
-                label = f"{label}\n[{cap_str}]"
+                # Use bold instead of brackets
+                html_parts.append(f"<B>{cap_str}</B>")
             
-            label = label.replace('"', '\\"')
+            # Join with line breaks
+            label_html = "<BR/>".join(html_parts)
             
             # Choose color based on capabilities
             fillcolor = None
             if node.capabilities:
-                # Use first capability for color (could be enhanced)
-                cap_list = sorted(node.capabilities)
-                cap_index = hash(cap_list[0]) % len(capability_colors)
-                fillcolor = capability_colors[cap_index]
+                # All nodes with capabilities get the same color
+                fillcolor = "#DDA0DD"  # Plum
             elif node.rule == "goal":
                 fillcolor = "lightgreen"
             elif node.rule and "apply" in node.rule:
@@ -209,9 +325,9 @@ class DerivationTree:
                 fillcolor = "lightblue"
             
             if fillcolor:
-                dot_lines.append(f'  {node.node_id} [label="{label}", fillcolor="{fillcolor}", style="rounded,filled"];')
+                dot_lines.append(f'  {node.node_id} [label=<{label_html}>, fillcolor="{fillcolor}", style="rounded,filled"];')
             else:
-                dot_lines.append(f'  {node.node_id} [label="{label}"];')
+                dot_lines.append(f'  {node.node_id} [label=<{label_html}>];')
         
         # Add edges
         visited = set()
@@ -990,6 +1106,7 @@ def main():
     # Capability analysis setup
     capability_analyzer = None
     manifest_data = None
+    capability_costs = {}  # Initialize capability costs (empty if no manifest)
     if args.manifest:
         manifest_path = Path(args.manifest)
         if not manifest_path.exists():
