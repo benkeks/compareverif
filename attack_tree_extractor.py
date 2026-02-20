@@ -85,6 +85,11 @@ def main():
         print("  python3 attack_tree_extractor_refactored.py scenario.pv --query 1 --graphviz-pdf output/")
         sys.exit(1)
 
+    if not args.manifest and args.files:
+        manifest_candidate = Path(args.files[0]).parent / "manifest.json"
+        if manifest_candidate.exists():
+            args.manifest = str(manifest_candidate)
+
     # Create output directories if needed
     dot_dir = None
     pdf_dir = None
