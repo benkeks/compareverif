@@ -37,10 +37,11 @@ class Derivation:
     query_scope: Optional[int] = None  # Query-scope identifier for clause numbering
 
     def __repr__(self) -> str:
+        indent = "  " * self.indent_level
         if self.premises:
             premises_str = ", ".join(self.premises)
-            return f"{premises_str} => {self.conclusion}"
-        return self.conclusion
+            return f"{indent}{premises_str} => {self.conclusion}"
+        return f"{indent}{self.conclusion}"
 
 
 @dataclass
