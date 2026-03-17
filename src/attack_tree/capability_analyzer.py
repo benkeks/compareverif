@@ -244,12 +244,12 @@ class CapabilityAnalyzer:
                 clause_num_to_caps[clause_key] = matching_caps
 
         # First pass: collect capabilities for each fact based on the clause used to derive it
-        fact_capabilities: Dict[str, Set[str]] = {}
+        node_capabilities: Dict[Tuple[str, Optional[str]], Set[str]] = {}
 
         for key, node in list(tree.nodes.items()):
             fact, variant_id = key
-            # Skip if already a variant
-            if variant_id is not None:
+            # Skip only the dedicated goal node
+            if variant_id == tree.GOAL_VARIANT:
                 continue
 
             capabilities = set()
@@ -269,12 +269,12 @@ class CapabilityAnalyzer:
                         capabilities.update(clause_num_to_caps[fallback_key])
 
             if capabilities:
-                fact_capabilities[fact] = capabilities
+                node_capabilities[key] = capabilities
 
         # Second pass: split nodes with multiple capabilities into variants
         nodes_to_split: Dict[str, Set[str]] = {}
-        for fact, caps in fact_capabilities.items():
-            if len(caps) > 1:
+        for (fact, variant_id), caps in node_capabilities.items():
+            if variant_id is None and len(caps) > 1:
                 nodes_to_split[fact] = caps
 
         # Create variant nodes and update edges
@@ -301,7 +301,7 @@ class CapabilityAnalyzer:
 
         # Update all edges to reference variant nodes where applicable
         new_edges = []
-        for source_key, target_key, rule in tree.edges:
+        for source_key, target_key, rule, clause_number, clause_scope, edge_caps in tree.edges:
             source_fact, source_variant = source_key
             target_fact, target_variant = target_key
 
@@ -313,29 +313,76 @@ class CapabilityAnalyzer:
                     for source_cap in source_variants:
                         for target_cap in sorted(nodes_to_split[target_fact]):
                             new_edges.append(
-                                ((source_fact, source_cap), (target_fact, target_cap), rule)
+                                (
+                                    (source_fact, source_cap),
+                                    (target_fact, target_cap),
+                                    rule,
+                                    clause_number,
+                                    clause_scope,
+                                    edge_caps,
+                                )
                             )
                 else:
                     # Create edge from all source variants to the target
                     for source_cap in source_variants:
-                        new_edges.append(((source_fact, source_cap), target_key, rule))
+                        new_edges.append(
+                            (
+                                (source_fact, source_cap),
+                                target_key,
+                                rule,
+                                clause_number,
+                                clause_scope,
+                                edge_caps,
+                            )
+                        )
             # If only target was split, create edges to all target variants
             elif target_fact in nodes_to_split and target_variant is None:
                 for target_cap in sorted(nodes_to_split[target_fact]):
-                    new_edges.append((source_key, (target_fact, target_cap), rule))
+                    new_edges.append(
+                        (
+                            source_key,
+                            (target_fact, target_cap),
+                            rule,
+                            clause_number,
+                            clause_scope,
+                            edge_caps,
+                        )
+                    )
             else:
-                new_edges.append((source_key, target_key, rule))
+                new_edges.append(
+                    (source_key, target_key, rule, clause_number, clause_scope, edge_caps)
+                )
 
         tree.edges = new_edges
 
+        # Annotate edge capabilities from the clause used on each edge
+        annotated_edges = []
+        for source_key, target_key, rule, clause_number, clause_scope, edge_caps in tree.edges:
+            caps_for_edge = set(edge_caps)
+            if clause_number is not None:
+                clause_key = (clause_scope, clause_number)
+                if clause_key in clause_num_to_caps:
+                    caps_for_edge.update(clause_num_to_caps[clause_key])
+                else:
+                    fallback_key = (None, clause_number)
+                    if fallback_key in clause_num_to_caps:
+                        caps_for_edge.update(clause_num_to_caps[fallback_key])
+
+            # If edge targets a capability-variant node, keep only that variant's capability
+            target_variant = target_key[1]
+            if target_variant is not None and target_variant != tree.GOAL_VARIANT:
+                if target_variant in caps_for_edge:
+                    caps_for_edge = {target_variant}
+
+            annotated_edges.append(
+                (source_key, target_key, rule, clause_number, clause_scope, caps_for_edge)
+            )
+
+        tree.edges = annotated_edges
+
         # Third pass: annotate remaining single-capability nodes
         for key, node in tree.nodes.items():
-            fact, variant_id = key
-            if variant_id is not None:
-                # Already annotated during split
-                continue
-
-            if fact in fact_capabilities:
-                node.capabilities.update(fact_capabilities[fact])
+            if key in node_capabilities:
+                node.capabilities.update(node_capabilities[key])
 
         return tree

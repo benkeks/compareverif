@@ -175,4 +175,4 @@ class TestDerivationTree:
         tree = DerivationTree(goal="attacker(password[])")
         dot_output = tree.to_graphviz()
         assert "attacker(password[])" in dot_output
-        assert tree.nodes[(tree.goal, None)].rule == "goal"
+        assert tree.nodes[(tree.goal, DerivationTree.GOAL_VARIANT)].rule == "goal"

@@ -69,17 +69,37 @@ class GraphvizRenderer:
         # Separate derivations into different categories
         all_derivs = first_tree_derivs
 
+        deriv_node_keys = [None] * len(all_derivs)
+
         # Add all nodes (including duplicates and transformations)
-        for deriv in all_derivs:
+        for idx, deriv in enumerate(all_derivs):
             # Skip "apply" transformations - they don't represent real derivation steps
             if deriv.rule_name and deriv.rule_name.startswith("apply "):
                 continue
+
+            variant_id = None
+            # Preserve explicit clause steps that conclude the goal fact as separate nodes.
+            # Otherwise they collapse into the goal node and hide capability/cost attribution.
+            if (
+                deriv.rule_name == "clause"
+                and deriv.clause_number is not None
+                and deriv.conclusion == goal
+            ):
+                scope = (
+                    str(deriv.query_scope)
+                    if deriv.query_scope is not None
+                    else "global"
+                )
+                variant_id = f"goal_clause_{scope}_{deriv.clause_number}_{idx}"
+
             tree.add_node(
                 deriv.conclusion,
                 deriv.rule_name,
                 clause_number=deriv.clause_number,
+                variant_id=variant_id,
                 clause_scope=deriv.query_scope,
             )
+            deriv_node_keys[idx] = (deriv.conclusion, variant_id)
 
         # Build parent-child relationships based on indentation
         # For each derivation, find its parent (the closest previous derivation with lower indent)
@@ -104,13 +124,21 @@ class GraphvizRenderer:
             # If parent found and it's not a self-loop, create edge
             if parent_idx is not None:
                 parent = all_derivs[parent_idx]
-                # Don't create self-loops
-                if parent.conclusion != deriv.conclusion:
+                parent_key = deriv_node_keys[parent_idx]
+                current_key = deriv_node_keys[i]
+
+                if parent_key is None or current_key is None:
+                    continue
+
+                # Don't create exact same-node self-loops; allow same-fact edges when variants differ
+                if parent_key != current_key:
                     tree.add_edge(
-                        parent.conclusion,
-                        deriv.conclusion,
+                        parent_key[0],
+                        current_key[0],
                         deriv.rule_name,
                         clause_number=deriv.clause_number,
+                        source_variant=parent_key[1],
+                        target_variant=current_key[1],
                         clause_scope=deriv.query_scope,
                     )
 

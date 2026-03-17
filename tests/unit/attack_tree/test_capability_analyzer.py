@@ -263,6 +263,49 @@ class TestAnnotateTreeWithCapabilities:
         result = analyzer.annotate_tree_with_capabilities(tree, Path("test.pv"))
         assert result is tree
 
+    @patch("src.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
+    def test_or_variant_edges_use_branch_capability_only(self, mock_extract):
+        """OR branch edges should carry only their branch capability, not summed caps."""
+        analyzer = CapabilityAnalyzer(
+            capability_costs={
+                "Rainbow table attack": {"time": 100},
+                "Side-channel attack": {"observation": 10, "time": 10},
+            }
+        )
+        analyzer.capability_clauses = {
+            "Rainbow table attack": {"attacker(secret[])"},
+            "Side-channel attack": {"attacker(secret[])"},
+        }
+
+        output = ProVerifOutput(
+            clauses=[
+                Clause(
+                    head="attacker(secret[])",
+                    original_text="attacker(secret[])",
+                    clause_number=1,
+                    clause_scope=None,
+                )
+            ],
+            derivations=[],
+        )
+        mock_extract.return_value = output
+
+        tree = DerivationTree(goal="goal")
+        tree.add_node("attacker(secret[])", rule="clause", clause_number=1)
+        tree.add_edge("goal", "attacker(secret[])", rule="clause", clause_number=1)
+
+        analyzer.annotate_tree_with_capabilities(tree, Path("test.pv"))
+
+        # Each split branch edge must only keep its own variant capability
+        seen_variants = set()
+        for _, target_key, _, _, _, edge_caps in tree.edges:
+            target_variant = target_key[1]
+            if target_variant in {"Rainbow table attack", "Side-channel attack"}:
+                seen_variants.add(target_variant)
+                assert edge_caps == {target_variant}
+
+        assert seen_variants == {"Rainbow table attack", "Side-channel attack"}
+
 
 class TestCapabilityAnalyzerIntegration:
     """Integration tests for full workflows."""

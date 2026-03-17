@@ -1,6 +1,10 @@
 """Regression tests for attack tree functionality based on bugs fixed."""
 
+from pathlib import Path
+from unittest.mock import patch
+
 from src.attack_tree import DerivationTree, CapabilityAnalyzer
+from src.proverif import ProVerifOutput, Clause
 
 class TestFuzzyClauseMatchingRegression:
     """Regression tests for fuzzy structural clause matching (false attribution).
@@ -125,3 +129,69 @@ class TestRulePriorityAndCapabilityInteraction:
         # Rule should still be at highest priority
         assert node.rule == "clause"
         assert "rainbow_attack" in node.capabilities
+
+    def test_goal_node_not_capability_annotated_on_fact_collision(self):
+        """Goal node should stay semantic goal even if same fact appears in capability clauses."""
+        analyzer = CapabilityAnalyzer()
+        analyzer.capability_clauses = {
+            "Rainbow table attack": {"attacker(secret[])"}
+        }
+
+        output = ProVerifOutput(
+            clauses=[
+                Clause(
+                    head="attacker(secret[])",
+                    original_text="attacker(secret[])",
+                    clause_number=7,
+                    clause_scope=None,
+                )
+            ],
+            derivations=[],
+        )
+
+        tree = DerivationTree(goal="attacker(secret[])")
+        tree.add_node("attacker(secret[])", rule="clause", clause_number=7)
+
+        with patch.object(analyzer, "_extract_clauses_from_scenario", return_value=output):
+            analyzer.annotate_tree_with_capabilities(tree, Path("dummy.pv"))
+
+        goal_node = tree.nodes[("attacker(secret[])", DerivationTree.GOAL_VARIANT)]
+        assert goal_node.rule == "goal"
+        assert goal_node.capabilities == set()
+
+    def test_goal_clause_variant_is_capability_annotated(self):
+        """Non-goal variant for same fact should carry capability attribution."""
+        analyzer = CapabilityAnalyzer()
+        analyzer.capability_clauses = {
+            "Rainbow table attack": {"attacker(secret[])"}
+        }
+
+        output = ProVerifOutput(
+            clauses=[
+                Clause(
+                    head="attacker(secret[])",
+                    original_text="attacker(secret[])",
+                    clause_number=7,
+                    clause_scope=None,
+                )
+            ],
+            derivations=[],
+        )
+
+        tree = DerivationTree(goal="attacker(secret[])")
+        variant_id = "goal_clause_global_7_1"
+        tree.add_node(
+            "attacker(secret[])",
+            rule="clause",
+            clause_number=7,
+            variant_id=variant_id,
+        )
+
+        with patch.object(analyzer, "_extract_clauses_from_scenario", return_value=output):
+            analyzer.annotate_tree_with_capabilities(tree, Path("dummy.pv"))
+
+        clause_variant_node = tree.nodes[("attacker(secret[])", variant_id)]
+        assert clause_variant_node.capabilities == {"Rainbow table attack"}
+
+        goal_node = tree.nodes[("attacker(secret[])", DerivationTree.GOAL_VARIANT)]
+        assert goal_node.capabilities == set()

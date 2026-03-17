@@ -116,6 +116,8 @@ class TreeNode:
 class DerivationTree:
     """Represents a derivation as a DAG (directed acyclic graph)."""
 
+    GOAL_VARIANT = "__goal__"
+
     def __init__(
         self,
         goal: str,
@@ -130,8 +132,17 @@ class DerivationTree:
         self.readable_nodes = readable_nodes  # Whether to use readable node labels
         self.show_clause_ids = show_clause_ids  # Whether to display clause numbers in node labels
         self.nodes: Dict[Tuple[str, Optional[str]], TreeNode] = {}  # Key: (fact, variant_id)
-        self.edges: List[Tuple[Tuple[str, Optional[str]], Tuple[str, Optional[str]], Optional[str]]] = []  # (source, target, rule)
-        self.add_node(goal, "goal")
+        self.edges: List[
+            Tuple[
+                Tuple[str, Optional[str]],
+                Tuple[str, Optional[str]],
+                Optional[str],
+                Optional[int],
+                Optional[int],
+                Set[str],
+            ]
+        ] = []  # (source, target, rule, clause_number, clause_scope, capabilities)
+        self.add_node(goal, "goal", variant_id=self.GOAL_VARIANT)
 
     def add_node(
         self,
@@ -143,6 +154,13 @@ class DerivationTree:
         clause_scope: Optional[int] = None,
     ) -> TreeNode:
         """Add a node to the graph if not already present."""
+        if (
+            variant_id is None
+            and fact == self.goal
+            and (fact, self.GOAL_VARIANT) in self.nodes
+        ):
+            variant_id = self.GOAL_VARIANT
+
         key = (fact, variant_id)
         if key not in self.nodes:
             node = TreeNode(
@@ -176,11 +194,13 @@ class DerivationTree:
 
             if new_priority > current_priority:
                 self.nodes[key].rule = rule
-            # Update clause number if provided
-            if clause_number is not None:
-                self.nodes[key].clause_number = clause_number
-            if clause_scope is not None:
-                self.nodes[key].clause_scope = clause_scope
+            # Keep goal nodes purely as goals (don't attach clause metadata)
+            if self.nodes[key].rule != "goal":
+                # Update clause number if provided
+                if clause_number is not None:
+                    self.nodes[key].clause_number = clause_number
+                if clause_scope is not None:
+                    self.nodes[key].clause_scope = clause_scope
         return self.nodes[key]
 
     def add_edge(
@@ -193,8 +213,22 @@ class DerivationTree:
         source_variant: Optional[str] = None,
         target_variant: Optional[str] = None,
         clause_scope: Optional[int] = None,
+        edge_capabilities: Optional[Set[str]] = None,
     ) -> None:
         """Add an edge from source to target."""
+        if (
+            source_variant is None
+            and source_fact == self.goal
+            and (source_fact, self.GOAL_VARIANT) in self.nodes
+        ):
+            source_variant = self.GOAL_VARIANT
+        if (
+            target_variant is None
+            and target_fact == self.goal
+            and (target_fact, self.GOAL_VARIANT) in self.nodes
+        ):
+            target_variant = self.GOAL_VARIANT
+
         self.add_node(source_fact, variant_id=source_variant)
         self.add_node(
             target_fact,
@@ -205,7 +239,14 @@ class DerivationTree:
             clause_scope=clause_scope,
         )
         self.edges.append(
-            ((source_fact, source_variant), (target_fact, target_variant), rule)
+            (
+                (source_fact, source_variant),
+                (target_fact, target_variant),
+                rule,
+                clause_number,
+                clause_scope,
+                edge_capabilities or set(),
+            )
         )
 
     def to_graphviz(self) -> str:
@@ -330,7 +371,7 @@ class DerivationTree:
 
         # Add edges
         visited = set()
-        for source_key, target_key, rule in self.edges:
+        for source_key, target_key, rule, clause_number, clause_scope, edge_capabilities in self.edges:
             source_node = self.nodes[source_key]
             target_node = self.nodes[target_key]
             edge_key = f"{source_node.node_id}-{target_node.node_id}"
@@ -340,7 +381,11 @@ class DerivationTree:
                 # Check if target has multiple variants (disjunctive)
                 target_fact = target_key[0]
                 variants = [
-                    k for k in self.nodes.keys() if k[0] == target_fact and k[1] is not None
+                    k
+                    for k in self.nodes.keys()
+                    if k[0] == target_fact
+                    and k[1] is not None
+                    and k[1] != self.GOAL_VARIANT
                 ]
                 is_disjunctive = len(variants) > 1 and target_key[1] is not None
 
@@ -348,10 +393,12 @@ class DerivationTree:
                 label = ""
                 cost_label = ""
 
-                # Calculate costs from target node capabilities
-                if target_node.capabilities:
+                # Prefer costs from edge capabilities (clause-specific), fallback to target node capabilities
+                capabilities_for_cost = edge_capabilities or target_node.capabilities
+
+                if capabilities_for_cost:
                     cost_parts = []
-                    for cap in sorted(target_node.capabilities):
+                    for cap in sorted(capabilities_for_cost):
                         if cap in self.capability_costs:
                             costs = self.capability_costs[cap]
                             for cost_type, cost_value in sorted(costs.items()):
