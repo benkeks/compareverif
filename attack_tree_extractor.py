@@ -20,6 +20,21 @@ from src.attack_tree import (
 )
 
 
+def _normalize_query_text(query: str) -> str:
+    """Normalize query text for robust exact matching across formats."""
+    if not query:
+        return ""
+
+    normalized = re.sub(r"\(\*.*?\*\)", "", query)
+    normalized = normalized.strip().lower()
+    normalized = normalized.replace("query ", "")
+    normalized = normalized.replace("\n", "")
+    normalized = normalized.replace(" ", "")
+    normalized = normalized.replace("[", "").replace("]", "")
+    normalized = normalized.replace(";", "").replace(".", "")
+    return normalized
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -140,19 +155,20 @@ def main():
         scenario_file = Path(scenario_path)
         output = extractor.extract(scenario_file, verbose_clauses=True)
 
-        if not args.no_summary:
-            extractor.print_summary(output)
-
         if capability_analyzer:
             capability_analyzer.update_capability_clause_numbers_from_output(output)
 
         # Handle multiple queries: filter derivations if --query specified
         if output.derivations:
-            # Collect unique queries from derivations
+            # Collect unique queries from derivations by canonical form
             unique_queries = []
+            canonical_to_display = {}
             for deriv in output.derivations:
-                if deriv.query and deriv.query not in unique_queries:
-                    unique_queries.append(deriv.query)
+                if deriv.query:
+                    canonical = _normalize_query_text(deriv.query)
+                    if canonical and canonical not in canonical_to_display:
+                        canonical_to_display[canonical] = deriv.query
+                        unique_queries.append(canonical)
 
             # Validate --query argument if provided
             if args.query is not None:
@@ -162,16 +178,20 @@ def main():
                     if unique_queries:
                         print(f"Available queries (0-{len(unique_queries)-1}):")
                         for i, q in enumerate(unique_queries):
-                            print(f"  {i}: {q}")
+                            print(f"  {i}: {canonical_to_display[q]}")
                     else:
                         print("No queries found in derivations!")
                     continue
                 # Select the requested query
-                selected_query = unique_queries[args.query]
-                output.derivations = [d for d in output.derivations if d.query == selected_query]
-                output.query = selected_query
+                selected_canonical = unique_queries[args.query]
+                output.derivations = [
+                    d
+                    for d in output.derivations
+                    if _normalize_query_text(d.query or "") == selected_canonical
+                ]
+                output.query = canonical_to_display[selected_canonical]
                 if not args.no_summary:
-                    print(f"Selected query {args.query}: {selected_query}")
+                    print(f"Selected query {args.query}: {output.query}")
 
             # If multiple queries and user didn't specify one
             elif len(unique_queries) > 1:
@@ -180,17 +200,24 @@ def main():
                     print(f"\nWarning: Multiple queries found ({len(unique_queries)} total).")
                     print("Available queries:")
                     for i, q in enumerate(unique_queries):
-                        print(f"  {i}: {q}")
+                        print(f"  {i}: {canonical_to_display[q]}")
                     print(f"Using first query. To select another, use: --query <index>")
                 # Use first query by default
-                selected_query = unique_queries[0]
-                output.derivations = [d for d in output.derivations if d.query == selected_query]
-                output.query = selected_query
+                selected_canonical = unique_queries[0]
+                output.derivations = [
+                    d
+                    for d in output.derivations
+                    if _normalize_query_text(d.query or "") == selected_canonical
+                ]
+                output.query = canonical_to_display[selected_canonical]
 
             elif len(unique_queries) == 1:
                 # Single query, update output.query if not already set
                 if not output.query:
                     output.query = unique_queries[0]
+
+        if not args.no_summary:
+            extractor.print_summary(output)
 
         # Generate graphviz files if requested
         if output.derivations:
@@ -224,22 +251,11 @@ def main():
                     for query_info in scenario.get("queries", []):
                         query_text = query_info.get("query", "")
 
-                        # Normalize both queries for comparison
-                        normalized_manifest = re.sub(r"\(\*.*?\*\)", "", query_text)
-                        normalized_manifest = normalized_manifest.replace("query ", "").replace("not ", "")
-                        normalized_manifest = normalized_manifest.replace("\n", "").replace(" ", "")
-                        normalized_manifest = normalized_manifest.replace("[", "").replace("]", "")
-                        normalized_manifest = normalized_manifest.replace(";", "").replace(".", "")
-                        normalized_manifest = normalized_manifest.lower()
+                        normalized_manifest = _normalize_query_text(query_text)
+                        normalized_output = _normalize_query_text(output.query)
 
-                        normalized_output = output.query.replace("not ", "").replace(" ", "")
-                        normalized_output = normalized_output.replace("[", "").replace("]", "")
-                        normalized_output = normalized_output.lower()
-
-                        # Check if they match
-                        if normalized_output == normalized_manifest or \
-                           (len(normalized_output) > 10 and normalized_output in normalized_manifest) or \
-                           (len(normalized_manifest) > 10 and normalized_manifest in normalized_output):
+                        # Require canonical exact match to bind the correct query tag
+                        if normalized_output and normalized_output == normalized_manifest:
                             tag = query_info.get("tag", "")
                             # Prefer meaningful tags over generic "query" tag
                             if tag and tag != "query":

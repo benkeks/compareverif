@@ -35,6 +35,18 @@
         "/^python3 attack_tree_extractor\\.py _scenarios/hashed_passwords/rainbow_table_attack\\+intruder_at_database\\.pv --graphviz-dot trees/ --query 1 --no-summary$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^python3 -m pytest tests/unit/proverif/ -q$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python3 attack_tree_extractor\\.py _scenarios/singularized_passwords/rainbow_table_attack\\+intruder_at_database\\+intruder_at_singularization_database\\.pv --graphviz-dot trees/ --query 1 --no-summary$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python3 attack_tree_extractor\\.py _scenarios/singularized_passwords/rainbow_table_attack\\+intruder_at_database\\+intruder_at_singularization_database\\.pv --graphviz-dot trees/ --query 1$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

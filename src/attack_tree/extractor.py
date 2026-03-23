@@ -52,25 +52,45 @@ class AttackTreeExtractor:
         print(f"\nClauses extracted: {len(output.clauses)}")
         if output.clauses:
             max_display = min(10, len(output.clauses))
-            for i, clause in enumerate(output.clauses[:max_display], 1):
-                clause_str = str(clause)
+            for clause in output.clauses[:max_display]:
+                clause_text = clause.original_text or str(clause)
+                clause_num = (
+                    str(clause.clause_number)
+                    if clause.clause_number is not None
+                    else "?"
+                )
+                scope_str = (
+                    f" [Query {clause.clause_scope - 1}]"
+                    if clause.clause_scope is not None
+                    else ""
+                )
+                clause_str = f"Clause {clause_num}{scope_str}: {clause_text}"
                 # Truncate if necessary
                 if len(clause_str) > 70:
                     clause_str = clause_str[:67] + "..."
                 clause_tag = "initial" if clause.is_initial else "derived"
-                print(f"  {i}. {clause_str} [{clause_tag}]")
+                print(f"  {clause_str} [{clause_tag}]")
             if len(output.clauses) > 10:
                 print(f"  ... and {len(output.clauses) - 10} more")
 
         print(f"\nDerivations extracted: {len(output.derivations)}")
         if output.derivations:
             max_display = min(10, len(output.derivations))
-            for i, derivation in enumerate(output.derivations[:max_display], 1):
-                deriv_str = str(derivation)
+            for derivation in output.derivations[:max_display]:
+                indent = "  " * derivation.indent_level
+                rule_label = derivation.rule_name or "step"
+                if rule_label == "clause" and derivation.clause_number is not None:
+                    scope_str = (
+                        f" [Query {derivation.query_scope - 1}]"
+                        if derivation.query_scope is not None
+                        else ""
+                    )
+                    rule_label = f"clause {derivation.clause_number}{scope_str}"
+                deriv_str = f"{indent}{rule_label}: {derivation.conclusion}"
                 # Truncate if necessary
                 if len(deriv_str) > 70:
                     deriv_str = deriv_str[:67] + "..."
-                print(f"  {i}. {deriv_str}")
+                print(f"  {deriv_str}")
             if len(output.derivations) > 10:
                 print(f"  ... and {len(output.derivations) - 10} more")
 

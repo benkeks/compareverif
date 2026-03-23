@@ -393,6 +393,14 @@ class DerivationTree:
                 label = ""
                 cost_label = ""
 
+                # Always render rule notation in ProVerif style when available
+                rule_label = ""
+                if rule:
+                    if rule == "clause" and clause_number is not None:
+                        rule_label = f"clause {clause_number}"
+                    else:
+                        rule_label = rule
+
                 # Prefer costs from edge capabilities (clause-specific), fallback to target node capabilities
                 capabilities_for_cost = edge_capabilities or target_node.capabilities
 
@@ -406,15 +414,25 @@ class DerivationTree:
                     if cost_parts:
                         cost_label = " + ".join(cost_parts)
 
+                label_parts = []
+                if rule_label:
+                    label_parts.append(rule_label)
+                if cost_label:
+                    label_parts.append(cost_label)
                 if is_disjunctive:
-                    # For disjunctive edges, show costs and OR
-                    if cost_label:
-                        label = f' [label="{cost_label} (OR)", style=dashed]'
+                    label_parts.append("OR")
+
+                label_text = "\\n".join(label_parts)
+
+                if is_disjunctive:
+                    # For disjunctive edges, keep dashed styling and explicit OR marker
+                    if label_text:
+                        label = f' [label="{label_text}", style=dashed]'
                     else:
                         label = ' [label="OR", style=dashed]'
-                elif cost_label:
-                    label = f' [label="{cost_label}"]'
-                # If no capabilities or costs, leave edge blank (no label)
+                elif label_text:
+                    label = f' [label="{label_text}"]'
+                # If no rule/cost label, leave edge blank
 
                 dot_lines.append(
                     f"  {source_node.node_id} -> {target_node.node_id}{label};"
