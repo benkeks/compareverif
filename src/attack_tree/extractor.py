@@ -60,7 +60,7 @@ class AttackTreeExtractor:
                     else "?"
                 )
                 scope_str = (
-                    f" [Query {clause.clause_scope - 1}]"
+                    f" [Query {clause.clause_scope + 1}]"
                     if clause.clause_scope is not None
                     else ""
                 )
@@ -81,7 +81,7 @@ class AttackTreeExtractor:
                 rule_label = derivation.rule_name or "step"
                 if rule_label == "clause" and derivation.clause_number is not None:
                     scope_str = (
-                        f" [Query {derivation.query_scope - 1}]"
+                        f" [Query {derivation.query_scope + 1}]"
                         if derivation.query_scope is not None
                         else ""
                     )

@@ -70,7 +70,7 @@ def main():
         "--query",
         metavar="INDEX",
         type=int,
-        help="Select which query to visualize (0=first, 1=second, etc.) when multiple queries exist",
+        help="Select which query to visualize (1=first, 2=second, etc.) matching ProVerif numbering",
     )
     parser.add_argument(
         "--show-clause-ids",
@@ -88,7 +88,7 @@ def main():
         print("  --no-summary            Skip printing the summary")
         print("  --manifest FILE         Use manifest.json for capability analysis")
         print("  --original-terms        Use original ProVerif syntax for node labels")
-        print("  --query INDEX           Select query by index when multiple queries exist (0=first)")
+        print("  --query INDEX           Select query by index when multiple queries exist (1=first)")
         print("  --show-clause-ids       Include ProVerif clause IDs in node labels")
         print("\nExamples:")
         print("  # Basic extraction")
@@ -172,18 +172,18 @@ def main():
 
             # Validate --query argument if provided
             if args.query is not None:
-                # User explicitly requested a query index
-                if args.query < 0 or args.query >= len(unique_queries):
+                # User explicitly requested a query index (1-based, like ProVerif)
+                if args.query < 1 or args.query > len(unique_queries):
                     print(f"Error: --query {args.query} out of range.")
                     if unique_queries:
-                        print(f"Available queries (0-{len(unique_queries)-1}):")
+                        print(f"Available queries (1-{len(unique_queries)}):")
                         for i, q in enumerate(unique_queries):
-                            print(f"  {i}: {canonical_to_display[q]}")
+                            print(f"  {i + 1}: {canonical_to_display[q]}")
                     else:
                         print("No queries found in derivations!")
                     continue
                 # Select the requested query
-                selected_canonical = unique_queries[args.query]
+                selected_canonical = unique_queries[args.query - 1]
                 output.derivations = [
                     d
                     for d in output.derivations
@@ -200,7 +200,7 @@ def main():
                     print(f"\nWarning: Multiple queries found ({len(unique_queries)} total).")
                     print("Available queries:")
                     for i, q in enumerate(unique_queries):
-                        print(f"  {i}: {canonical_to_display[q]}")
+                        print(f"  {i + 1}: {canonical_to_display[q]}")
                     print(f"Using first query. To select another, use: --query <index>")
                 # Use first query by default
                 selected_canonical = unique_queries[0]
@@ -214,7 +214,7 @@ def main():
             elif len(unique_queries) == 1:
                 # Single query, update output.query if not already set
                 if not output.query:
-                    output.query = unique_queries[0]
+                    output.query = canonical_to_display[unique_queries[0]]
 
         if not args.no_summary:
             extractor.print_summary(output)

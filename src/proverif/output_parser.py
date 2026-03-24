@@ -87,7 +87,7 @@ class ProVerifOutputParser:
         in_derivation_block = False
         current_query = None  # Track the most recent query for the next derivation/clauses
         current_query_scope: Optional[int] = None
-        query_scope_counter = 0
+        query_scope_counter = -1
         in_initial_clauses = False
 
         while i < len(lines):
@@ -123,6 +123,8 @@ class ProVerifOutputParser:
                     deriv_line = lines[i].rstrip()
                     # Stop at section markers
                     if (
+                        deriv_line.strip().startswith("-- Query ")
+                        or
                         deriv_line.strip().startswith("Initial state")
                         or deriv_line.strip().startswith("Additional knowledge")
                         or "---" in deriv_line

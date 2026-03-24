@@ -172,7 +172,7 @@ class CapabilityAnalyzer:
                     )
                     if clause_scopes:
                         query_indices = ", ".join(
-                            str(scope - 1) for scope in sorted(clause_scopes)
+                            str(scope + 1) for scope in sorted(clause_scopes)
                         )
                         print(
                             f"  Clause {clause_number} (Query {query_indices}) [{clause_tag}]: {clause_text}"

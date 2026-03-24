@@ -185,13 +185,28 @@ goal attacker(password[])
         parser = ProVerifOutputParser()
         raw_output = """
 -- Query 1
+Initial clauses:
+Clause 1: fact1() -> attacker(x)
 Derivation:
-goal fact1()
+goal attacker(x)
+    clause 1 attacker(x)
 
 -- Query 2
+Initial clauses:
+Clause 1: fact2() -> attacker(y)
 Derivation:
-goal fact2()
+goal attacker(y)
+    clause 1 attacker(y)
 """
         output = parser.parse(raw_output)
-        # Two queries should be detected and tracked
-        assert len(parser.queries_seen) >= 1
+        # Two queries should be detected and tracked with 0-based scope IDs
+        assert len(output.derivations) == 4
+        clause_derivations = [d for d in output.derivations if d.rule_name == "clause"]
+        assert len(clause_derivations) == 2
+        assert clause_derivations[0].query_scope == 0
+        assert clause_derivations[1].query_scope == 1
+
+        clause_entries = [c for c in output.clauses if c.clause_number == 1]
+        assert len(clause_entries) == 2
+        assert clause_entries[0].clause_scope == 0
+        assert clause_entries[1].clause_scope == 1
