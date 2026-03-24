@@ -252,8 +252,14 @@ class DerivationTree:
     def to_graphviz(self) -> str:
         """Generate graphviz dot format representation."""
         dot_lines = ["digraph DerivationTree {"]
-        dot_lines.append("  rankdir=TD;")  # Top-down layout
+        dot_lines.append("  rankdir=BT;")  # Bottom-up layout (goal at top with inverted arrows)
         dot_lines.append("  node [shape=box, style=rounded];")
+
+        # Build edge_capabilities lookup: for each node key, find the capabilities from its incoming edge
+        node_edge_capabilities = {}
+        for source_key, target_key, rule, clause_number, clause_scope, edge_capabilities in self.edges:
+            # Store edge capabilities for the target node (last edge added for this node wins if multiple edges)
+            node_edge_capabilities[target_key] = edge_capabilities
 
         # Add all nodes
         for (fact, variant_id), node in self.nodes.items():
@@ -336,16 +342,34 @@ class DerivationTree:
                 tag_html = self._format_label_html(f"(❌ {self.query_tag})")
                 html_parts.append(tag_html)
 
-            # Add clause id if enabled
-            if self.show_clause_ids and node.clause_number is not None:
-                clause_html = self._format_label_html(f"Clause {node.clause_number}")
-                html_parts.append(clause_html)
-
             # Add capability annotations in bold
             if node.capabilities:
                 cap_str = ", ".join(sorted(node.capabilities))
                 # Use bold instead of brackets
                 html_parts.append(f"<B>{cap_str}</B>")
+
+            # Calculate costs from edge capabilities (always shown)
+            node_key = (fact, variant_id)
+            edge_caps = node_edge_capabilities.get(node_key, set())
+            cost_parts = []
+            if edge_caps:
+                for cap in sorted(edge_caps):
+                    if cap in self.capability_costs:
+                        costs = self.capability_costs[cap]
+                        for cost_type, cost_value in sorted(costs.items()):
+                            cost_parts.append(f"{cost_value} {cost_type}")
+            
+            # Add clause info: costs always shown, clause number only if flag enabled
+            clause_info_parts = []
+            if self.show_clause_ids and node.clause_number is not None:
+                clause_info_parts.append(f"clause {node.clause_number}")
+            
+            if cost_parts:
+                clause_info_parts.append(" + ".join(cost_parts))
+            
+            if clause_info_parts:
+                clause_info_html = self._format_label_html(" | ".join(clause_info_parts))
+                html_parts.append(clause_info_html)
 
             # Join with line breaks
             label_html = "<BR/>".join(html_parts)
@@ -389,53 +413,15 @@ class DerivationTree:
                 ]
                 is_disjunctive = len(variants) > 1 and target_key[1] is not None
 
-                # Generate edge label based on capabilities and costs
+                # Generate edge label (only OR marker for disjunctive edges)
                 label = ""
-                cost_label = ""
-
-                # Always render rule notation in ProVerif style when available
-                rule_label = ""
-                if rule:
-                    if rule == "clause" and clause_number is not None:
-                        rule_label = f"clause {clause_number}"
-                    else:
-                        rule_label = rule
-
-                # Prefer costs from edge capabilities (clause-specific), fallback to target node capabilities
-                capabilities_for_cost = edge_capabilities or target_node.capabilities
-
-                if capabilities_for_cost:
-                    cost_parts = []
-                    for cap in sorted(capabilities_for_cost):
-                        if cap in self.capability_costs:
-                            costs = self.capability_costs[cap]
-                            for cost_type, cost_value in sorted(costs.items()):
-                                cost_parts.append(f"{cost_value} {cost_type}")
-                    if cost_parts:
-                        cost_label = " + ".join(cost_parts)
-
-                label_parts = []
-                if rule_label:
-                    label_parts.append(rule_label)
-                if cost_label:
-                    label_parts.append(cost_label)
-                if is_disjunctive:
-                    label_parts.append("OR")
-
-                label_text = "\\n".join(label_parts)
-
                 if is_disjunctive:
                     # For disjunctive edges, keep dashed styling and explicit OR marker
-                    if label_text:
-                        label = f' [label="{label_text}", style=dashed]'
-                    else:
-                        label = ' [label="OR", style=dashed]'
-                elif label_text:
-                    label = f' [label="{label_text}"]'
-                # If no rule/cost label, leave edge blank
+                    label = ' [label="OR", style=dashed]'
+                # If not disjunctive, leave edge blank (no label)
 
                 dot_lines.append(
-                    f"  {source_node.node_id} -> {target_node.node_id}{label};"
+                    f"  {target_node.node_id} -> {source_node.node_id}{label};"
                 )
 
         dot_lines.append("}")

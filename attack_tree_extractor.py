@@ -75,7 +75,7 @@ def main():
     parser.add_argument(
         "--show-clause-ids",
         action="store_true",
-        help="Include ProVerif clause IDs in node labels",
+        help="Include ProVerif clause numbers in node labels",
     )
 
     args = parser.parse_args()

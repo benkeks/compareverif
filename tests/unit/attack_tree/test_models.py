@@ -145,7 +145,7 @@ class TestDerivationTree:
         tree = DerivationTree(goal="attacker(x)", show_clause_ids=True)
         tree.add_node("auth", rule="clause", clause_number=5)
         dot_output = tree.to_graphviz()
-        assert "Clause 5" in dot_output
+        assert "clause 5" in dot_output
 
     def test_capability_costs_in_edges(self):
         """Test that capability costs are shown in edge labels."""
