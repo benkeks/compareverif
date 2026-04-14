@@ -4,7 +4,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 
 @dataclass
@@ -257,195 +257,19 @@ class DerivationTree:
             )
         )
 
-    def to_graphviz(self) -> str:
-        """Generate graphviz dot format representation."""
-        dot_lines = ["digraph DerivationTree {"]
-        dot_lines.append("  rankdir=BT;")  # Bottom-up layout (goal at top with inverted arrows)
-        dot_lines.append("  node [shape=box, style=rounded];")
+    def to_graphviz(
+        self,
+        label_wrapper: Optional[Callable[[str], List[str]]] = None,
+    ) -> str:
+        """Generate graphviz dot format representation.
 
-        capability_children_by_fact: Dict[Tuple[str, Optional[str]], Set[Tuple[str, Optional[str]]]] = {}
-        for source_key, target_key in self.edges:
-            target_node = self.nodes[target_key]
-            if target_node.node_type == "capability":
-                capability_children_by_fact.setdefault(source_key, set()).add(target_key)
+        Rendering is delegated to GraphvizRenderer to keep presentation logic out
+        of this model class while preserving backwards compatibility.
+        """
+        from .renderer import GraphvizRenderer
 
-        highlighted_nodes = self._get_attack_highlight_nodes()
-
-        # Add all nodes
-        for (fact, variant_id), node in self.nodes.items():
-            if node.node_type == "capability":
-                label = fact
-            elif self.readable_nodes:
-                label = TreeNode.to_readable_format(fact)
-            else:
-                label = fact
-
-            # For readable mode (HTML labels), break text before converting
-            # For non-readable mode, break the plain text
-            label_lines = [label]
-
-            if node.node_type != "capability" and self.readable_nodes and len(label) > 50:
-                # Break HTML-formatted text at logical points before rendering
-                # Find positions to break by looking at the plain text content
-                text_only = re.sub(r"<[^>]+>", "", label)
-
-                if len(text_only) > 50:
-                    # Find good break points in the plain text
-                    break_positions = []
-
-                    # Look for natural break points: "). " or " and "
-                    for pattern in [r"\)\.\s+", r"\sand\s+"]:
-                        for match in re.finditer(pattern, text_only):
-                            break_positions.append(match.end())
-
-                    if break_positions:
-                        # Sort and limit to creating 3 breaks (4 lines max)
-                        break_positions.sort()
-                        break_positions = break_positions[:3]
-
-                        # Now apply these breaks to the HTML text by finding matching positions
-                        # This is tricky because the HTML has tags, so we need to map positions
-                        label_lines = []
-                        last_html_idx = 0
-                        last_text_idx = 0
-
-                        for break_text_idx in break_positions:
-                            if len(label_lines) >= 3:  # Max 4 lines
-                                break
-
-                            # Find the corresponding position in the HTML string
-                            # Count characters in HTML, skipping tags
-                            char_count = 0
-                            html_idx = last_html_idx
-                            while html_idx < len(label) and char_count < break_text_idx - last_text_idx:
-                                if label[html_idx] == "<":
-                                    # Skip this tag
-                                    end_tag = label.find(">", html_idx)
-                                    if end_tag != -1:
-                                        html_idx = end_tag + 1
-                                    else:
-                                        html_idx += 1
-                                else:
-                                    char_count += 1
-                                    html_idx += 1
-
-                            # Add this line (from last_html_idx to html_idx)
-                            line = label[last_html_idx:html_idx].rstrip(" ")
-                            if line:
-                                label_lines.append(line)
-
-                            last_html_idx = html_idx
-                            last_text_idx = break_text_idx
-
-                        # Add remaining text
-                        if last_html_idx < len(label):
-                            remaining = label[last_html_idx:]
-                            if remaining.strip():
-                                label_lines.append(remaining)
-
-            # Build HTML label from lines
-            html_parts = []
-            for line in label_lines[:4]:  # Max 4 lines
-                html_parts.append(self._format_label_html(line))
-
-            # Add query tag to goal node
-            if node.rule == "goal" and self.query_tag:
-                tag_html = self._format_label_html(f"(❌ {self.query_tag})")
-                html_parts.append(tag_html)
-
-            if node.node_type == "capability":
-                cost_parts = []
-                for cap in sorted(node.capabilities or {fact}):
-                    if cap in self.capability_costs:
-                        costs = self.capability_costs[cap]
-                        for cost_type, cost_value in sorted(costs.items()):
-                            cost_parts.append(f"{cost_value} {cost_type}")
-
-                if cost_parts:
-                    html_parts.append(self._format_label_html(" + ".join(cost_parts)))
-            elif self.show_clause_ids and node.clause_number is not None:
-                clause_info_html = self._format_label_html(f"clause {node.clause_number}")
-                html_parts.append(clause_info_html)
-
-            # Join with line breaks
-            label_html = "<BR/>".join(html_parts)
-
-            fillcolor = None
-            color = None
-            shape = "box"
-            style = "filled"
-            if node.node_type == "capability":
-                fillcolor = "#F4CCCC"
-                color = "#CC0000"
-                shape = "octagon"
-                style = "filled"
-            elif node.rule == "goal":
-                # Query/goal nodes should stand out as circular purple nodes.
-                fillcolor = "#D8B4E2"
-                shape = "ellipse"
-                style = "filled"
-            elif fact.startswith("table("):
-                fillcolor = "#D9D9D9"
-                shape = "cylinder"
-            elif fact.startswith("mess("):
-                fillcolor = "#D9D9D9"
-                shape = "note"
-            else:
-                # Intermediate facts default to rectangular nodes with grey background.
-                fillcolor = "#D9D9D9"
-                shape = "box"
-
-            attrs = {
-                "label": f"<{label_html}>",
-                "shape": f'"{shape}"',
-                "style": f'"{style}"',
-            }
-            if fillcolor:
-                attrs["fillcolor"] = f'"{fillcolor}"'
-            if color:
-                attrs["color"] = f'"{color}"'
-                attrs["fontcolor"] = f'"{color}"'
-
-            if self.highlight_attack and (fact, variant_id) not in highlighted_nodes:
-                attrs["fillcolor"] = '"#F2F2F2"'
-                attrs["color"] = '"#A6A6A6"'
-                attrs["fontcolor"] = '"#A6A6A6"'
-
-            attrs_str = ", ".join(f"{key}={value}" for key, value in attrs.items())
-            dot_lines.append(f"  {node.node_id} [{attrs_str}];")
-
-        # Add edges
-        visited = set()
-        for source_key, target_key in self.edges:
-            source_node = self.nodes[source_key]
-            target_node = self.nodes[target_key]
-            edge_key = f"{source_node.node_id}-{target_node.node_id}"
-
-            if edge_key not in visited:
-                visited.add(edge_key)
-                label = ""
-                if (
-                    target_node.node_type == "capability"
-                    and len(capability_children_by_fact.get(source_key, set())) > 1
-                ):
-                    label = ' [label="OR", style=dashed]'
-
-                if self.highlight_attack and not self._edge_is_highlighted(
-                    source_key,
-                    target_key,
-                    highlighted_nodes,
-                ):
-                    if label:
-                        label = label[:-1] + ', color="#BFBFBF", fontcolor="#BFBFBF", penwidth=0.8]'
-                    else:
-                        label = ' [color="#BFBFBF", fontcolor="#BFBFBF", penwidth=0.8]'
-
-                dot_lines.append(
-                    f"  {target_node.node_id} -> {source_node.node_id}{label};"
-                )
-
-        dot_lines.append("}")
-        return "\n".join(dot_lines)
+        wrapper = label_wrapper or GraphvizRenderer.wrap_label_for_display
+        return GraphvizRenderer.generate_dot(self, label_wrapper=wrapper)
 
     def to_json(self) -> Dict[str, Any]:
         """Return a plain JSON-serializable representation of the tree."""
@@ -548,15 +372,3 @@ class DerivationTree:
         """An edge is highlighted if both endpoints are highlighted."""
         return source_key in highlighted_nodes and target_key in highlighted_nodes
 
-    @staticmethod
-    def _format_label_html(text: str) -> str:
-        """Escape HTML special characters in text.
-
-        Text from to_readable_format() already contains HTML font tags,
-        so we only escape unescaped ampersands and angle brackets.
-        """
-        # Replace & with &amp; (but not &amp; or &lt; or &gt; or &nbsp; etc.)
-        text = re.sub(r"&(?![a-z]+;)", "&amp;", text)
-
-        # For now, just return as-is since to_readable_format() output is safe
-        return text
