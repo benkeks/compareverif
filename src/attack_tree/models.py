@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass, field
+from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
 
@@ -127,12 +128,14 @@ class DerivationTree:
         capability_costs: Optional[Dict[str, Dict[str, int]]] = None,
         readable_nodes: bool = False,
         show_clause_ids: bool = False,
+        highlight_attack: bool = False,
     ):
         self.goal = goal
         self.query_tag = query_tag  # Tag/name of the violated query
         self.capability_costs = capability_costs or {}  # Map: capability name -> {"time": X, "hack": Y, ...}
         self.readable_nodes = readable_nodes  # Whether to use readable node labels
         self.show_clause_ids = show_clause_ids  # Whether to display clause numbers in node labels
+        self.highlight_attack = highlight_attack  # Fade branches not above attack capability nodes
         self.nodes: Dict[Tuple[str, Optional[str]], TreeNode] = {}  # Key: (fact, variant_id)
         self.edges: List[
             Tuple[
@@ -276,6 +279,8 @@ class DerivationTree:
             if target_node.node_type == "capability":
                 capability_children_by_fact.setdefault(source_key, set()).add(target_key)
 
+        highlighted_nodes = self._get_attack_highlight_nodes()
+
         # Add all nodes
         for (fact, variant_id), node in self.nodes.items():
             if node.node_type == "capability":
@@ -400,13 +405,24 @@ class DerivationTree:
                 fillcolor = "#D9D9D9"
                 shape = "box"
 
-            attrs = [f"label=<{label_html}>", f'shape="{shape}"', f'style="{style}"']
+            attrs = {
+                "label": f"<{label_html}>",
+                "shape": f'"{shape}"',
+                "style": f'"{style}"',
+            }
             if fillcolor:
-                attrs.append(f'fillcolor="{fillcolor}"')
+                attrs["fillcolor"] = f'"{fillcolor}"'
             if color:
-                attrs.append(f'color="{color}"')
-                attrs.append(f'fontcolor="{color}"')
-            dot_lines.append(f"  {node.node_id} [{', '.join(attrs)}];")
+                attrs["color"] = f'"{color}"'
+                attrs["fontcolor"] = f'"{color}"'
+
+            if self.highlight_attack and (fact, variant_id) not in highlighted_nodes:
+                attrs["fillcolor"] = '"#F2F2F2"'
+                attrs["color"] = '"#A6A6A6"'
+                attrs["fontcolor"] = '"#A6A6A6"'
+
+            attrs_str = ", ".join(f"{key}={value}" for key, value in attrs.items())
+            dot_lines.append(f"  {node.node_id} [{attrs_str}];")
 
         # Add edges
         visited = set()
@@ -424,12 +440,62 @@ class DerivationTree:
                 ):
                     label = ' [label="OR", style=dashed]'
 
+                if self.highlight_attack and not self._edge_is_highlighted(
+                    source_key,
+                    target_key,
+                    highlighted_nodes,
+                ):
+                    if label:
+                        label = label[:-1] + ', color="#BFBFBF", fontcolor="#BFBFBF", penwidth=0.8]'
+                    else:
+                        label = ' [color="#BFBFBF", fontcolor="#BFBFBF", penwidth=0.8]'
+
                 dot_lines.append(
                     f"  {target_node.node_id} -> {source_node.node_id}{label};"
                 )
 
         dot_lines.append("}")
         return "\n".join(dot_lines)
+
+    def _get_attack_highlight_nodes(self) -> Set[Tuple[str, Optional[str]]]:
+        """Return nodes to keep at full emphasis when highlighting attacks.
+
+        Relevant nodes are capability nodes and all their ancestors (towards the goal).
+        """
+        if not self.highlight_attack:
+            return set(self.nodes.keys())
+
+        capability_nodes = {
+            key for key, node in self.nodes.items() if node.node_type == "capability"
+        }
+        if not capability_nodes:
+            return set(self.nodes.keys())
+
+        incoming_sources: Dict[Tuple[str, Optional[str]], Set[Tuple[str, Optional[str]]]] = defaultdict(set)
+        for source_key, target_key, _, _, _, _ in self.edges:
+            incoming_sources[target_key].add(source_key)
+
+        highlighted = set()
+        stack = list(capability_nodes)
+        while stack:
+            node_key = stack.pop()
+            if node_key in highlighted:
+                continue
+            highlighted.add(node_key)
+            for parent_key in incoming_sources.get(node_key, set()):
+                if parent_key not in highlighted:
+                    stack.append(parent_key)
+
+        return highlighted
+
+    @staticmethod
+    def _edge_is_highlighted(
+        source_key: Tuple[str, Optional[str]],
+        target_key: Tuple[str, Optional[str]],
+        highlighted_nodes: Set[Tuple[str, Optional[str]]],
+    ) -> bool:
+        """An edge is highlighted if both endpoints are highlighted."""
+        return source_key in highlighted_nodes and target_key in highlighted_nodes
 
     @staticmethod
     def _format_label_html(text: str) -> str:

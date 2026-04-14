@@ -18,6 +18,7 @@ class GraphvizRenderer:
         capability_costs: Optional[Dict[str, Dict[str, int]]] = None,
         readable_nodes: bool = False,
         show_clause_ids: bool = False,
+        highlight_attack: bool = False,
     ) -> Optional[DerivationTree]:
         """
         Build a derivation tree from a list of derivations.
@@ -32,6 +33,7 @@ class GraphvizRenderer:
             capability_costs: Dict mapping capability names to cost dicts
             readable_nodes: Whether to use readable format for nodes
             show_clause_ids: Whether to show clause numbers
+            highlight_attack: Whether to fade non-attack-relevant branches
 
         Returns:
             DerivationTree object or None if no derivations
@@ -63,7 +65,12 @@ class GraphvizRenderer:
         goal = first_tree_derivs[0].conclusion
 
         tree = DerivationTree(
-            goal, query_tag, capability_costs, readable_nodes, show_clause_ids
+            goal,
+            query_tag,
+            capability_costs,
+            readable_nodes,
+            show_clause_ids,
+            highlight_attack,
         )
 
         # Separate derivations into different categories

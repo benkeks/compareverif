@@ -157,6 +157,37 @@ class TestDerivationTree:
 
         assert 'shape="note"' in dot_output
 
+    def test_highlight_attack_fades_non_attack_branch(self):
+        """Highlight mode should fade branches that are not above capabilities."""
+        tree = DerivationTree(goal="goal", highlight_attack=True)
+        tree.add_node("fact1", rule="clause")
+        tree.add_node("table(entry1)", rule="clause")
+        tree.add_edge("goal", "fact1", rule="clause")
+        tree.add_edge("fact1", "table(entry1)", rule="clause")
+
+        tree.add_node(
+            "Attack Capability",
+            rule=tree.CAPABILITY_RULE,
+            node_type="capability",
+            capabilities={"Attack Capability"},
+            variant_id="cap_leaf",
+        )
+        tree.add_edge(
+            "fact1",
+            "Attack Capability",
+            rule=tree.CAPABILITY_RULE,
+            target_variant="cap_leaf",
+            target_node_type="capability",
+            edge_capabilities={"Attack Capability"},
+        )
+
+        dot_output = tree.to_graphviz()
+
+        # Non-attack sibling branch is dimmed.
+        assert "table(entry1)" in dot_output
+        assert 'color="#A6A6A6"' in dot_output
+        assert 'penwidth=0.8' in dot_output
+
     def test_graphviz_with_capabilities(self):
         """Test graphviz output with dedicated capability nodes."""
         tree = DerivationTree(goal="attacker(x)")

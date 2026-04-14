@@ -173,6 +173,9 @@ python3 attack_tree_extractor.py <scenario_file.pv> --graphviz-pdf <output_dir>
 
 # Generate both dot and PDF
 python3 attack_tree_extractor.py <scenario_file.pv> --graphviz-dot <dir> --graphviz-pdf <dir>
+
+# Highlight attack-relevant paths and fade less relevant branches
+python3 attack_tree_extractor.py <scenario_file.pv> --graphviz-pdf <dir> --highlight-attack
 ```
 
 **Examples:**
@@ -198,22 +201,34 @@ python3 attack_tree_extractor.py \
   --graphviz-dot trees/
 ```
 
+Generate an annotated tree with clause IDs and attack highlighting:
+```bash
+python3 attack_tree_extractor.py \
+  _scenarios/singularized_passwords/rainbow_table_attack+intruder_at_database+intruder_at_singularization_database.pv \
+  --manifest _scenarios/singularized_passwords/manifest.json \
+  --query 2 \
+  --show-clause-ids \
+  --highlight-attack \
+  --graphviz-pdf trees/
+```
+
 **Output:**
 
 The script produces:
 
 1. **Summary to console** - Lists extracted clauses and derivations for each scenario
 2. **Dot files** (optional) - Graphviz graph description format, loadable in any graphviz tool
-3. **PDF files** (optional) - Visual diagrams of attack trees with top-down layout
+3. **PDF files** (optional) - Visual diagrams of attack trees
 
 The attack tree visualizations show:
-- **Goal at the top** (highlighted in green) - What the attacker aims to achieve
-- **Intermediate facts** flowing downward with color coding:
-  - Green nodes: Goal/target
-  - Blue nodes: Clause references  
-  - Yellow nodes: Applied transformations (projections, duplications, etc.)
-  - Gray nodes: Other facts
-- **Edges labeled with rules** showing how each fact is derived
+- **Query/goal node** as a purple elliptical node at the top
+- **Intermediate facts** as grey rectangular nodes
+- **Table facts** (`table(...)`) as cylinder-shaped nodes
+- **Channel transport facts** (`mess(...)`) as note-shaped nodes
+- **Attack capabilities** as dedicated red octagonal leaf nodes with their costs (e.g., `1 hack`, `100 time`)
+- **Optional clause IDs** inside fact nodes when `--show-clause-ids` is enabled
+- **Optional attack highlighting** (`--highlight-attack`) that fades branches not on paths above attack capability nodes
+- **OR markers on capability edges** when multiple capabilities can realize the same fact
 
 **Options:**
 
@@ -221,10 +236,16 @@ The attack tree visualizations show:
 - `--graphviz-pdf DIR` - Output directory for PDF files (requires graphviz package)
 - `--no-summary` - Skip printing the console summary
 - `--manifest FILE` - Use manifest.json for capability analysis (annotates clauses with capabilities)
+- `--original-terms` - Use original ProVerif terms in node labels instead of human-readable formatting
+- `--query INDEX` - Select a specific query to visualize (1-based index, matching ProVerif numbering)
+- `--show-clause-ids` - Include ProVerif clause numbers in fact node labels
+- `--highlight-attack` - Emphasize attack-relevant paths and fade less relevant branches
 
 #### Capability Analysis
 
-The attack tree extractor can annotate attack trees with the capabilities that enable each attack step. It compares clauses between the base scenario and single-capability scenarios to identify which clauses are introduced by each capability (including completed clauses generated during ProVerif's saturation phase). Nodes are color-coded by capability for visual distinction.
+The attack tree extractor can annotate attack trees with the capabilities that enable each attack step. It compares clauses between the base scenario and single-capability scenarios to identify which clauses are introduced by each capability (including completed clauses generated during ProVerif's saturation phase).
+
+When capability analysis is enabled via `--manifest`, the graph uses dedicated capability leaf nodes (red octagons). Capability costs are rendered exclusively in these capability nodes.
 
 **Usage:**
 
@@ -236,4 +257,4 @@ python3 attack_tree_extractor.py \
   --graphviz-pdf annotated_trees/
 ```
 
-Attack tree nodes annotated with capabilities show labels like `[Rainbow table attack]` or `[Intruder at database]`, helping identify which attack steps depend on specific capabilities.
+This capability-node representation makes it explicit which attack steps depend on specific attacker capabilities and what each capability costs.

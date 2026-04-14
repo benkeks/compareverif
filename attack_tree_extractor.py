@@ -77,6 +77,11 @@ def main():
         action="store_true",
         help="Include ProVerif clause numbers in node labels",
     )
+    parser.add_argument(
+        "--highlight-attack",
+        action="store_true",
+        help="Highlight attack-relevant paths and fade less relevant branches",
+    )
 
     args = parser.parse_args()
 
@@ -90,6 +95,7 @@ def main():
         print("  --original-terms        Use original ProVerif syntax for node labels")
         print("  --query INDEX           Select query by index when multiple queries exist (1=first)")
         print("  --show-clause-ids       Include ProVerif clause IDs in node labels")
+        print("  --highlight-attack      Highlight paths above attack capabilities")
         print("\nExamples:")
         print("  # Basic extraction")
         print("  python3 attack_tree_extractor_refactored.py scenario.pv --graphviz-pdf output/")
@@ -293,6 +299,7 @@ def main():
                 capability_costs,
                 use_readable,
                 args.show_clause_ids,
+                args.highlight_attack,
             )
             if tree:
                 # Annotate with capabilities if analyzer is available

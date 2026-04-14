@@ -113,6 +113,16 @@ class TestGraphvizRenderer:
         )
         assert tree.show_clause_ids is True
 
+    def test_build_tree_highlight_attack(self):
+        """Test building tree with attack highlighting enabled."""
+        derivations = [
+            Derivation(conclusion="attacker(x)", rule_name="goal", indent_level=0)
+        ]
+        tree = GraphvizRenderer.build_tree_from_derivations(
+            derivations, highlight_attack=True
+        )
+        assert tree.highlight_attack is True
+
     def test_build_tree_no_self_loops(self):
         """Test that self-loops are not created."""
         derivations = [
