@@ -125,13 +125,20 @@ class TestDerivationTree:
         assert "->" in dot_output  # Check for edges
 
     def test_graphviz_with_capabilities(self):
-        """Test graphviz output with capability annotations."""
+        """Test graphviz output with dedicated capability nodes."""
         tree = DerivationTree(goal="attacker(x)")
-        tree.add_node("hack", capabilities={"brute_force"})
+        tree.add_node(
+            "Brute Force",
+            rule=tree.CAPABILITY_RULE,
+            node_type="capability",
+            capabilities={"Brute Force"},
+            variant_id="cap_leaf",
+        )
 
         dot_output = tree.to_graphviz()
-        assert "brute_force" in dot_output
-        assert "#DDA0DD" in dot_output  # Plum color for capability nodes
+        assert "Brute Force" in dot_output
+        assert 'shape="octagon"' in dot_output
+        assert "#CC0000" in dot_output
 
     def test_readable_nodes(self):
         """Test readable node format in graphviz output."""
@@ -147,18 +154,26 @@ class TestDerivationTree:
         dot_output = tree.to_graphviz()
         assert "clause 5" in dot_output
 
-    def test_capability_costs_in_edges(self):
-        """Test that capability costs are shown in edge labels."""
+    def test_capability_costs_in_capability_nodes(self):
+        """Test that capability costs are shown only in dedicated capability nodes."""
         tree = DerivationTree(
             goal="attacker(x)",
-            capability_costs={"brute_force": {"hack": 1, "time": 10}},
+            capability_costs={"Brute Force": {"hack": 1, "time": 10}},
         )
-        node = tree.add_node("crack", capabilities={"brute_force"})
-        tree.add_edge("attacker(x)", "crack")
+        tree.add_node("crack", rule="clause", clause_number=7)
+        tree.add_node(
+            "Brute Force",
+            rule=tree.CAPABILITY_RULE,
+            node_type="capability",
+            capabilities={"Brute Force"},
+            variant_id="cap_leaf",
+        )
+        tree.add_edge("crack", "Brute Force", target_variant="cap_leaf", target_node_type="capability")
 
         dot_output = tree.to_graphviz()
-        # Should have edge labels with costs
-        assert "label=" in dot_output
+        assert "1 hack" in dot_output
+        assert "10 time" in dot_output
+        assert "clause 7" not in dot_output or "Brute Force<BR/>clause 7" not in dot_output
 
     def test_variant_nodes(self):
         """Test tree with variant nodes (multiple ways to achieve same fact)."""

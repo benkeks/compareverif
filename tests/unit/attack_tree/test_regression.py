@@ -160,7 +160,7 @@ class TestRulePriorityAndCapabilityInteraction:
         assert goal_node.capabilities == set()
 
     def test_goal_clause_variant_is_capability_annotated(self):
-        """Non-goal variant for same fact should carry capability attribution."""
+        """Non-goal variant for same fact should get a dedicated capability leaf."""
         analyzer = CapabilityAnalyzer()
         analyzer.capability_clauses = {
             "Rainbow table attack": {"attacker(secret[])"}
@@ -191,7 +191,15 @@ class TestRulePriorityAndCapabilityInteraction:
             analyzer.annotate_tree_with_capabilities(tree, Path("dummy.pv"))
 
         clause_variant_node = tree.nodes[("attacker(secret[])", variant_id)]
-        assert clause_variant_node.capabilities == {"Rainbow table attack"}
+        assert clause_variant_node.node_type == "fact"
+
+        capability_children = [
+            tree.nodes[target_key]
+            for source_key, target_key, _, _, _, _ in tree.edges
+            if source_key == ("attacker(secret[])", variant_id)
+            and tree.nodes[target_key].node_type == "capability"
+        ]
+        assert [node.fact for node in capability_children] == ["Rainbow table attack"]
 
         goal_node = tree.nodes[("attacker(secret[])", DerivationTree.GOAL_VARIANT)]
         assert goal_node.capabilities == set()

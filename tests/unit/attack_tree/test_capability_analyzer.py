@@ -214,7 +214,7 @@ class TestAnnotateTreeWithCapabilities:
 
     @patch("src.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
     def test_annotate_single_capability_node(self, mock_extract):
-        """Test annotating node with single matching capability."""
+        """Test annotating node with single matching capability leaf."""
         analyzer = CapabilityAnalyzer()
         analyzer.capability_clauses = {
             "Brute Force": {"guess(password)"}
@@ -233,14 +233,21 @@ class TestAnnotateTreeWithCapabilities:
 
         analyzer.annotate_tree_with_capabilities(tree, Path("test.pv"))
 
-        # Check that capability was assigned
-        annotated = False
-        for (fact, variant), node in tree.nodes.items():
-            if "guess" in fact and "Brute Force" in node.capabilities:
-                annotated = True
-                break
+        capability_nodes = [
+            node
+            for node in tree.nodes.values()
+            if node.node_type == "capability" and node.fact == "Brute Force"
+        ]
+        assert len(capability_nodes) == 1
 
-        assert annotated or len([n for (f, v), n in tree.nodes.items() if v is not None]) > 0
+        fact_to_capability_edges = [
+            (source_key, target_key)
+            for source_key, target_key, _, _, _, _ in tree.edges
+            if source_key[0] == "guess(password)"
+            and tree.nodes[target_key].node_type == "capability"
+            and tree.nodes[target_key].fact == "Brute Force"
+        ]
+        assert len(fact_to_capability_edges) == 1
 
     @patch("src.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
     def test_annotate_handles_missing_clauses_gracefully(self, mock_extract):
@@ -264,8 +271,8 @@ class TestAnnotateTreeWithCapabilities:
         assert result is tree
 
     @patch("src.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
-    def test_or_variant_edges_use_branch_capability_only(self, mock_extract):
-        """OR branch edges should carry only their branch capability, not summed caps."""
+    def test_or_capability_leaves_do_not_duplicate_fact_nodes(self, mock_extract):
+        """Multiple capability alternatives should become capability leaves under one fact node."""
         analyzer = CapabilityAnalyzer(
             capability_costs={
                 "Rainbow table attack": {"time": 100},
@@ -296,15 +303,18 @@ class TestAnnotateTreeWithCapabilities:
 
         analyzer.annotate_tree_with_capabilities(tree, Path("test.pv"))
 
-        # Each split branch edge must only keep its own variant capability
-        seen_variants = set()
-        for _, target_key, _, _, _, edge_caps in tree.edges:
-            target_variant = target_key[1]
-            if target_variant in {"Rainbow table attack", "Side-channel attack"}:
-                seen_variants.add(target_variant)
-                assert edge_caps == {target_variant}
+        fact_nodes = [
+            key for key, node in tree.nodes.items() if node.node_type == "fact" and key[0] == "attacker(secret[])"
+        ]
+        assert fact_nodes == [("attacker(secret[])", None)]
 
-        assert seen_variants == {"Rainbow table attack", "Side-channel attack"}
+        capability_nodes = [
+            node.fact for node in tree.nodes.values() if node.node_type == "capability"
+        ]
+        assert sorted(capability_nodes) == ["Rainbow table attack", "Side-channel attack"]
+
+        dot_output = tree.to_graphviz()
+        assert dot_output.count('label="OR"') == 2
 
 
 class TestCapabilityAnalyzerIntegration:

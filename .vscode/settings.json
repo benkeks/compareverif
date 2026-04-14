@@ -55,6 +55,10 @@
         "/^python3 -m pytest tests/unit/attack_tree/ tests/unit/proverif/test_output_parser\\.py -q$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^python3 -m pytest tests/unit/attack_tree -q$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

@@ -10,6 +10,7 @@ class TreeNode:
     """Represents a node in a derivation tree."""
 
     fact: str
+    node_type: str = "fact"
     rule: Optional[str] = None
     node_id: Optional[str] = None
     capabilities: Set[str] = field(
@@ -117,6 +118,7 @@ class DerivationTree:
     """Represents a derivation as a DAG (directed acyclic graph)."""
 
     GOAL_VARIANT = "__goal__"
+    CAPABILITY_RULE = "capability"
 
     def __init__(
         self,
@@ -148,6 +150,7 @@ class DerivationTree:
         self,
         fact: str,
         rule: Optional[str] = None,
+        node_type: str = "fact",
         capabilities: Optional[Set[str]] = None,
         clause_number: Optional[int] = None,
         variant_id: Optional[str] = None,
@@ -165,6 +168,7 @@ class DerivationTree:
         if key not in self.nodes:
             node = TreeNode(
                 fact=fact,
+                node_type=node_type,
                 rule=rule,
                 capabilities=capabilities or set(),
                 clause_number=clause_number,
@@ -173,6 +177,8 @@ class DerivationTree:
             )
             self.nodes[key] = node
         else:
+            if node_type == "capability":
+                self.nodes[key].node_type = node_type
             # Merge capabilities if node already exists
             if capabilities:
                 self.nodes[key].capabilities.update(capabilities)
@@ -180,6 +186,7 @@ class DerivationTree:
             # Rule priority (highest to lowest): goal > clause > initial > duplicate > apply*
             rule_priority = {
                 "goal": 5,
+                self.CAPABILITY_RULE: 4,
                 "clause": 4,
                 "initial": 3,
                 "duplicate": 2,
@@ -208,6 +215,8 @@ class DerivationTree:
         source_fact: str,
         target_fact: str,
         rule: Optional[str] = None,
+        source_node_type: str = "fact",
+        target_node_type: str = "fact",
         capabilities: Optional[Set[str]] = None,
         clause_number: Optional[int] = None,
         source_variant: Optional[str] = None,
@@ -229,10 +238,16 @@ class DerivationTree:
         ):
             target_variant = self.GOAL_VARIANT
 
-        self.add_node(source_fact, variant_id=source_variant)
+        self.add_node(
+            source_fact,
+            rule=self.nodes.get((source_fact, source_variant), TreeNode(source_fact)).rule,
+            node_type=source_node_type,
+            variant_id=source_variant,
+        )
         self.add_node(
             target_fact,
             rule,
+            target_node_type,
             capabilities,
             clause_number,
             variant_id=target_variant,
@@ -255,16 +270,17 @@ class DerivationTree:
         dot_lines.append("  rankdir=BT;")  # Bottom-up layout (goal at top with inverted arrows)
         dot_lines.append("  node [shape=box, style=rounded];")
 
-        # Build edge_capabilities lookup: for each node key, find the capabilities from its incoming edge
-        node_edge_capabilities = {}
-        for source_key, target_key, rule, clause_number, clause_scope, edge_capabilities in self.edges:
-            # Store edge capabilities for the target node (last edge added for this node wins if multiple edges)
-            node_edge_capabilities[target_key] = edge_capabilities
+        capability_children_by_fact: Dict[Tuple[str, Optional[str]], Set[Tuple[str, Optional[str]]]] = {}
+        for source_key, target_key, _, _, _, _ in self.edges:
+            target_node = self.nodes[target_key]
+            if target_node.node_type == "capability":
+                capability_children_by_fact.setdefault(source_key, set()).add(target_key)
 
         # Add all nodes
         for (fact, variant_id), node in self.nodes.items():
-            # Convert to readable format if requested
-            if self.readable_nodes:
+            if node.node_type == "capability":
+                label = fact
+            elif self.readable_nodes:
                 label = TreeNode.to_readable_format(fact)
             else:
                 label = fact
@@ -273,7 +289,7 @@ class DerivationTree:
             # For non-readable mode, break the plain text
             label_lines = [label]
 
-            if self.readable_nodes and len(label) > 50:
+            if node.node_type != "capability" and self.readable_nodes and len(label) > 50:
                 # Break HTML-formatted text at logical points before rendering
                 # Find positions to break by looking at the plain text content
                 text_only = re.sub(r"<[^>]+>", "", label)
@@ -342,56 +358,49 @@ class DerivationTree:
                 tag_html = self._format_label_html(f"(❌ {self.query_tag})")
                 html_parts.append(tag_html)
 
-            # Add capability annotations in bold
-            if node.capabilities:
-                cap_str = ", ".join(sorted(node.capabilities))
-                # Use bold instead of brackets
-                html_parts.append(f"<B>{cap_str}</B>")
-
-            # Calculate costs from edge capabilities (always shown)
-            node_key = (fact, variant_id)
-            edge_caps = node_edge_capabilities.get(node_key, set())
-            cost_parts = []
-            if edge_caps:
-                for cap in sorted(edge_caps):
+            if node.node_type == "capability":
+                cost_parts = []
+                for cap in sorted(node.capabilities or {fact}):
                     if cap in self.capability_costs:
                         costs = self.capability_costs[cap]
                         for cost_type, cost_value in sorted(costs.items()):
                             cost_parts.append(f"{cost_value} {cost_type}")
-            
-            # Add clause info: costs always shown, clause number only if flag enabled
-            clause_info_parts = []
-            if self.show_clause_ids and node.clause_number is not None:
-                clause_info_parts.append(f"clause {node.clause_number}")
-            
-            if cost_parts:
-                clause_info_parts.append(" + ".join(cost_parts))
-            
-            if clause_info_parts:
-                clause_info_html = self._format_label_html(" | ".join(clause_info_parts))
+
+                if cost_parts:
+                    html_parts.append(self._format_label_html(" + ".join(cost_parts)))
+            elif self.show_clause_ids and node.clause_number is not None:
+                clause_info_html = self._format_label_html(f"clause {node.clause_number}")
                 html_parts.append(clause_info_html)
 
             # Join with line breaks
             label_html = "<BR/>".join(html_parts)
 
-            # Choose color based on rule and capabilities
             fillcolor = None
-            if node.capabilities:
-                # All nodes with capabilities get the same color
-                fillcolor = "#DDA0DD"  # Plum
+            color = None
+            shape = "box"
+            style = "rounded"
+            if node.node_type == "capability":
+                fillcolor = "#F4CCCC"
+                color = "#CC0000"
+                shape = "octagon"
+                style = "filled"
             elif node.rule == "goal":
                 fillcolor = "lightgreen"
+                style = "rounded,filled"
             elif node.rule and "apply" in node.rule:
                 fillcolor = "lightyellow"
+                style = "rounded,filled"
             elif node.rule and "clause" in node.rule:
                 fillcolor = "lightblue"
+                style = "rounded,filled"
 
+            attrs = [f"label=<{label_html}>", f'shape="{shape}"', f'style="{style}"']
             if fillcolor:
-                dot_lines.append(
-                    f'  {node.node_id} [label=<{label_html}>, fillcolor="{fillcolor}", style="rounded,filled"];'
-                )
-            else:
-                dot_lines.append(f'  {node.node_id} [label=<{label_html}>];')
+                attrs.append(f'fillcolor="{fillcolor}"')
+            if color:
+                attrs.append(f'color="{color}"')
+                attrs.append(f'fontcolor="{color}"')
+            dot_lines.append(f"  {node.node_id} [{', '.join(attrs)}];")
 
         # Add edges
         visited = set()
@@ -402,23 +411,12 @@ class DerivationTree:
 
             if edge_key not in visited:
                 visited.add(edge_key)
-                # Check if target has multiple variants (disjunctive)
-                target_fact = target_key[0]
-                variants = [
-                    k
-                    for k in self.nodes.keys()
-                    if k[0] == target_fact
-                    and k[1] is not None
-                    and k[1] != self.GOAL_VARIANT
-                ]
-                is_disjunctive = len(variants) > 1 and target_key[1] is not None
-
-                # Generate edge label (only OR marker for disjunctive edges)
                 label = ""
-                if is_disjunctive:
-                    # For disjunctive edges, keep dashed styling and explicit OR marker
+                if (
+                    target_node.node_type == "capability"
+                    and len(capability_children_by_fact.get(source_key, set())) > 1
+                ):
                     label = ' [label="OR", style=dashed]'
-                # If not disjunctive, leave edge blank (no label)
 
                 dot_lines.append(
                     f"  {target_node.node_id} -> {source_node.node_id}{label};"
