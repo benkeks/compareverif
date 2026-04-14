@@ -133,7 +133,7 @@ class TestGraphvizRenderer:
         ]
         tree = GraphvizRenderer.build_tree_from_derivations(derivations)
         # Check that no edges pointing to self are created
-        for source_key, target_key, rule in tree.edges:
+        for source_key, target_key in tree.edges:
             assert source_key[0] != target_key[0]  # Different facts
 
     def test_render_to_file(self, tmp_path):
@@ -146,6 +146,20 @@ class TestGraphvizRenderer:
         assert output_file.exists()
         content = output_file.read_text()
         assert "digraph DerivationTree" in content
+
+    def test_render_to_json(self, tmp_path):
+        """Test rendering tree to JSON file."""
+        tree = DerivationTree(goal="attacker(x)")
+        output_file = tmp_path / "test.json"
+
+        GraphvizRenderer.render_to_json(tree, output_file)
+
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert '"meta"' in content
+        assert '"nodes"' in content
+        assert '"depends_on_all"' in content
+        assert '"depends_on_any"' in content
 
     def test_render_to_pdf(self, tmp_path):
         """Test rendering tree to PDF (checks dot file is created)."""

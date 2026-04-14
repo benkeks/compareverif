@@ -1,5 +1,6 @@
 """Render attack trees to graphviz format."""
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -142,11 +143,8 @@ class GraphvizRenderer:
                     tree.add_edge(
                         parent_key[0],
                         current_key[0],
-                        deriv.rule_name,
-                        clause_number=deriv.clause_number,
                         source_variant=parent_key[1],
                         target_variant=current_key[1],
-                        clause_scope=deriv.query_scope,
                     )
 
         return tree
@@ -196,3 +194,10 @@ class GraphvizRenderer:
             )
         except subprocess.CalledProcessError as e:
             print(f"Error rendering PDF: {e.stderr.decode()}")
+
+    @staticmethod
+    def render_to_json(tree: DerivationTree, output_path: Path) -> None:
+        """Render a tree to a plain JSON file."""
+        json_content = tree.to_json()
+        output_path.write_text(json.dumps(json_content, indent=2))
+        print(f"JSON tree written to: {output_path}")

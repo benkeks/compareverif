@@ -1,9 +1,10 @@
 """Data models for attack trees and derivations."""
 
 import re
+import uuid
 from dataclasses import dataclass, field
 from collections import defaultdict
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 
 @dataclass
@@ -23,9 +24,8 @@ class TreeNode:
 
     def __post_init__(self):
         if self.node_id is None:
-            # Generate unique ID based on fact content and variant
-            variant_suffix = f"_{self.variant_id}" if self.variant_id else ""
-            self.node_id = f"node_{abs(hash(self.fact + variant_suffix)) % 100000}"
+            # Fallback ID when a node is not created via DerivationTree.add_node.
+            self.node_id = f"node_{uuid.uuid4().hex}"
 
     @staticmethod
     def to_readable_format(fact: str) -> str:
@@ -136,17 +136,14 @@ class DerivationTree:
         self.readable_nodes = readable_nodes  # Whether to use readable node labels
         self.show_clause_ids = show_clause_ids  # Whether to display clause numbers in node labels
         self.highlight_attack = highlight_attack  # Fade branches not above attack capability nodes
+        self._node_id_counter = 0
         self.nodes: Dict[Tuple[str, Optional[str]], TreeNode] = {}  # Key: (fact, variant_id)
         self.edges: List[
             Tuple[
                 Tuple[str, Optional[str]],
                 Tuple[str, Optional[str]],
-                Optional[str],
-                Optional[int],
-                Optional[int],
-                Set[str],
             ]
-        ] = []  # (source, target, rule, clause_number, clause_scope, capabilities)
+        ] = []  # (source, target)
         self.add_node(goal, "goal", variant_id=self.GOAL_VARIANT)
 
     def add_node(
@@ -173,6 +170,7 @@ class DerivationTree:
                 fact=fact,
                 node_type=node_type,
                 rule=rule,
+                node_id=self._allocate_node_id(),
                 capabilities=capabilities or set(),
                 clause_number=clause_number,
                 clause_scope=clause_scope,
@@ -213,19 +211,19 @@ class DerivationTree:
                     self.nodes[key].clause_scope = clause_scope
         return self.nodes[key]
 
+    def _allocate_node_id(self) -> str:
+        """Return a collision-free node ID within this tree."""
+        self._node_id_counter += 1
+        return f"node_{self._node_id_counter}"
+
     def add_edge(
         self,
         source_fact: str,
         target_fact: str,
-        rule: Optional[str] = None,
         source_node_type: str = "fact",
         target_node_type: str = "fact",
-        capabilities: Optional[Set[str]] = None,
-        clause_number: Optional[int] = None,
         source_variant: Optional[str] = None,
         target_variant: Optional[str] = None,
-        clause_scope: Optional[int] = None,
-        edge_capabilities: Optional[Set[str]] = None,
     ) -> None:
         """Add an edge from source to target."""
         if (
@@ -249,21 +247,13 @@ class DerivationTree:
         )
         self.add_node(
             target_fact,
-            rule,
-            target_node_type,
-            capabilities,
-            clause_number,
+            node_type=target_node_type,
             variant_id=target_variant,
-            clause_scope=clause_scope,
         )
         self.edges.append(
             (
                 (source_fact, source_variant),
                 (target_fact, target_variant),
-                rule,
-                clause_number,
-                clause_scope,
-                edge_capabilities or set(),
             )
         )
 
@@ -274,7 +264,7 @@ class DerivationTree:
         dot_lines.append("  node [shape=box, style=rounded];")
 
         capability_children_by_fact: Dict[Tuple[str, Optional[str]], Set[Tuple[str, Optional[str]]]] = {}
-        for source_key, target_key, _, _, _, _ in self.edges:
+        for source_key, target_key in self.edges:
             target_node = self.nodes[target_key]
             if target_node.node_type == "capability":
                 capability_children_by_fact.setdefault(source_key, set()).add(target_key)
@@ -426,7 +416,7 @@ class DerivationTree:
 
         # Add edges
         visited = set()
-        for source_key, target_key, rule, clause_number, clause_scope, edge_capabilities in self.edges:
+        for source_key, target_key in self.edges:
             source_node = self.nodes[source_key]
             target_node = self.nodes[target_key]
             edge_key = f"{source_node.node_id}-{target_node.node_id}"
@@ -457,6 +447,67 @@ class DerivationTree:
         dot_lines.append("}")
         return "\n".join(dot_lines)
 
+    def to_json(self) -> Dict[str, Any]:
+        """Return a plain JSON-serializable representation of the tree."""
+        outgoing_by_source: Dict[Tuple[str, Optional[str]], List[Tuple[str, Optional[str]]]] = defaultdict(list)
+        for source_key, target_key in self.edges:
+            outgoing_by_source[source_key].append(target_key)
+
+        nodes = []
+        for (fact, variant_id), node in self.nodes.items():
+            costs: Dict[str, int] = {}
+            if node.node_type == "capability":
+                for cap in sorted(node.capabilities or {node.fact}):
+                    for cost_type, cost_value in self.capability_costs.get(cap, {}).items():
+                        costs[cost_type] = costs.get(cost_type, 0) + cost_value
+
+            conjunctive_ids: Set[str] = set()
+            disjunctive_groups: List[List[str]] = []
+            outgoing_targets = outgoing_by_source.get((fact, variant_id), [])
+            capability_targets = [
+                self.nodes[target_key].node_id
+                for target_key in outgoing_targets
+                if self.nodes[target_key].node_type == "capability"
+            ]
+            non_capability_targets = [
+                self.nodes[target_key].node_id
+                for target_key in outgoing_targets
+                if self.nodes[target_key].node_type != "capability"
+            ]
+
+            conjunctive_ids.update(non_capability_targets)
+            if len(capability_targets) > 1:
+                disjunctive_groups.append(sorted(set(capability_targets)))
+            elif len(capability_targets) == 1:
+                conjunctive_ids.add(capability_targets[0])
+
+            nodes.append(
+                {
+                    "id": node.node_id,
+                    "node_type": node.node_type,
+                    "fact": node.fact,
+                    "variant_id": variant_id,
+                    "rule": node.rule,
+                    "clause_number": node.clause_number,
+                    "clause_scope": node.clause_scope,
+                    "depends_on_all": sorted(conjunctive_ids),
+                    "depends_on_any": disjunctive_groups,
+                    **({"costs": costs} if node.node_type == "capability" else {}),
+                }
+            )
+
+        return {
+            "meta": {
+                "schema_version": "1.0",
+                "goal": self.goal,
+                "query_tag": self.query_tag,
+                "readable_nodes": self.readable_nodes,
+                "show_clause_ids": self.show_clause_ids,
+                "highlight_attack": self.highlight_attack,
+            },
+            "nodes": nodes,
+        }
+
     def _get_attack_highlight_nodes(self) -> Set[Tuple[str, Optional[str]]]:
         """Return nodes to keep at full emphasis when highlighting attacks.
 
@@ -472,7 +523,7 @@ class DerivationTree:
             return set(self.nodes.keys())
 
         incoming_sources: Dict[Tuple[str, Optional[str]], Set[Tuple[str, Optional[str]]]] = defaultdict(set)
-        for source_key, target_key, _, _, _, _ in self.edges:
+        for source_key, target_key in self.edges:
             incoming_sources[target_key].add(source_key)
 
         highlighted = set()

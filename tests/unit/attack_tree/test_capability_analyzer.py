@@ -242,7 +242,7 @@ class TestAnnotateTreeWithCapabilities:
 
         fact_to_capability_edges = [
             (source_key, target_key)
-            for source_key, target_key, _, _, _, _ in tree.edges
+            for source_key, target_key in tree.edges
             if source_key[0] == "guess(password)"
             and tree.nodes[target_key].node_type == "capability"
             and tree.nodes[target_key].fact == "Brute Force"
@@ -299,7 +299,7 @@ class TestAnnotateTreeWithCapabilities:
 
         tree = DerivationTree(goal="goal")
         tree.add_node("attacker(secret[])", rule="clause", clause_number=1)
-        tree.add_edge("goal", "attacker(secret[])", rule="clause", clause_number=1)
+        tree.add_edge("goal", "attacker(secret[])")
 
         analyzer.annotate_tree_with_capabilities(tree, Path("test.pv"))
 

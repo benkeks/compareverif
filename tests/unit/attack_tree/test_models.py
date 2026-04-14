@@ -95,7 +95,7 @@ class TestDerivationTree:
     def test_add_edge(self):
         """Test adding edges between nodes."""
         tree = DerivationTree(goal="attacker(x)")
-        tree.add_edge("event(auth)", "attacker(x)", rule="clause")
+        tree.add_edge("event(auth)", "attacker(x)")
         assert len(tree.edges) == 1
 
     def test_rule_priority(self):
@@ -116,7 +116,7 @@ class TestDerivationTree:
     def test_graphviz_generation(self):
         """Test graphviz output generation."""
         tree = DerivationTree(goal="attacker(x)", query_tag="broken_query")
-        tree.add_edge("event(auth)", "attacker(x)", rule="clause")
+        tree.add_edge("event(auth)", "attacker(x)")
 
         dot_output = tree.to_graphviz()
         assert "digraph DerivationTree" in dot_output
@@ -162,8 +162,8 @@ class TestDerivationTree:
         tree = DerivationTree(goal="goal", highlight_attack=True)
         tree.add_node("fact1", rule="clause")
         tree.add_node("table(entry1)", rule="clause")
-        tree.add_edge("goal", "fact1", rule="clause")
-        tree.add_edge("fact1", "table(entry1)", rule="clause")
+        tree.add_edge("goal", "fact1")
+        tree.add_edge("fact1", "table(entry1)")
 
         tree.add_node(
             "Attack Capability",
@@ -175,10 +175,8 @@ class TestDerivationTree:
         tree.add_edge(
             "fact1",
             "Attack Capability",
-            rule=tree.CAPABILITY_RULE,
             target_variant="cap_leaf",
             target_node_type="capability",
-            edge_capabilities={"Attack Capability"},
         )
 
         dot_output = tree.to_graphviz()
@@ -255,3 +253,79 @@ class TestDerivationTree:
         dot_output = tree.to_graphviz()
         assert "attacker(password[])" in dot_output
         assert tree.nodes[(tree.goal, DerivationTree.GOAL_VARIANT)].rule == "goal"
+
+    def test_plain_json_structure(self):
+        """Test plain JSON export has node-level dependencies and metadata."""
+        tree = DerivationTree(goal="attacker(x)", highlight_attack=True)
+        tree.add_node("event(auth)", rule="clause", clause_number=3)
+        tree.add_edge("attacker(x)", "event(auth)")
+
+        data = tree.to_json()
+        assert "meta" in data
+        assert "nodes" in data
+        assert "edges" not in data
+        assert data["meta"]["goal"] == "attacker(x)"
+        assert data["meta"]["highlight_attack"] is True
+        assert any(node["fact"] == "event(auth)" for node in data["nodes"])
+        assert all("id" in node for node in data["nodes"])
+        assert all("depends_on_all" in node and "depends_on_any" in node for node in data["nodes"])
+        goal_node = next(node for node in data["nodes"] if node["fact"] == "attacker(x)")
+        event_node = next(node for node in data["nodes"] if node["fact"] == "event(auth)")
+        assert goal_node["depends_on_all"] == [event_node["id"]]
+        assert goal_node["depends_on_any"] == []
+
+    def test_plain_json_distinguishes_or_dependencies(self):
+        """OR alternatives should be separated from conjunctive prerequisites."""
+        tree = DerivationTree(goal="goal")
+        tree.add_node("fact", rule="clause")
+        tree.add_node("pre", rule="clause")
+        tree.add_edge("fact", "pre")
+        tree.add_node(
+            "Cap A",
+            rule=tree.CAPABILITY_RULE,
+            node_type="capability",
+            capabilities={"Cap A"},
+            variant_id="cap_a",
+        )
+        tree.add_node(
+            "Cap B",
+            rule=tree.CAPABILITY_RULE,
+            node_type="capability",
+            capabilities={"Cap B"},
+            variant_id="cap_b",
+        )
+        tree.add_edge("fact", "Cap A", target_variant="cap_a", target_node_type="capability")
+        tree.add_edge("fact", "Cap B", target_variant="cap_b", target_node_type="capability")
+
+        data = tree.to_json()
+        fact_node = next(node for node in data["nodes"] if node["fact"] == "fact")
+        pre_node = next(node for node in data["nodes"] if node["fact"] == "pre")
+        cap_a_node = next(node for node in data["nodes"] if node["fact"] == "Cap A")
+        cap_b_node = next(node for node in data["nodes"] if node["fact"] == "Cap B")
+
+        assert fact_node["depends_on_all"] == [pre_node["id"]]
+        assert fact_node["depends_on_any"] == [[cap_a_node["id"], cap_b_node["id"]]]
+
+    def test_plain_json_capability_costs_in_nodes(self):
+        """Capability nodes should carry explicit costs in JSON."""
+        tree = DerivationTree(goal="goal", capability_costs={"Brute Force": {"hack": 1, "time": 10}})
+        tree.add_node(
+            "Brute Force",
+            rule=tree.CAPABILITY_RULE,
+            node_type="capability",
+            capabilities={"Brute Force"},
+            variant_id="cap_leaf",
+        )
+
+        data = tree.to_json()
+        cap_node = next(node for node in data["nodes"] if node["node_type"] == "capability")
+        assert cap_node["costs"] == {"hack": 1, "time": 10}
+
+    def test_node_ids_are_collision_free(self):
+        """Node IDs must be unique within a tree."""
+        tree = DerivationTree(goal="goal")
+        for idx in range(300):
+            tree.add_node(f"fact_{idx}", rule="clause")
+
+        node_ids = [node.node_id for node in tree.nodes.values()]
+        assert len(node_ids) == len(set(node_ids))

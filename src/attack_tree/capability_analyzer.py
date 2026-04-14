@@ -293,12 +293,10 @@ class CapabilityAnalyzer:
                 tree.add_edge(
                     fact,
                     cap,
-                    rule=tree.CAPABILITY_RULE,
                     source_variant=variant_id,
                     target_variant=cap_variant,
                     source_node_type="fact",
                     target_node_type="capability",
-                    edge_capabilities={cap},
                 )
 
         return tree

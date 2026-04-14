@@ -195,7 +195,7 @@ class TestRulePriorityAndCapabilityInteraction:
 
         capability_children = [
             tree.nodes[target_key]
-            for source_key, target_key, _, _, _, _ in tree.edges
+            for source_key, target_key in tree.edges
             if source_key == ("attacker(secret[])", variant_id)
             and tree.nodes[target_key].node_type == "capability"
         ]
