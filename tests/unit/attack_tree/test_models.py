@@ -124,6 +124,39 @@ class TestDerivationTree:
         assert "attacker(x)" in dot_output
         assert "->" in dot_output  # Check for edges
 
+    def test_goal_node_rendered_as_purple_circle(self):
+        """Query/goal nodes should be circular and purple."""
+        tree = DerivationTree(goal="attacker(x)")
+        dot_output = tree.to_graphviz()
+
+        assert 'shape="ellipse"' in dot_output
+        assert 'fillcolor="#D8B4E2"' in dot_output
+
+    def test_default_fact_node_rendered_as_grey_box(self):
+        """Intermediate fact nodes should default to grey rectangular boxes."""
+        tree = DerivationTree(goal="attacker(x)")
+        tree.add_node("event(auth)", rule="clause")
+        dot_output = tree.to_graphviz()
+
+        assert 'shape="box"' in dot_output
+        assert 'fillcolor="#D9D9D9"' in dot_output
+
+    def test_table_node_rendered_as_cylinder(self):
+        """Table facts should render as cylinders."""
+        tree = DerivationTree(goal="attacker(x)")
+        tree.add_node("table(passwd(uid,pw,salt))", rule="clause")
+        dot_output = tree.to_graphviz()
+
+        assert 'shape="cylinder"' in dot_output
+
+    def test_channel_transport_node_rendered_as_note(self):
+        """Channel transport facts should render as note-shaped nodes."""
+        tree = DerivationTree(goal="attacker(x)")
+        tree.add_node("mess(chan,msg)", rule="clause")
+        dot_output = tree.to_graphviz()
+
+        assert 'shape="note"' in dot_output
+
     def test_graphviz_with_capabilities(self):
         """Test graphviz output with dedicated capability nodes."""
         tree = DerivationTree(goal="attacker(x)")

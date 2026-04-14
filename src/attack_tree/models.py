@@ -378,21 +378,27 @@ class DerivationTree:
             fillcolor = None
             color = None
             shape = "box"
-            style = "rounded"
+            style = "filled"
             if node.node_type == "capability":
                 fillcolor = "#F4CCCC"
                 color = "#CC0000"
                 shape = "octagon"
                 style = "filled"
             elif node.rule == "goal":
-                fillcolor = "lightgreen"
-                style = "rounded,filled"
-            elif node.rule and "apply" in node.rule:
-                fillcolor = "lightyellow"
-                style = "rounded,filled"
-            elif node.rule and "clause" in node.rule:
-                fillcolor = "lightblue"
-                style = "rounded,filled"
+                # Query/goal nodes should stand out as circular purple nodes.
+                fillcolor = "#D8B4E2"
+                shape = "ellipse"
+                style = "filled"
+            elif fact.startswith("table("):
+                fillcolor = "#D9D9D9"
+                shape = "cylinder"
+            elif fact.startswith("mess("):
+                fillcolor = "#D9D9D9"
+                shape = "note"
+            else:
+                # Intermediate facts default to rectangular nodes with grey background.
+                fillcolor = "#D9D9D9"
+                shape = "box"
 
             attrs = [f"label=<{label_html}>", f'shape="{shape}"', f'style="{style}"']
             if fillcolor:

@@ -59,6 +59,10 @@
         "/^python3 -m pytest tests/unit/attack_tree -q$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^python3 -m pytest -q$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }
