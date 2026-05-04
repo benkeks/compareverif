@@ -23,13 +23,19 @@ DEFAULT_COST_COLUMN_WIDTH = 13
 class ScenarioPreprocessor:
     """Orchestrator for scenario generation, verification, and analysis."""
     
-    def __init__(self, timeout: int = DEFAULT_PROVERIF_TIMEOUT):
+    def __init__(
+        self,
+        timeout: int = DEFAULT_PROVERIF_TIMEOUT,
+        verbose: bool = False
+    ):
         """Initialize the preprocessor.
         
         Args:
             timeout: Timeout for ProVerif execution in seconds
+            verbose: Enable detailed logging for generated files and ProVerif status
         """
         self.timeout = timeout
+        self.verbose = verbose
     
     def preprocess(
         self,
@@ -100,8 +106,9 @@ class ScenarioPreprocessor:
                 costs=total_costs,
                 queries=queries
             ))
-            cost_str = ', '.join(f"{v} {k}" for k, v in total_costs.items()) if total_costs else "no cost"
-            print(f"Generated: {output_path} (cost: {cost_str})")
+            if self.verbose:
+                cost_str = ', '.join(f"{v} {k}" for k, v in total_costs.items()) if total_costs else "no cost"
+                print(f"Generated: {output_path} (cost: {cost_str})")
         
         print(f"Total scenarios generated: {len(combinations)}")
         return generated_files, output_dir_path
@@ -115,11 +122,13 @@ class ScenarioPreprocessor:
         Returns:
             List[ScenarioResult]: Verification results for each file
         """
-        print_headline("Running ProVerif on generated scenarios")
+        if self.verbose:
+            print_headline("Running ProVerif on generated scenarios")
         results: List[ScenarioResult] = []
         
         for file in generated_files:
-            print_subheading(f"\nVerifying: {file.path}")
+            if self.verbose:
+                print_subheading(f"\nVerifying: {file.path}")
             file_result = ScenarioResult(scenario=file)
             
             try:
@@ -147,8 +156,9 @@ class ScenarioPreprocessor:
                             'tag': query["tag"],
                             'result': query_passed
                         })
-                        value = "✓" if query_passed else "✗"
-                        print(f"\t{query['tag']}: {value}")
+                        if self.verbose:
+                            value = "✓" if query_passed else "✗"
+                            print(f"\t{query['tag']}: {value}")
                 else:
                     # No output but success - initialize empty query results
                     for query in file.queries:

@@ -59,8 +59,10 @@ The scenario preprocessor automatically generates multiple security scenarios fr
 **Basic usage:**
 
 ```bash
-python3 scenario_preprocessor.py <input_file.pv> [additional_files.pv ...]
+python3 scenario_preprocessor.py [--verbose] <input_file.pv> [additional_files.pv ...]
 ```
+
+By default, output is concise. The generated-file list and per-scenario ProVerif status reports are shown only when `--verbose` is enabled.
 
 **Examples:**
 
@@ -74,6 +76,11 @@ Process multiple example files:
 python3 scenario_preprocessor.py examples/hashed_passwords.pv examples/singularized_passwords.pv
 ```
 
+Show detailed generation and verification logs:
+```bash
+python3 scenario_preprocessor.py --verbose examples/hashed_passwords.pv
+```
+
 ### How It Works
 
 The preprocessor looks for special comment blocks in your ProVerif files:
@@ -85,7 +92,7 @@ The preprocessor looks for special comment blocks in your ProVerif files:
 ***)
 ```
 
-For each combination of these optional blocks, it generates a separate scenario file and runs ProVerif verification on it. Results are displayed with checkmarks (✓) for proven properties and crosses (✗) for failed properties. The names of properties are extracted from comments in the ProVerif files in front of the queries.
+For each combination of these optional blocks, it generates a separate scenario file and runs ProVerif verification on it. With `--verbose`, results are displayed with checkmarks (✓) for proven properties and crosses (✗) for failed properties. The names of properties are extracted from comments in the ProVerif files in front of the queries.
 
 ### Output
 
@@ -94,7 +101,7 @@ Generated scenarios are placed in `_scenarios/<filename>/` subdirectories. For e
 - `_scenarios/hashed_passwords/intruder_at_database.pv`
 - `_scenarios/singularized_passwords/base_scenario.pv`
 
-The script automatically runs ProVerif on all generated scenarios and displays the verification results.
+The script automatically runs ProVerif on all generated scenarios. Detailed verification logs are displayed only in verbose mode.
 
 #### Manifest Files
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Scenario preprocessing CLI - refactored version using modular architecture."""
 
+import argparse
 import sys
 import json
 from pathlib import Path
@@ -13,15 +14,28 @@ DEFAULT_TABLE_WIDTH = 60
 
 def main() -> None:
     """Main entry point for scenario preprocessing."""
-    if len(sys.argv) < 2:
-        print("Usage: python scenario_preprocessor.py <input_file1.pv> [input_file2.pv ...]")
-        print("Example: python scenario_preprocessor.py hashed_passwords.pv singularized_passwords.pv")
-        sys.exit(1)
-    
-    input_files = sys.argv[1:]
+    parser = argparse.ArgumentParser(
+        description=(
+            "Generate scenario combinations from ProVerif files and run verification "
+            "for each generated scenario."
+        )
+    )
+    parser.add_argument(
+        "input_files",
+        nargs="+",
+        help="Input .pv files to preprocess"
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show generated-file list and detailed ProVerif status output"
+    )
+    args = parser.parse_args()
+
+    input_files = args.input_files
     all_generated_scenarios = []
     file_to_scenarios = {}
-    preprocessor = ScenarioPreprocessor()
+    preprocessor = ScenarioPreprocessor(verbose=args.verbose)
     
     # Preprocess each input file
     for input_file in input_files:
@@ -39,7 +53,7 @@ def main() -> None:
         
         # Dump manifests for each input file
         for input_file, (scenarios, output_dir) in file_to_scenarios.items():
-            _dump_manifest(scenarios, results, output_dir, input_file)
+            _dump_manifest(scenarios, results, output_dir, input_file, verbose=args.verbose)
         
         # Analyze and print minimal combinations
         analysis = preprocessor.analyze(results, input_files)
@@ -50,7 +64,8 @@ def _dump_manifest(
     generated_files,
     results,
     output_dir: Path,
-    input_file: str
+    input_file: str,
+    verbose: bool = False
 ) -> None:
     """Dump a manifest JSON file with information about all generated scenarios.
     
@@ -113,12 +128,13 @@ def _dump_manifest(
     manifest_path = output_dir / 'manifest.json'
     with open(manifest_path, 'w') as f:
         json.dump(manifest, f, indent=2)
-    
-    print(f"\nManifest written to: {manifest_path}")
-    print(f"  Total scenarios: {len(manifest['scenarios'])}")
-    successful = sum(1 for s in manifest['scenarios'] 
-                    if s.get('verification', {}).get('status') == 'success')
-    print(f"  Verified successfully: {successful}/{len(manifest['scenarios'])}")
+
+    if verbose:
+        print(f"\nManifest written to: {manifest_path}")
+        print(f"  Total scenarios: {len(manifest['scenarios'])}")
+        successful = sum(1 for s in manifest['scenarios']
+                        if s.get('verification', {}).get('status') == 'success')
+        print(f"  Verified successfully: {successful}/{len(manifest['scenarios'])}")
 
 
 if __name__ == '__main__':
