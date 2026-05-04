@@ -28,6 +28,7 @@ def _normalize_query_text(query: str) -> str:
     normalized = re.sub(r"\(\*.*?\*\)", "", query)
     normalized = normalized.strip().lower()
     normalized = normalized.replace("query ", "")
+    normalized = normalized.replace("weaksecret ", "")
     normalized = normalized.replace("\n", "")
     normalized = normalized.replace(" ", "")
     normalized = normalized.replace("[", "").replace("]", "")

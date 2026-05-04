@@ -68,7 +68,7 @@ def build_scenario_content(
 
 
 def extract_queries(content: str) -> List[Dict[str, str]]:
-    """Extract query statements and their tags from content.
+    """Extract ProVerif checks (query/weaksecret) and their tags from content.
     
     Args:
         content: ProVerif file content
@@ -76,12 +76,14 @@ def extract_queries(content: str) -> List[Dict[str, str]]:
     Returns:
         List of dicts with 'tag' and 'query' keys
     """
-    query_pattern = r'(?:\(\*\s*([^*)]+?)\s*\*\)\s*)?query\s+.*?(?=\n|$)'
+    query_pattern = r'(?:\(\*\s*([^*)]+?)\s*\*\)\s*)?((?:query|weaksecret)\s+.*?)(?=\n|$)'
     query_matches = re.finditer(query_pattern, content, re.MULTILINE)
     queries: List[Dict[str, str]] = []
     
     for match in query_matches:
-        tag = match.group(1).strip() if match.group(1) else "query"
+        statement = match.group(2).strip()
+        default_tag = statement.split(None, 1)[0].lower() if statement else "query"
+        tag = match.group(1).strip() if match.group(1) else default_tag
         queries.append({
             'tag': tag,
             'query': match.group(0)

@@ -140,6 +140,33 @@ class TestExtractQueries:
         result = extract_queries(content)
         assert len(result) == 2
 
+    def test_simple_weaksecret(self):
+        """Test extracting a weaksecret check."""
+        content = "weaksecret n."
+        result = extract_queries(content)
+        assert len(result) == 1
+        assert result[0]['tag'] == 'weaksecret'
+        assert 'weaksecret n.' in result[0]['query']
+
+    def test_tagged_weaksecret(self):
+        """Test extracting a tagged weaksecret check."""
+        content = "(* Offline guessing resistance *) weaksecret n."
+        result = extract_queries(content)
+        assert len(result) == 1
+        assert result[0]['tag'] == 'Offline guessing resistance'
+        assert 'weaksecret n.' in result[0]['query']
+
+    def test_mixed_query_and_weaksecret(self):
+        """Test extracting both query and weaksecret checks."""
+        content = """
+        (* Secrecy *) query attacker(k).
+        (* Guessing resistance *) weaksecret n.
+        """
+        result = extract_queries(content)
+        assert len(result) == 2
+        assert result[0]['tag'] == 'Secrecy'
+        assert result[1]['tag'] == 'Guessing resistance'
+
 
 class TestCreateScenarioFilename:
     """Tests for create_scenario_filename function."""

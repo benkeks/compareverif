@@ -92,7 +92,7 @@ The preprocessor looks for special comment blocks in your ProVerif files:
 ***)
 ```
 
-For each combination of these optional blocks, it generates a separate scenario file and runs ProVerif verification on it. With `--verbose`, results are displayed with checkmarks (✓) for proven properties and crosses (✗) for failed properties. The names of properties are extracted from comments in the ProVerif files in front of the queries.
+For each combination of these optional blocks, it generates a separate scenario file and runs ProVerif verification on it. With `--verbose`, results are displayed with checkmarks (✓) for proven properties and crosses (✗) for failed properties. The names of properties are extracted from comments in the ProVerif files in front of the checks (`query` and `weaksecret`).
 
 ### Output
 
@@ -150,7 +150,7 @@ For each input file, the preprocessor generates a `manifest.json` file in the co
     - `name`: Capability name (e.g., "Rainbow table attack")
     - `costs`: Cost dictionary for this capability (e.g., `{"time": 10}`)
   - **`total_costs`**: Aggregated costs across all capabilities in this scenario
-  - **`queries`**: List of ProVerif security queries:
+  - **`queries`**: List of ProVerif security checks (`query`/`weaksecret`):
     - `tag`: Human-readable query label
     - `query`: Full ProVerif query text
   - **`verification`**: ProVerif verification results:
