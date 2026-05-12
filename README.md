@@ -9,8 +9,8 @@ This can be used to compare the security of different protocol designs through t
 
 There are two main scripts in this project:
 
-- `scenario_preprocessor.py` automates the generation and verification of multiple attack scenarios, where capabilities are expressed as magical comments `(*** Attack name [price] some oracle code ***)` in ProVerif files.
-- `attack_tree_extractor.py` extracts and visualizes attack trees from ProVerif output, connecting it derivations back to underlying capabilities.
+- [`scenario_preprocessor.py`](#usage-of-the-scenario-preprocessor) automates the generation and verification of multiple attack scenarios, where capabilities are expressed as magical comments `(*** Attack name [price] some oracle code ***)` in ProVerif files.
+- [`attack_tree_extractor.py`](#usage-of-the-attack-tree-extractor) extracts and visualizes attack trees from ProVerif output, connecting it derivations back to underlying capabilities.
 
 The shared code is located in `proverifbatch/`.
 
@@ -26,39 +26,7 @@ Under `examples`, this project contains ProVerif models for analyzing the securi
 - [Graphviz](https://graphviz.org/) - Optional, required for PDF rendering of attack trees
 - [pytest](https://pytest.org/) - Test framework (optional, for running tests)
 
-## Setup
-
-Install pytest for testing (optional):
-
-```bash
-pip install pytest
-```
-
-Coverage reporting uses the built-in `coverage` module if available.
-
-## Testing
-
-The project includes a comprehensive test suite with 89 unit tests covering the core modules.
-
-**Run all tests:**
-
-```bash
-python3 -m pytest
-```
-
-**Run tests and show coverage** (alternative method):
-
-```bash
-# Run tests with coverage tracking
-python3 -m coverage run -m pytest tests/
-
-# View coverage report
-python3 -m coverage report -m
-```
-
-## Usage
-
-### Running the Scenario Preprocessor
+## Usage of the Scenario Preprocessor
 
 The scenario preprocessor automatically generates multiple security scenarios from ProVerif files that contain special "magical comments" marking optional attack vectors.
 
@@ -107,65 +75,11 @@ Generated scenarios are placed in `_scenarios/<filename>/` subdirectories. For e
 - `_scenarios/hashed_passwords/intruder_at_database.pv`
 - `_scenarios/singularized_passwords/base_scenario.pv`
 
-The script automatically runs ProVerif on all generated scenarios. Detailed verification logs are displayed only in verbose mode.
+The script automatically runs ProVerif on all generated scenarios. Detailed verification logs are displayed only in verbose mode. 
 
-#### Manifest Files
+For each input file, the preprocessor generates a `manifest.json` file in the corresponding scenario directory (e.g., `_scenarios/hashed_passwords/manifest.json`). This manifest provides a comprehensive machine-readable record of all generated scenarios and their verification results. (Documented in [`docs/manifests.md`](docs/manifests.md).)
 
-For each input file, the preprocessor generates a `manifest.json` file in the corresponding scenario directory (e.g., `_scenarios/hashed_passwords/manifest.json`). This manifest provides a comprehensive machine-readable record of all generated scenarios and their verification results.
-
-**Manifest structure:**
-
-```json
-{
-  "input_file": "hashed_passwords.pv",
-  "generated_at": null,
-  "scenarios": [
-    {
-      "file": "base_scenario.pv",
-      "path": "_scenarios/hashed_passwords/base_scenario.pv",
-      "capabilities": [],
-      "total_costs": {},
-      "queries": [
-        {
-          "tag": "no faux authentication",
-          "query": "(* no faux authentication *)\nquery uidx: uid;"
-        }
-      ],
-      "verification": {
-        "status": "success",
-        "query_results": [
-          {
-            "tag": "no faux authentication",
-            "result": true
-          }
-        ],
-        "error_message": null
-      }
-    }
-  ]
-}
-```
-
-**Manifest fields:**
-
-- **`input_file`**: Original ProVerif file that was processed
-- **`scenarios`**: Array of all generated scenario files, each containing:
-  - **`file`**: Scenario filename
-  - **`path`**: Full path to the scenario file
-  - **`capabilities`**: List of attacker capabilities included in this scenario:
-    - `name`: Capability name (e.g., "Rainbow table attack")
-    - `costs`: Cost dictionary for this capability (e.g., `{"time": 10}`)
-  - **`total_costs`**: Aggregated costs across all capabilities in this scenario
-  - **`queries`**: List of ProVerif security checks (`query`/`weaksecret`):
-    - `tag`: Human-readable query label
-    - `query`: Full ProVerif query text
-  - **`verification`**: ProVerif verification results:
-    - `status`: Verification status (success/error/timeout/exception)
-    - `query_results`: Array of outcomes for each query (tag and true/false result)
-    - `error_message`: Error details if verification failed
-
-
-### Attack Tree Extractor
+## Usage of the Attack Tree Extractor
 
 The `attack_tree_extractor.py` script extracts clauses and derivations from ProVerif output and generates graphviz visualizations of attack trees.
 
@@ -195,6 +109,8 @@ python3 attack_tree_extractor.py <scenario_file.pv> --json-out <dir>
 ```
 
 **Examples:**
+
+The examples assume that the `scenario_preprocessor.py` has already been run to generate the scenario files in `_scenarios/`.
 
 Extract clauses and derivations from a generated scenario:
 ```bash
@@ -237,30 +153,7 @@ The script produces:
 3. **PDF files** (optional) - Visual diagrams of attack trees
 4. **JSON files** (optional) - Plain machine-readable attack tree structure
 
-The attack tree visualizations show:
-- **Query/goal node** as a purple elliptical node at the top
-- **Intermediate facts** as grey rectangular nodes
-- **Table facts** (`table(...)`) as cylinder-shaped nodes
-- **Channel transport facts** (`mess(...)`) as note-shaped nodes
-- **Attack capabilities** as dedicated red octagonal leaf nodes with their costs (e.g., `1 hack`, `100 time`)
-- **Optional clause IDs** inside fact nodes when `--show-clause-ids` is enabled
-- **Optional attack highlighting** (`--highlight-attack`) that fades branches not on paths above attack capability nodes
-- **OR markers on capability edges** when multiple capabilities can realize the same fact
-
-When `--json-out` is enabled, each scenario additionally produces a JSON file
-`<scenario>_derivation.json` with this structure:
-
-- `meta`: Goal/query/rendering settings
-- `nodes`: Flat node list with stable per-tree IDs and fields such as:
-  - `id`, `node_type`, `fact`, `variant_id`, `rule`, `clause_number`, `clause_scope`
-  - `depends_on_all`: conjunctive prerequisites (AND)
-  - `depends_on_any`: disjunctive prerequisite groups (OR), represented as list-of-lists
-  - `costs`: present for capability nodes, includes capability prices (e.g., `{"hack": 1}`)
-
-Semantics example:
-
-- `depends_on_all: [A, B]` and `depends_on_any: [[C, D]]` means:
-  - `(A AND B AND (C OR D))`
+Details about the structure of the generated attack trees and the semantics of the JSON output are documented in [`docs/attack-trees.md`](docs/attack-trees.md).
 
 **Options:**
 
@@ -278,7 +171,7 @@ Semantics example:
 
 The attack tree extractor can annotate attack trees with the capabilities that enable each attack step. It compares clauses between the base scenario and single-capability scenarios to identify which clauses are introduced by each capability (including completed clauses generated during ProVerif's saturation phase).
 
-When capability analysis is enabled via `--manifest`, the graph uses dedicated capability leaf nodes (red octagons). Capability costs are rendered exclusively in these capability nodes.
+When capability analysis is enabled via `--manifest`, the graph uses dedicated capability leaf nodes (red octagons). Capability costs are rendered in these capability nodes.
 
 **Usage:**
 
@@ -290,4 +183,30 @@ python3 attack_tree_extractor.py \
   --graphviz-pdf annotated_trees/
 ```
 
-This capability-node representation makes it explicit which attack steps depend on specific attacker capabilities and what each capability costs.
+## Testing
+
+The project includes a comprehensive test suite covering the core modules.
+
+Install pytest for testing:
+
+```bash
+pip install pytest
+```
+
+**Run all tests:**
+
+```bash
+python3 -m pytest
+```
+
+**Run tests and show coverage** (alternative method):
+
+Coverage reporting uses the built-in `coverage` module if available.
+
+```bash
+# Run tests with coverage tracking
+python3 -m coverage run -m pytest tests/
+
+# View coverage report
+python3 -m coverage report -m
+```
