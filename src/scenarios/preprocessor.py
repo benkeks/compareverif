@@ -143,9 +143,10 @@ class ScenarioPreprocessor:
                     file_result.status = 'success'
                 else:
                     file_result.status = 'error'
-                    file_result.error_message = result.stderr
+                    error_output = result.stdout or result.stderr
+                    file_result.error_message = error_output
                     print(f"✗ Failed: {file.path.name}")
-                    print(f"Error output:\n{result.stderr}")
+                    print(f"Error output:\n{error_output}")
                 
                 # Parse ProVerif output for query results
                 if result.stdout:
