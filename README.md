@@ -1,17 +1,23 @@
-# OrangeProject
+# ProVerif Batch Analysis for Protocol Comparison
 
-Formal verification of password authentication protocols using ProVerif.
+This repository contains tools for batch processing of ProVerif models, in particular, to survey combinations of attacker capabilities, and to express found attacks in trees.
+This can be used to compare the security of different protocol designs through their resilience in the face of various attack vectors.
 
-**Contact:** benjamin.bisping@telecom-sudparis.eu
+- **Contact:** benjamin.bisping@telecom-sudparis.eu
 
 ## Description
 
-This project contains ProVerif models for analyzing the security of password authentication systems:
+There are two main scripts in this project:
+
+- `scenario_preprocessor.py` automates the generation and verification of multiple attack scenarios, where capabilities are expressed as magical comments `(*** Attack name [price] some oracle code ***)` in ProVerif files.
+- `attack_tree_extractor.py` extracts and visualizes attack trees from ProVerif output, connecting it derivations back to underlying capabilities.
+
+The shared code is located in `proverifbatch/`.
+
+Under `examples`, this project contains ProVerif models for analyzing the security of password authentication systems:
 
 - **examples/hashed_passwords.pv** - Models a basic password authentication system with hashed passwords
 - **examples/singularized_passwords.pv** - Models a more sophisticated system using password singularization
-
-The `scenario_preprocessor.py` script automates the generation and verification of multiple attack scenarios. For attack tree extraction and visualization, use `attack_tree_extractor.py`.
 
 ## Requirements
 
