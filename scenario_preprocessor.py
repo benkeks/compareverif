@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scenario preprocessing CLI - refactored version using modular architecture."""
+"""Scenario preprocessing CLI tool for generating scenario combinations from ProVerif files and running verification."""
 
 import argparse
 import sys

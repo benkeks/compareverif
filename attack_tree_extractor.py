@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Attack Tree Extractor - Refactored CLI
+Attack Tree Extractor
 
 Runs ProVerif on scenario files and extracts clauses and derivations
 from the console output to build attack trees. Can render derivations
