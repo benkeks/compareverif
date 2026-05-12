@@ -3,8 +3,8 @@
 from pathlib import Path
 from typing import Optional
 
-from src.proverif import ProVerifRunner, ProVerifOutputParser, ProVerifOutput
-from src.proverif.runner import DEFAULT_TIMEOUT
+from proverifbatch.proverif import ProVerifRunner, ProVerifOutputParser, ProVerifOutput
+from proverifbatch.proverif.runner import DEFAULT_TIMEOUT
 
 
 class AttackTreeExtractor:

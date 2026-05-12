@@ -7,8 +7,8 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from src.attack_tree import CapabilityAnalyzer, DerivationTree
-from src.proverif import ProVerifOutput, Clause, Derivation
+from proverifbatch.attack_tree import CapabilityAnalyzer, DerivationTree
+from proverifbatch.proverif import ProVerifOutput, Clause, Derivation
 
 
 class TestCapabilityAnalyzerInitialization:
@@ -160,7 +160,7 @@ class TestAnalyzeFromManifest:
         finally:
             manifest_path.unlink()
 
-    @patch("src.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
+    @patch("proverifbatch.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
     def test_analyze_identifies_new_clauses(self, mock_extract):
         """Test that analysis correctly identifies clauses unique to capabilities."""
         analyzer = CapabilityAnalyzer()
@@ -230,7 +230,7 @@ class TestUpdateCapabilityClauseNumbers:
 class TestAnnotateTreeWithCapabilities:
     """Test tree annotation with capabilities."""
 
-    @patch("src.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
+    @patch("proverifbatch.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
     def test_annotate_tree_with_goal_only(self, mock_extract):
         """Test annotating a tree with just goal node."""
         analyzer = CapabilityAnalyzer()
@@ -243,7 +243,7 @@ class TestAnnotateTreeWithCapabilities:
         assert result is tree
         assert tree.goal == "attacker(x)"
 
-    @patch("src.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
+    @patch("proverifbatch.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
     def test_annotate_single_capability_node(self, mock_extract):
         """Test annotating node with single matching capability leaf."""
         analyzer = CapabilityAnalyzer()
@@ -280,7 +280,7 @@ class TestAnnotateTreeWithCapabilities:
         ]
         assert len(fact_to_capability_edges) == 1
 
-    @patch("src.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
+    @patch("proverifbatch.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
     def test_annotate_handles_missing_clauses_gracefully(self, mock_extract):
         """Test that annotation doesn't crash with unrecognized clauses."""
         analyzer = CapabilityAnalyzer()
@@ -301,7 +301,7 @@ class TestAnnotateTreeWithCapabilities:
         result = analyzer.annotate_tree_with_capabilities(tree, Path("test.pv"))
         assert result is tree
 
-    @patch("src.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
+    @patch("proverifbatch.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
     def test_or_capability_leaves_do_not_duplicate_fact_nodes(self, mock_extract):
         """Multiple capability alternatives should become capability leaves under one fact node."""
         analyzer = CapabilityAnalyzer(
@@ -351,7 +351,7 @@ class TestAnnotateTreeWithCapabilities:
 class TestCapabilityAnalyzerIntegration:
     """Integration tests for full workflows."""
 
-    @patch("src.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
+    @patch("proverifbatch.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
     def test_full_workflow_analyze_and_annotate(self, mock_extract):
         """Test complete workflow: analyze manifest and annotate tree."""
         analyzer = CapabilityAnalyzer(capability_costs={"Rainbow": {"time": 5}})

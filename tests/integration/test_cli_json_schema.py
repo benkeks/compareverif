@@ -5,8 +5,8 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
-from src.attack_tree.models import DerivationTree
-from src.attack_tree.renderer import GraphvizRenderer
+from proverifbatch.attack_tree.models import DerivationTree
+from proverifbatch.attack_tree.renderer import GraphvizRenderer
 
 
 def test_cli_json_output_schema():

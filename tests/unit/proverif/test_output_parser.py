@@ -1,7 +1,7 @@
 """Unit tests for ProVerif output parsing."""
 
 import pytest
-from src.proverif import (
+from proverifbatch.proverif import (
     Clause,
     Derivation,
     ProVerifOutput,

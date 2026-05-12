@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from src.proverif import ProVerifRunner, ProVerifOutputParser, ProVerifOutput
+from proverifbatch.proverif import ProVerifRunner, ProVerifOutputParser, ProVerifOutput
 
 
 class CapabilityAnalyzer:

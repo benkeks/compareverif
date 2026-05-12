@@ -2,7 +2,7 @@
 
 import pytest
 from pathlib import Path
-from src.scenarios.preprocessor import ScenarioPreprocessor
+from proverifbatch.scenarios.preprocessor import ScenarioPreprocessor
 
 
 class TestScenarioPreprocessor:
@@ -83,7 +83,7 @@ query true.
     
     def test_print_analysis_no_false_results(self, capsys):
         """Test printing analysis when no queries return false."""
-        from src.scenarios.models import ScenarioFile, ScenarioResult
+        from proverifbatch.scenarios.models import ScenarioFile, ScenarioResult
         
         preprocessor = ScenarioPreprocessor()
         

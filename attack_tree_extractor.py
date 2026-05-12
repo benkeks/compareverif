@@ -13,7 +13,7 @@ import re
 import sys
 from pathlib import Path
 
-from src.attack_tree import (
+from proverifbatch.attack_tree import (
     AttackTreeExtractor,
     CapabilityAnalyzer,
     GraphvizRenderer,

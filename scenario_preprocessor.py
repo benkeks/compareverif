@@ -6,8 +6,8 @@ import sys
 import json
 from pathlib import Path
 
-from src.scenarios import ScenarioPreprocessor
-from src.common.formatting import print_headline
+from proverifbatch.scenarios import ScenarioPreprocessor
+from proverifbatch.common.formatting import print_headline
 
 DEFAULT_TABLE_WIDTH = 60
 

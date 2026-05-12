@@ -1,13 +1,13 @@
 """Tests for scenario generator module."""
 
 import pytest
-from src.scenarios.generator import (
+from proverifbatch.scenarios.generator import (
     generate_scenario_combinations,
     build_scenario_content,
     extract_queries,
     create_scenario_filename,
 )
-from src.scenarios.models import AttackerCapability, AttackVariant
+from proverifbatch.scenarios.models import AttackerCapability, AttackVariant
 
 
 class TestGenerateScenarioCombinations:

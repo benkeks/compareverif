@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-from src.proverif import ProVerifRunner
+from proverifbatch.proverif import ProVerifRunner
 
 
 class TestProVerifRunner:

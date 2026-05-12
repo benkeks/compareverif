@@ -12,7 +12,7 @@ from .generator import (
     create_scenario_filename,
 )
 from .analyzer import analyze_minimal_false_combinations
-from src.common.formatting import print_headline, print_subheading
+from proverifbatch.common.formatting import print_headline, print_subheading
 
 DEFAULT_PROVERIF_TIMEOUT = 300  # 5 minutes
 DEFAULT_TABLE_WIDTH = 60

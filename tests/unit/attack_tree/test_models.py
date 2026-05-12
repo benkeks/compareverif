@@ -1,7 +1,7 @@
 """Unit tests for attack tree models."""
 
 import pytest
-from src.attack_tree import TreeNode, DerivationTree
+from proverifbatch.attack_tree import TreeNode, DerivationTree
 
 
 class TestTreeNode:
