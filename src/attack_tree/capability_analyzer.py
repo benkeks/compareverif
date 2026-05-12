@@ -90,8 +90,11 @@ class CapabilityAnalyzer:
         """
 
         def normalize_clause(clause: str) -> str:
-            # Replace variable names (lowercase identifiers) with X
-            normalized = re.sub(r"\b[a-z_]\w*\d*(?![_(])\b", "X", clause)
+            # Replace variable names (lowercase identifiers) with X.
+            # Exclude identifiers followed by '(', '_', or '[': function calls and
+            # global constants (ProVerif writes constants as name[]) should not be
+            # normalised away, since different constant names are semantically distinct.
+            normalized = re.sub(r"\b[a-z_]\w*\d*(?![_([])\b", "X", clause)
             return normalized
 
         return normalize_clause(clause1) == normalize_clause(clause2)

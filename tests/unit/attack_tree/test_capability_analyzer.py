@@ -88,6 +88,37 @@ class TestClausesStructurallyMatch:
         clause2 = "event(auth(USER, user0_1))"
         assert not analyzer._clauses_structurally_match(clause1, clause2)
 
+    def test_proverif_global_constants_preserved(self):
+        """ProVerif global constants (name[]) must not be normalised away.
+
+        Regression: attacker(singularization_server_secret[]) was previously
+        matched against attacker(user1[]) because the constant name was stripped
+        to X, yielding identical normal forms attacker(X[]).
+        """
+        analyzer = CapabilityAnalyzer()
+        clause1 = "attacker(singularization_server_secret[])"
+        clause2 = "attacker(user1[])"
+        assert not analyzer._clauses_structurally_match(clause1, clause2)
+
+    def test_proverif_same_global_constant_matches(self):
+        """Two occurrences of the same global constant should still match."""
+        analyzer = CapabilityAnalyzer()
+        clause = "attacker(singularization_server_secret[])"
+        assert analyzer._clauses_structurally_match(clause, clause)
+
+    def test_function_names_not_normalised(self):
+        """Function names must not be replaced with X.
+
+        Regression: clauses like 'attacker(hashed(m,s)) && attacker(s) -> attacker(m)'
+        (rainbow table attack) were normalised to the same form as
+        'attacker(singularized(m,r)) && attacker(r) -> attacker(m)' (base scenario),
+        causing the rainbow-table capability to appear to introduce no new clauses.
+        """
+        analyzer = CapabilityAnalyzer()
+        clause1 = "attacker(hashed(m,s)) && attacker(s) -> attacker(m)"
+        clause2 = "attacker(singularized(m,r)) && attacker(r) -> attacker(m)"
+        assert not analyzer._clauses_structurally_match(clause1, clause2)
+
 
 class TestAnalyzeFromManifest:
     """Test capability analysis from manifest.json files."""
