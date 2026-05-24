@@ -33,7 +33,7 @@ The scenario preprocessor automatically generates multiple security scenarios fr
 **Basic usage:**
 
 ```bash
-python3 scenario_preprocessor.py [--verbose] <input_file.pv> [additional_files.pv ...]
+python3 scenario_preprocessor.py [--verbose] [--check-all-scenarios] <input_file.pv> [additional_files.pv ...]
 ```
 
 By default, output is concise. The generated-file list and per-scenario ProVerif status reports are shown only when `--verbose` is enabled.
@@ -55,6 +55,11 @@ Show detailed generation and verification logs:
 python3 scenario_preprocessor.py --verbose examples/hashed_passwords.pv
 ```
 
+Force the previous exhaustive behavior over every capability variant combination:
+```bash
+python3 scenario_preprocessor.py --check-all-scenarios examples/hashed_passwords.pv
+```
+
 ### How It Works
 
 The preprocessor looks for special comment blocks in your ProVerif files:
@@ -66,7 +71,9 @@ The preprocessor looks for special comment blocks in your ProVerif files:
 ***)
 ```
 
-For each combination of these optional blocks, it generates a separate scenario file and runs ProVerif verification on it. With `--verbose`, results are displayed with checkmarks (✓) for proven properties and crosses (✗) for failed properties. The names of properties are extracted from comments in the ProVerif files in front of the checks (`query` and `weaksecret`).
+By default, the preprocessor treats each magical comment block as a boolean snippet, generates scenario files lazily, and uses a monotone search to find subset-minimal breaking capability combinations without running ProVerif on every snippet subset. Once that capability front is known, it reconstructs the variant-cost Pareto front offline, without additional ProVerif runs. With `--check-all-scenarios`, it falls back to the previous exhaustive behavior over every capability-variant combination. With `--verbose`, results are displayed with checkmarks (✓) for proven properties and crosses (✗) for failed properties. The names of properties are extracted from comments in the ProVerif files in front of the checks (`query` and `weaksecret`).
+
+Even in lazy mode, the preprocessor still generates the base scenario and each single-capability scenario up front so that downstream tooling such as the attack-tree extractor can compare those files directly from the manifest.
 
 ### Output
 

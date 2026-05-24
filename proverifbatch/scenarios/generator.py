@@ -6,6 +6,55 @@ from itertools import product
 from .models import AttackerCapability, AttackVariant
 
 
+def generate_capability_presence_combinations(
+    capabilities: List[AttackerCapability],
+) -> List[Tuple[int, ...]]:
+    """Generate combinations for snippet presence only.
+
+    Each capability is treated as a boolean toggle:
+    - 0 = exclude capability snippet
+    - 1 = include capability snippet
+
+    Args:
+        capabilities: List of capabilities to combine
+
+    Returns:
+        List of tuples representing all boolean snippet combinations
+    """
+    choices_per_capability = [[0, 1] if cap.variants else [0] for cap in capabilities]
+    return list(product(*choices_per_capability))
+
+
+def generate_base_capability_presence_combination(
+    capabilities: List[AttackerCapability],
+) -> Tuple[int, ...]:
+    """Generate the all-disabled boolean snippet combination."""
+    return tuple(0 for _ in capabilities)
+
+
+def generate_full_capability_presence_combination(
+    capabilities: List[AttackerCapability],
+) -> Tuple[int, ...]:
+    """Generate the all-enabled boolean snippet combination."""
+    return tuple(1 for _ in capabilities)
+
+
+def generate_support_scenario_combinations(
+    capabilities: List[AttackerCapability],
+) -> List[Tuple[int, ...]]:
+    """Generate base and singleton combinations required downstream."""
+    if not capabilities:
+        return []
+
+    support_combinations = [generate_base_capability_presence_combination(capabilities)]
+    for index in range(len(capabilities)):
+        combo = list(generate_base_capability_presence_combination(capabilities))
+        combo[index] = 1
+        support_combinations.append(tuple(combo))
+
+    return support_combinations
+
+
 def generate_scenario_combinations(capabilities: List[AttackerCapability]) -> List[Tuple[int, ...]]:
     """Generate all possible combinations of capability variants.
     
@@ -26,7 +75,8 @@ def generate_scenario_combinations(capabilities: List[AttackerCapability]) -> Li
 def build_scenario_content(
     combination: Tuple[int, ...],
     capabilities: List[AttackerCapability],
-    content_chunks: List[Optional[str]]
+    content_chunks: List[Optional[str]],
+    use_primary_variants_only: bool = False,
 ) -> Tuple[str, List[AttackVariant], Dict[str, float]]:
     """Build output content for a scenario combination.
     
@@ -34,6 +84,8 @@ def build_scenario_content(
         combination: Tuple of variant choices (0=exclude, 1+=variant index)
         capabilities: List of capabilities being combined
         content_chunks: Content chunks with None placeholders for capabilities
+        use_primary_variants_only: When True, include snippets as booleans and
+            attach only the primary capability names without variant costs
         
     Returns:
         Tuple of (output_content, attack_variants_used, total_costs)
@@ -50,13 +102,20 @@ def build_scenario_content(
             if cap_idx < len(capabilities):
                 choice = combination[cap_idx]
                 if choice > 0:
-                    variant = capabilities[cap_idx].variants[choice - 1]
+                    if use_primary_variants_only:
+                        variant = AttackVariant(
+                            name=capabilities[cap_idx].primary_name,
+                            costs={},
+                        )
+                    else:
+                        variant = capabilities[cap_idx].variants[choice - 1]
                     attack_variants.append(variant)
                     output_content += capabilities[cap_idx].content
                     
-                    # Accumulate costs
-                    for cost_dim, cost_val in variant.costs.items():
-                        total_costs[cost_dim] = total_costs.get(cost_dim, 0) + cost_val
+                    if not use_primary_variants_only:
+                        # Accumulate costs when variant choices are part of the scenario.
+                        for cost_dim, cost_val in variant.costs.items():
+                            total_costs[cost_dim] = total_costs.get(cost_dim, 0) + cost_val
                 else:
                     output_content += f'(* No {capabilities[cap_idx].primary_name}*)'
                 cap_idx += 1

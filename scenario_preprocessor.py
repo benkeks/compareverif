@@ -6,7 +6,10 @@ import sys
 import json
 from pathlib import Path
 
-from proverifbatch.scenarios import ScenarioPreprocessor
+from proverifbatch.scenarios import (
+    ScenarioPreprocessor,
+    build_manifest_scenario_entry,
+)
 from proverifbatch.common.formatting import print_headline
 
 DEFAULT_TABLE_WIDTH = 60
@@ -30,12 +33,20 @@ def main() -> None:
         action="store_true",
         help="Show generated-file list and detailed ProVerif status output"
     )
+    parser.add_argument(
+        "--check-all-scenarios",
+        action="store_true",
+        help="Generate and verify every capability-variant combination instead of using monotone search"
+    )
     args = parser.parse_args()
 
     input_files = args.input_files
     all_generated_scenarios = []
-    file_to_scenarios = {}
-    preprocessor = ScenarioPreprocessor(verbose=args.verbose)
+    file_to_output_dir = {}
+    preprocessor = ScenarioPreprocessor(
+        verbose=args.verbose,
+        check_all_scenarios=args.check_all_scenarios,
+    )
     
     # Preprocess each input file
     for input_file in input_files:
@@ -45,14 +56,20 @@ def main() -> None:
         
         generated_scenarios, output_dir = preprocessor.preprocess(input_file)
         all_generated_scenarios.extend(generated_scenarios)
-        file_to_scenarios[input_file] = (generated_scenarios, output_dir)
+        file_to_output_dir[input_file] = output_dir
     
     # Run ProVerif on all generated files
-    if all_generated_scenarios:
+    if file_to_output_dir:
         results = preprocessor.run_proverif(all_generated_scenarios)
+
+        stats = preprocessor.get_execution_stats()
+        print_headline("Scenario generation summary")
+        print(f"Scenario files generated: {stats.generated_files}")
+        print(f"ProVerif runs executed: {stats.proverif_runs}")
         
         # Dump manifests for each input file
-        for input_file, (scenarios, output_dir) in file_to_scenarios.items():
+        for input_file, output_dir in file_to_output_dir.items():
+            scenarios = preprocessor.get_generated_scenarios(input_file)
             _dump_manifest(scenarios, results, output_dir, input_file, verbose=args.verbose)
         
         # Analyze and print minimal combinations
@@ -81,48 +98,14 @@ def _dump_manifest(
         'scenarios': []
     }
     
-    # Create results lookup
-    results_map = {}
-    for result in results:
-        results_map[str(result.scenario.path)] = result
+    results_map = {
+        str(result.scenario.path): result
+        for result in results
+    }
     
     for scenario_file in generated_files:
-        scenario_info = {
-            'file': str(scenario_file.path.name),
-            'path': str(scenario_file.path),
-            'capabilities': [
-                {
-                    'name': variant.name,
-                    'costs': variant.costs
-                }
-                for variant in scenario_file.capabilities
-            ],
-            'total_costs': scenario_file.costs,
-            'queries': [
-                {
-                    'tag': query['tag'],
-                    'query': query['query']
-                }
-                for query in scenario_file.queries
-            ]
-        }
-        
-        # Add verification results if available
         result = results_map.get(str(scenario_file.path))
-        if result:
-            scenario_info['verification'] = {
-                'status': result.status,
-                'query_results': [
-                    {
-                        'tag': qr['tag'],
-                        'result': qr['result']
-                    }
-                    for qr in result.query_results
-                ],
-                'error_message': result.error_message
-            }
-        
-        manifest['scenarios'].append(scenario_info)
+        manifest['scenarios'].append(build_manifest_scenario_entry(scenario_file, result))
     
     # Write manifest
     manifest_path = output_dir / 'manifest.json'

@@ -2,7 +2,11 @@
 
 import pytest
 from proverifbatch.scenarios.generator import (
+    generate_capability_presence_combinations,
+    generate_base_capability_presence_combination,
+    generate_full_capability_presence_combination,
     generate_scenario_combinations,
+    generate_support_scenario_combinations,
     build_scenario_content,
     extract_queries,
     create_scenario_filename,
@@ -50,6 +54,70 @@ class TestGenerateScenarioCombinations:
         assert (0, 1) in result
         assert (1, 0) in result
         assert (1, 1) in result
+
+
+class TestGenerateCapabilityPresenceCombinations:
+    """Tests for boolean snippet-combination generation."""
+
+    def test_variants_collapse_to_boolean_presence(self):
+        """Variant counts should not change the number of snippet combinations."""
+        cap = AttackerCapability(
+            primary_name="Attack A",
+            variants=[
+                AttackVariant(name="Attack A [slow]", costs={"time": 100}),
+                AttackVariant(name="Attack A [fast]", costs={"time": 10}),
+            ],
+            content="code a"
+        )
+
+        result = generate_capability_presence_combinations([cap])
+
+        assert result == [(0,), (1,)]
+
+    def test_base_and_full_presence_combinations(self):
+        """Base/full helpers should centralize common boolean combinations."""
+        capabilities = [
+            AttackerCapability(
+                primary_name="A",
+                variants=[AttackVariant(name="A", costs={})],
+                content="a"
+            ),
+            AttackerCapability(
+                primary_name="B",
+                variants=[AttackVariant(name="B", costs={})],
+                content="b"
+            ),
+        ]
+
+        assert generate_base_capability_presence_combination(capabilities) == (0, 0)
+        assert generate_full_capability_presence_combination(capabilities) == (1, 1)
+
+    def test_support_scenario_combinations(self):
+        """Support combinations should include base and each singleton."""
+        capabilities = [
+            AttackerCapability(
+                primary_name="A",
+                variants=[AttackVariant(name="A", costs={})],
+                content="a"
+            ),
+            AttackerCapability(
+                primary_name="B",
+                variants=[AttackVariant(name="B", costs={})],
+                content="b"
+            ),
+            AttackerCapability(
+                primary_name="C",
+                variants=[AttackVariant(name="C", costs={})],
+                content="c"
+            ),
+        ]
+
+        assert generate_support_scenario_combinations(capabilities) == [
+            (0, 0, 0),
+            (1, 0, 0),
+            (0, 1, 0),
+            (0, 0, 1),
+        ]
 
 
 class TestBuildScenarioContent:
@@ -110,6 +178,29 @@ class TestBuildScenarioContent:
         assert "code b" in content
         assert len(variants) == 2
         assert costs == {"time": 100, "hack": 50}
+
+    def test_primary_variant_only_mode_discards_variant_costs(self):
+        """Boolean snippet mode should keep names but not variant-dependent costs."""
+        cap = AttackerCapability(
+            primary_name="Attack A",
+            variants=[
+                AttackVariant(name="Attack A [slow]", costs={"time": 100}),
+                AttackVariant(name="Attack A [fast]", costs={"time": 10}),
+            ],
+            content="attack code"
+        )
+        chunks = ["base ", None, " end"]
+
+        content, variants, costs = build_scenario_content(
+            (1,),
+            [cap],
+            chunks,
+            use_primary_variants_only=True,
+        )
+
+        assert "attack code" in content
+        assert [variant.name for variant in variants] == ["Attack A"]
+        assert costs == {}
 
 
 class TestExtractQueries:

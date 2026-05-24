@@ -27,6 +27,7 @@ class ScenarioFile:
     capabilities: List[AttackVariant]
     costs: Dict[str, float]
     queries: List[Dict[str, str]]
+    capability_names: List[str] = field(default_factory=list)
 
 
 @dataclass
