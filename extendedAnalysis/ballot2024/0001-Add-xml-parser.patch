@@ -1,0 +1,239 @@
+From 95464334b3200ec807c8ac044a2a791babd4f715 Mon Sep 17 00:00:00 2001
+From: Philipp Schlehuber-Caissier
+ <philipp.schlehuber-caissier@telecom-sudparis.eu>
+Date: Fri, 22 May 2026 19:47:06 +0200
+Subject: [PATCH] Add xml parser
+
+---
+ uppaal/main.py | 182 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 180 insertions(+), 2 deletions(-)
+
+diff --git a/uppaal/main.py b/uppaal/main.py
+index 2cb1752..4e50d8e 100644
+--- a/uppaal/main.py
++++ b/uppaal/main.py
+@@ -8,6 +8,9 @@ import os
+ import time
+ import subprocess
+ 
++import xml.etree.ElementTree as ET
++import argparse
++
+ # Limits set
+ time_limits = [
+     10000,
+@@ -215,6 +218,107 @@ def build_adg_simple():
+ 
+     return ADG(g_th)
+ 
++"""
++ADG-xml syntax
++<Scenario>
++    <Defense>: period : int | success_probability : float | name : str | cost : int
++    <AtomicAttacks>: Contains subnodes, each defining an atomic attack
++        <AtomicAttack>: completion_time : int | success_probability : float | activation_cost : int | proportional_cost : int | defenses : List[Defense] | name : str
++    <Subgoal>: children : List[Union[AtomicAttack, Defense, Subgoal]] | operation_type : OperationType | name : str
++    <Maingoal>: str
++"""
++
++def build_from_xml(file: str) -> ADG:
++    """
++    Build an ADG from the given XML file.
++
++    param file: The path to the XML file.
++    return: The built ADG.
++    """
++    defenses = dict()
++    atomic_attacks = dict()
++    subgoals = dict()
++    all_names = dict()
++
++    xml = ET.parse(file)
++
++    scenario = xml.getroot()
++    
++    # Init all defenses
++    for defense in scenario.find("Defenses").findall("Defense"):
++        name = defense.get("name")
++        period = int(defense.get("period"))
++        success_probability = float(defense.get("success_probability"))
++        cost = int(defense.get("cost"))
++        if name in defenses or name in all_names:
++            raise ValueError(f"Duplicate name {name} in defenses")
++        
++        defenses[name] = Defense(
++            period=period, success_probability=success_probability, name=name, cost=cost
++        )
++        all_names[name] = defenses[name]
++
++    # Init all atomic attacks
++    for atomic_attack in scenario.find("AtomicAttacks").findall("AtomicAttack"):
++        name = atomic_attack.get("name")
++
++        if name in atomic_attacks or name in all_names:
++            raise ValueError(f"Duplicate name {name} in atomic attacks")
++
++        completion_time = int(atomic_attack.get("completion_time"))
++        success_probability = float(atomic_attack.get("success_probability"))
++        activation_cost = int(atomic_attack.get("activation_cost"))
++        proportional_cost = int(atomic_attack.get("proportional_cost"))
++        defense_names = defenses_names = eval(atomic_attack.get("defenses"))
++        defenses_names = [] if defense_names is None else defense_names
++        attack_defenses = []
++        for defense_name in defenses_names:
++            if defense_name not in defenses:
++                raise ValueError(f"Unknown defense {defense_name} in atomic attack {name}")
++            attack_defenses.append(defenses[defense_name])
++        
++        atomic_attacks[name] = Attack(
++            completion_time=completion_time,
++            success_probability=success_probability,
++            activation_cost=activation_cost,
++            proportional_cost=proportional_cost,
++            defenses=attack_defenses,
++            name=name,
++        )
++        all_names[name] = atomic_attacks[name]
++    
++    # Associate each subgoal name to its XML node, to build them recursively later
++    sg_def = dict()
++    for subgoal in scenario.find("Subgoals").findall("Subgoal"):
++        name = subgoal.get("name")
++        if name in sg_def or name in all_names:
++            raise ValueError(f"Duplicate name {name} in subgoals")
++        sg_def[name] = subgoal
++        
++
++    def build_subgoal(sg_name: str) -> Subgoal:
++        """
++        (Recursively) Build the subgoal with the given name.
++
++        param sg_name: The name of the subgoal to build.
++        return: The built subgoal.
++        """
++        if sg_name in all_names:
++            return all_names[sg_name]
++        
++        sgd = sg_def[sg_name]
++        children = list(map(build_subgoal, eval(sgd.get("children"))))
++
++        sg = Subgoal(
++            name=sg_name,
++            children=children,
++            operation_type = OperationType.OR if sgd.get("operation_type") == "OR" else OperationType.AND
++        )
++        subgoals[sg_name] = sg
++        all_names[sg_name] = sg
++        return sg
++    
++    return ADG(build_subgoal(scenario.find("Maingoal").get("name")))
+ 
+ def build_adg_very_simple():
+     # Defenses
+@@ -248,6 +352,60 @@ def build_adg_very_simple():
+     return ADG(g_0)
+ 
+ 
++def build_adg_very_simple2():
++    # Defenses
++    d_cc = Defense(period=100, success_probability=0.5, name="d_cc", cost=1)
++    d_cp = Defense(period=1000, success_probability=0.75, name="d_cp", cost=10)
++
++    # Atomic attacks
++    a_bf = Attack(
++        completion_time=2,
++        success_probability=0.5,
++        activation_cost=2,
++        proportional_cost=1,
++        defenses=[d_cc],
++        name="a_bf",
++    )
++    a_ss = Attack(
++        completion_time=30,
++        success_probability=0.75,
++        activation_cost=0,
++        proportional_cost=10,
++        defenses=[d_cc],
++        name="a_ss",
++    )
++
++    # Subgoals
++    g_ac = Subgoal(
++        children=[a_bf, a_ss, d_cp], operation_type=OperationType.OR, name="g_ac"
++    )
++    g_0 = Subgoal(children=[g_ac], operation_type=OperationType.AND, name="g_0")
++
++    return ADG(g_0)
++
++def build_adg_super_very_simple():
++    # Defenses
++    d_aa = Defense(period=10, success_probability=0.5, name="d_aa", cost=1)
++
++    # Atomic attacks
++    a_aa = Attack(
++        completion_time=2,
++        success_probability=0.5,
++        activation_cost=2,
++        proportional_cost=1,
++        defenses=[d_aa],
++        name="a_aa",
++    )
++
++    # Subgoals
++    g_sg = Subgoal(
++        children=[a_aa], operation_type=OperationType.OR, name="g_sg"
++    )
++    g_0 = Subgoal(children=[g_sg], operation_type=OperationType.AND, name="g_0")
++
++    return ADG(g_0)
++
++
+ def print_results(
+     optimizer,
+     time_limit,
+@@ -455,10 +613,18 @@ def list_limits(optimizer, csv, model_name, output, time_limits, cost_limits):
+ ### MAIN ###
+ ############
+ 
++argsParser = argparse.ArgumentParser("ADP Optimizer")
++argsParser.add_argument("--csv", type=str, default="", help="Add a nickname to the csv output directory")
++argsParser.add_argument("--xml", type=str, default="", help="If given, use the specified XML file to build the ADG instead of the hardcoded one")
++argsParser.add_argument("--saveOnly", action="store_true", help="Only save the model, without running the experiments")
++
+ if __name__ == "__main__":
+     csv = False
+     explore = False
+-    nickname = sys.argv[1] if len(sys.argv) > 1 else ""
++
++    args = argsParser.parse_args()
++
++    nickname = args.csv
+     if csv:
+         dirname = f"experiment-{time.strftime('%Y-%m-%d_%H-%M-%S')}{nickname}"
+         os.makedirs(dirname)
+@@ -472,9 +638,21 @@ output = {output}
+ model_name = {model_name}
+ """
+     )
++
+     sys.setrecursionlimit(10 ** 6)
+ 
+-    adg = build_adg()
++    if args.xml:
++        adg = build_from_xml(args.xml)
++    else:
++        adg = build_adg_very_simple()
++
++    if args.saveOnly:
++        from uppaal import UppaalExporter
++        
++        exporter = UppaalExporter(adg, "exported_model.xml")
++        exporter.make_xml(model_name)
++        sys.exit(0)
++
+ 
+     optimizer = Optimizer(adg)
+     optimizer.export(model_name, simulation_number=10000, cost_limit=400)
+-- 
+2.43.0
+
