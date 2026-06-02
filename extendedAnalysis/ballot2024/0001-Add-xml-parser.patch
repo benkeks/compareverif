@@ -1,15 +1,15 @@
-From 95464334b3200ec807c8ac044a2a791babd4f715 Mon Sep 17 00:00:00 2001
+From 8267c151a90034d417a052d21ba1982795201335 Mon Sep 17 00:00:00 2001
 From: Philipp Schlehuber-Caissier
  <philipp.schlehuber-caissier@telecom-sudparis.eu>
 Date: Fri, 22 May 2026 19:47:06 +0200
 Subject: [PATCH] Add xml parser
 
 ---
- uppaal/main.py | 182 ++++++++++++++++++++++++++++++++++++++++++++++++-
- 1 file changed, 180 insertions(+), 2 deletions(-)
+ uppaal/main.py | 183 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 181 insertions(+), 2 deletions(-)
 
 diff --git a/uppaal/main.py b/uppaal/main.py
-index 2cb1752..4e50d8e 100644
+index 2cb1752..f77fc6d 100644
 --- a/uppaal/main.py
 +++ b/uppaal/main.py
 @@ -8,6 +8,9 @@ import os
@@ -51,7 +51,7 @@ index 2cb1752..4e50d8e 100644
 +    xml = ET.parse(file)
 +
 +    scenario = xml.getroot()
-+    
++
 +    # Init all defenses
 +    for defense in scenario.find("Defenses").findall("Defense"):
 +        name = defense.get("name")
@@ -60,7 +60,7 @@ index 2cb1752..4e50d8e 100644
 +        cost = int(defense.get("cost"))
 +        if name in defenses or name in all_names:
 +            raise ValueError(f"Duplicate name {name} in defenses")
-+        
++
 +        defenses[name] = Defense(
 +            period=period, success_probability=success_probability, name=name, cost=cost
 +        )
@@ -84,7 +84,7 @@ index 2cb1752..4e50d8e 100644
 +            if defense_name not in defenses:
 +                raise ValueError(f"Unknown defense {defense_name} in atomic attack {name}")
 +            attack_defenses.append(defenses[defense_name])
-+        
++
 +        atomic_attacks[name] = Attack(
 +            completion_time=completion_time,
 +            success_probability=success_probability,
@@ -94,7 +94,7 @@ index 2cb1752..4e50d8e 100644
 +            name=name,
 +        )
 +        all_names[name] = atomic_attacks[name]
-+    
++
 +    # Associate each subgoal name to its XML node, to build them recursively later
 +    sg_def = dict()
 +    for subgoal in scenario.find("Subgoals").findall("Subgoal"):
@@ -102,7 +102,7 @@ index 2cb1752..4e50d8e 100644
 +        if name in sg_def or name in all_names:
 +            raise ValueError(f"Duplicate name {name} in subgoals")
 +        sg_def[name] = subgoal
-+        
++
 +
 +    def build_subgoal(sg_name: str) -> Subgoal:
 +        """
@@ -113,7 +113,7 @@ index 2cb1752..4e50d8e 100644
 +        """
 +        if sg_name in all_names:
 +            return all_names[sg_name]
-+        
++
 +        sgd = sg_def[sg_name]
 +        children = list(map(build_subgoal, eval(sgd.get("children"))))
 +
@@ -125,7 +125,7 @@ index 2cb1752..4e50d8e 100644
 +        subgoals[sg_name] = sg
 +        all_names[sg_name] = sg
 +        return sg
-+    
++
 +    return ADG(build_subgoal(scenario.find("Maingoal").get("name")))
  
  def build_adg_very_simple():
@@ -211,7 +211,7 @@ index 2cb1752..4e50d8e 100644
      if csv:
          dirname = f"experiment-{time.strftime('%Y-%m-%d_%H-%M-%S')}{nickname}"
          os.makedirs(dirname)
-@@ -472,9 +638,21 @@ output = {output}
+@@ -472,9 +638,22 @@ output = {output}
  model_name = {model_name}
  """
      )
@@ -226,8 +226,9 @@ index 2cb1752..4e50d8e 100644
 +
 +    if args.saveOnly:
 +        from uppaal import UppaalExporter
-+        
-+        exporter = UppaalExporter(adg, "exported_model.xml")
++        from admdp import ADMDP
++
++        exporter = UppaalExporter(ADMDP(adg), "exported_model.xml")
 +        exporter.make_xml(model_name)
 +        sys.exit(0)
 +
