@@ -210,3 +210,42 @@ goal attacker(y)
         assert len(clause_entries) == 2
         assert clause_entries[0].clause_scope == 0
         assert clause_entries[1].clause_scope == 1
+
+    def test_parse_resets_state_between_calls(self):
+        """Reusing one parser instance should not leak clauses or derivations."""
+        parser = ProVerifOutputParser()
+
+        first_output = parser.parse(
+            """
+Initial clauses:
+Clause 1: fact_a() -> attacker(a)
+
+Starting query query_a
+
+Derivation:
+goal attacker(a)
+    clause 1 attacker(a)
+"""
+        )
+        second_output = parser.parse(
+            """
+Initial clauses:
+Clause 2: fact_b() -> attacker(b)
+
+Starting query query_b
+
+Derivation:
+goal attacker(b)
+    clause 2 attacker(b)
+"""
+        )
+
+        assert len(first_output.clauses) == 1
+        assert len(first_output.derivations) == 2
+        assert first_output.query == "query_a"
+
+        assert len(second_output.clauses) == 1
+        assert len(second_output.derivations) == 2
+        assert second_output.query == "query_b"
+        assert second_output.clauses[0].clause_number == 2
+        assert second_output.derivations[0].conclusion == "attacker(b)"

@@ -79,6 +79,8 @@ class ProVerifOutputParser:
         Returns:
             ProVerifOutput object with extracted clauses and derivations
         """
+        self.output = ProVerifOutput()
+        self.queries_seen = []
         self.output.raw_output = raw_output
         lines = raw_output.split("\n")
 
