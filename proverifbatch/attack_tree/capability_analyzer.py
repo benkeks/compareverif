@@ -3,9 +3,12 @@
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Set, Tuple
 
 from proverifbatch.proverif import ProVerifRunner, ProVerifOutputParser, ProVerifOutput
+
+if TYPE_CHECKING:
+    from proverifbatch.scenarios.models import ScenarioFile
 
 
 class CapabilityAnalyzer:
@@ -20,6 +23,59 @@ class CapabilityAnalyzer:
         self.capability_costs = (
             capability_costs or {}
         )  # Map: capability name -> {"time": X, "hack": Y, ...}
+
+    @classmethod
+    def from_scenarios(
+        cls,
+        scenarios: Sequence["ScenarioFile"],
+    ) -> Optional["CapabilityAnalyzer"]:
+        """Build an analyzer directly from generated scenarios.
+
+        This is the library counterpart to the manifest-based CLI workflow and is
+        intended for API consumers such as notebooks.
+        """
+        if not scenarios:
+            return None
+
+        analyzer = cls(cls._collect_capability_costs_from_scenarios(scenarios))
+        analysis = analyzer.analyze_from_scenarios(scenarios)
+        if analysis is None:
+            return None
+        return analyzer
+
+    @staticmethod
+    def _collect_capability_costs_from_scenarios(
+        scenarios: Sequence["ScenarioFile"],
+    ) -> Dict[str, Dict[str, int]]:
+        """Collect one cost mapping per capability from generated scenarios."""
+        capability_costs: Dict[str, Dict[str, int]] = {}
+        for scenario in scenarios:
+            for capability in scenario.capabilities:
+                if capability.name not in capability_costs and capability.costs:
+                    capability_costs[capability.name] = capability.costs
+        return capability_costs
+
+    def analyze_from_scenarios(
+        self,
+        scenarios: Sequence["ScenarioFile"],
+    ) -> Optional[Dict[str, Set[str]]]:
+        """Analyze capabilities by comparing generated base and singleton scenarios."""
+        base_scenario = next((scenario for scenario in scenarios if not scenario.capabilities), None)
+        single_capability_scenarios = [
+            scenario for scenario in scenarios if len(scenario.capabilities) == 1
+        ]
+
+        if base_scenario is None or not single_capability_scenarios:
+            return None
+
+        return self._analyze_from_scenario_paths(
+            base_scenario.path,
+            [
+                (scenario.capabilities[0].name, scenario.path)
+                for scenario in single_capability_scenarios
+            ],
+            verbose=False,
+        )
 
     def analyze_from_manifest(self, manifest_path: Path) -> Dict[str, Set[str]]:
         """
@@ -48,16 +104,32 @@ class CapabilityAnalyzer:
             print(f"Warning: No base scenario found in {manifest_path}")
             return {}
 
-        # Extract clauses from base scenario
-        base_output = self._extract_clauses_from_scenario(
-            Path(base_scenario["path"])
+        return self._analyze_from_scenario_paths(
+            Path(base_scenario["path"]),
+            [
+                (scenario["capabilities"][0]["name"], Path(scenario["path"]))
+                for scenario in single_capability_scenarios
+            ],
+            verbose=True,
         )
+
+    def _analyze_from_scenario_paths(
+        self,
+        base_scenario_path: Path,
+        single_capability_scenarios: List[Tuple[str, Path]],
+        *,
+        verbose: bool,
+    ) -> Dict[str, Set[str]]:
+        """Populate capability clause attribution from base and singleton scenarios."""
+        self.capability_clauses = {}
+
+        # Extract clauses from base scenario
+        base_output = self._extract_clauses_from_scenario(base_scenario_path)
         self.base_clauses = set(c.original_text for c in base_output.clauses)
 
         # Compare each single-capability scenario with base
-        for scenario in single_capability_scenarios:
-            cap_name = scenario["capabilities"][0]["name"]
-            cap_output = self._extract_clauses_from_scenario(Path(scenario["path"]))
+        for cap_name, scenario_path in single_capability_scenarios:
+            cap_output = self._extract_clauses_from_scenario(scenario_path)
             cap_clauses = set(c.original_text for c in cap_output.clauses)
 
             # Find clauses only in capability scenario
@@ -76,7 +148,8 @@ class CapabilityAnalyzer:
 
             self.capability_clauses[cap_name] = new_clauses
 
-            print(f"  {cap_name}: {len(new_clauses)} new clauses")
+            if verbose:
+                print(f"  {cap_name}: {len(new_clauses)} new clauses")
 
         return self.capability_clauses
 

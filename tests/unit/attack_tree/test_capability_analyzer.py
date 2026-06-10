@@ -9,6 +9,7 @@ import pytest
 
 from proverifbatch.attack_tree import CapabilityAnalyzer, DerivationTree
 from proverifbatch.proverif import ProVerifOutput, Clause, Derivation
+from proverifbatch.scenarios.models import AttackVariant, ScenarioFile
 
 
 class TestCapabilityAnalyzerInitialization:
@@ -201,6 +202,79 @@ class TestAnalyzeFromManifest:
             assert "table(rainbow(h))" in result["Rainbow"]
         finally:
             manifest_path.unlink()
+
+
+class TestAnalyzeFromScenarios:
+    """Test capability analysis directly from generated scenario objects."""
+
+    @patch("proverifbatch.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
+    def test_from_scenarios_identifies_new_clauses_without_manifest(self, mock_extract):
+        """API consumers should be able to build attribution from generated scenarios alone."""
+        base_output = ProVerifOutput(
+            clauses=[
+                Clause(
+                    head="table(passwords(h))",
+                    original_text="table(passwords(h))",
+                    clause_number=1,
+                )
+            ],
+            derivations=[],
+        )
+        cap_output = ProVerifOutput(
+            clauses=[
+                Clause(
+                    head="table(passwords(h))",
+                    original_text="table(passwords(h))",
+                    clause_number=1,
+                ),
+                Clause(
+                    head="table(rainbow(h))",
+                    original_text="table(rainbow(h))",
+                    clause_number=2,
+                ),
+            ],
+            derivations=[],
+        )
+        mock_extract.side_effect = [base_output, cap_output]
+
+        scenarios = [
+            ScenarioFile(
+                path=Path("base.pv"),
+                capabilities=[],
+                costs={},
+                queries=[],
+            ),
+            ScenarioFile(
+                path=Path("rainbow.pv"),
+                capabilities=[AttackVariant(name="Rainbow", costs={"time": 5})],
+                costs={"time": 5},
+                queries=[],
+            ),
+        ]
+
+        analyzer = CapabilityAnalyzer.from_scenarios(scenarios)
+
+        assert analyzer is not None
+        assert analyzer.capability_costs == {"Rainbow": {"time": 5}}
+        assert analyzer.capability_clauses == {"Rainbow": {"table(rainbow(h))"}}
+
+    def test_from_scenarios_requires_base_and_singleton_support(self):
+        """Analyzer construction should fail fast when support scenarios are missing."""
+        scenarios = [
+            ScenarioFile(
+                path=Path("combo.pv"),
+                capabilities=[
+                    AttackVariant(name="Rainbow", costs={"time": 5}),
+                    AttackVariant(name="Database", costs={"hack": 1}),
+                ],
+                costs={"time": 5, "hack": 1},
+                queries=[],
+            )
+        ]
+
+        analyzer = CapabilityAnalyzer.from_scenarios(scenarios)
+
+        assert analyzer is None
 
 
 class TestUpdateCapabilityClauseNumbers:

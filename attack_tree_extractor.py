@@ -154,18 +154,8 @@ def main():
         with open(manifest_path) as f:
             manifest_data = json.load(f)
 
-        # Extract capability costs from all scenarios in manifest
-        capability_costs = {}
-        for scenario in manifest_data.get("scenarios", []):
-            for cap_info in scenario.get("capabilities", []):
-                cap_name = cap_info.get("name")
-                costs = cap_info.get("costs", {})
-                if cap_name and costs:
-                    # Store the costs (overwriting duplicates is fine, they should be the same)
-                    capability_costs[cap_name] = costs
-
-        capability_analyzer = CapabilityAnalyzer(capability_costs)
-        capability_analyzer.analyze_from_manifest(manifest_path)
+        capability_analyzer = CapabilityAnalyzer.from_manifest(manifest_path)
+        capability_costs = capability_analyzer.capability_costs
         print()
 
     for scenario_path in args.files:
