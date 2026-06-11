@@ -1,0 +1,17 @@
+
+(* asymmetric encryption *)
+type seckey.
+type pubkey.
+
+fun pk(seckey): pubkey.
+fun aenc(bitstring, pubkey): bitstring.
+reduc forall m: bitstring, sk: seckey;
+    adec(aenc(m, pk(sk)), sk) = m.
+
+(* hashing one-way function *)
+fun hashed(bitstring, bitstring): bitstring.
+
+(* ElGamal encryption *)
+fun egenc(bitstring, bitstring): bitstring.
+reduc forall m: bitstring, k: bitstring;
+    egdec(egenc(m, k), k) = m.

@@ -28,6 +28,7 @@ class ScenarioFile:
     costs: Dict[str, float]
     queries: List[Dict[str, str]]
     capability_names: List[str] = field(default_factory=list)
+    libraries: List[str] = field(default_factory=list)
 
 
 @dataclass

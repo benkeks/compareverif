@@ -86,7 +86,9 @@ class TestProVerifRunner:
         mock_run.return_value = mock_result
 
         runner = ProVerifRunner()
-        with patch("pathlib.Path.exists", return_value=True):
+        with patch("pathlib.Path.exists", return_value=True), patch(
+            "pathlib.Path.read_text", return_value="new x: bitstring."
+        ):
             runner.run(
                 Path("test.pv"),
                 verbose_clauses=True,
@@ -102,4 +104,24 @@ class TestProVerifRunner:
         assert "explained" in cmd
         assert "-set" in cmd
         assert "explainDerivation" in cmd
-        assert "test.pv" in cmd[len(cmd) - 1]
+        assert cmd[-1] == "test.pv"
+        assert mock_run.call_args.kwargs["cwd"] == Path(".")
+
+    @patch("subprocess.run")
+    def test_run_includes_declared_library_flags(self, mock_run):
+        """Runner should pass top-level `(* -lib ... *)` declarations to proverif."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = ""
+        mock_result.stderr = ""
+        mock_run.return_value = mock_result
+
+        runner = ProVerifRunner()
+        with patch("pathlib.Path.exists", return_value=True), patch(
+            "pathlib.Path.read_text",
+            return_value="(* -lib primitives.pvl *)\nnew key: bitstring.\n",
+        ):
+            runner.run(Path("test.pv"), verbose_clauses=False)
+
+        cmd = mock_run.call_args[0][0]
+        assert cmd[:3] == ["proverif", "-lib", "primitives.pvl"]

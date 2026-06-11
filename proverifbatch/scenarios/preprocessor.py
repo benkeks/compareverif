@@ -1,5 +1,6 @@
 """High-level scenario preprocessing orchestrator."""
 
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ from .generator import (
 from .analyzer import analyze_minimal_false_combinations
 from .serialization import format_costs
 from proverifbatch.common.formatting import print_headline, print_subheading
+from proverifbatch.proverif.libraries import append_library_arguments, extract_declared_libraries
 
 DEFAULT_PROVERIF_TIMEOUT = 300  # 5 minutes
 DEFAULT_TABLE_WIDTH = 60
@@ -34,6 +36,7 @@ class PreparedScenarioInput:
     output_dir: Path
     capabilities: List[AttackerCapability]
     content_chunks: List[Optional[str]]
+    libraries: List[str]
 
 
 @dataclass
@@ -106,6 +109,14 @@ class ScenarioPreprocessor:
         
         # Create output directory
         output_dir_path.mkdir(parents=True, exist_ok=True)
+
+        # Copy declared ProVerif libraries into the scenario directory.
+        declared_libraries = extract_declared_libraries(content)
+        copied_libraries = self._copy_declared_libraries(
+            input_path=input_path,
+            output_dir=output_dir_path,
+            libraries=declared_libraries,
+        )
         
         # Print capabilities table
         self._print_capabilities_table(attacker_capabilities)
@@ -115,6 +126,7 @@ class ScenarioPreprocessor:
             output_dir=output_dir_path,
             capabilities=attacker_capabilities,
             content_chunks=content_chunks,
+            libraries=copied_libraries,
         )
         self._prepared_inputs[input_file] = prepared_input
         self._generated_files[input_file] = {}
@@ -304,6 +316,7 @@ class ScenarioPreprocessor:
             costs=total_costs,
             queries=queries,
             capability_names=included_names,
+            libraries=list(prepared_input.libraries),
         )
         cached_scenarios[combination] = scenario_file
         self._stats.generated_files += 1
@@ -322,11 +335,15 @@ class ScenarioPreprocessor:
 
         try:
             self._stats.proverif_runs += 1
+            command = ['proverif']
+            append_library_arguments(command, file.libraries)
+            command.append(file.path.name)
             result = subprocess.run(
-                ['proverif', str(file.path)],
+                command,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout
+                timeout=self.timeout,
+                cwd=file.path.parent,
             )
             
             if result.returncode == 0:
@@ -372,6 +389,32 @@ class ScenarioPreprocessor:
             print(f"Error running proverif on {file.path.name}: {e}")
 
         return file_result
+
+    def _copy_declared_libraries(
+        self,
+        input_path: Path,
+        output_dir: Path,
+        libraries: List[str],
+    ) -> List[str]:
+        """Copy declared library files into an output scenario directory."""
+        copied_names: List[str] = []
+        for declared in libraries:
+            declared_path = Path(declared)
+            source = declared_path if declared_path.is_absolute() else input_path.parent / declared_path
+            source = source.resolve()
+            if not source.exists():
+                raise FileNotFoundError(
+                    f"Declared library '{declared}' not found for input file '{input_path}'."
+                )
+
+            destination = output_dir / source.name
+            if source != destination.resolve():
+                shutil.copy2(source, destination)
+
+            if source.name not in copied_names:
+                copied_names.append(source.name)
+
+        return copied_names
 
     @staticmethod
     def _query_is_false(result: ScenarioResult, query_index: int) -> bool:

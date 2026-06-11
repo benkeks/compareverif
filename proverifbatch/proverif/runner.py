@@ -3,6 +3,7 @@
 import subprocess
 from pathlib import Path
 from typing import Tuple
+from .libraries import append_library_arguments, extract_declared_libraries_from_file
 
 
 DEFAULT_TIMEOUT = 300  # 5 minutes
@@ -39,6 +40,7 @@ class ProVerifRunner:
             raise FileNotFoundError(f"Scenario file not found: {scenario_file}")
 
         cmd = ["proverif"]
+        append_library_arguments(cmd, extract_declared_libraries_from_file(scenario_file))
         if verbose_clauses:
             cmd.extend(["-set", "verboseClauses", clause_verbosity])
         # Use simpler derivation format for uniform parsing
@@ -46,7 +48,7 @@ class ProVerifRunner:
         cmd.extend(["-set", "simplifyDerivation", "false"])
         cmd.extend(["-set", "abbreviateDerivation", "false"])
         cmd.extend(["-set", "abbreviateClauses", "false"])
-        cmd.append(str(scenario_file))
+        cmd.append(scenario_file.name)
 
         try:
             result = subprocess.run(
@@ -54,6 +56,7 @@ class ProVerifRunner:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
+                cwd=scenario_file.parent,
             )
             return result.returncode, result.stdout, result.stderr
         except subprocess.TimeoutExpired:

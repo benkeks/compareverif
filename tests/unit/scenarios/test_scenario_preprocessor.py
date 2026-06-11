@@ -119,8 +119,8 @@ attacker(b).
         preprocessor = ScenarioPreprocessor()
         preprocessor.preprocess(str(scenario_file), str(tmp_scenario_dir / "output"))
 
-        def fake_run(command, capture_output, text, timeout):
-            path = Path(command[1])
+        def fake_run(command, capture_output, text, timeout, cwd):
+            path = Path(cwd) / command[-1]
             stem = path.stem
             is_false = stem == "attack_a+attack_b"
             return Mock(returncode=0, stdout=f"RESULT query attacker(secret) is {'false' if is_false else 'true'}.\n")
@@ -196,8 +196,8 @@ query attacker(secret).
         assert before.generated_files == 3
         assert before.proverif_runs == 0
 
-        def fake_run(command, capture_output, text, timeout):
-            path = Path(command[1])
+        def fake_run(command, capture_output, text, timeout, cwd):
+            path = Path(cwd) / command[-1]
             stem = path.stem
             is_false = stem == "attack_a+attack_b"
             return Mock(returncode=0, stdout=f"RESULT query attacker(secret) is {'false' if is_false else 'true'}.\n")
@@ -208,6 +208,43 @@ query attacker(secret).
         after = preprocessor.get_execution_stats()
         assert after.generated_files == 4
         assert after.proverif_runs == 4
+
+    def test_preprocess_copies_declared_libraries_and_passes_lib_flags(self, tmp_scenario_dir):
+        """Declared top-level `(* -lib ... *)` directives should be copied and invoked."""
+        scenario_file = tmp_scenario_dir / "libs.pv"
+        library_file = tmp_scenario_dir / "primitives.pvl"
+        library_file.write_text("fun h(bitstring): bitstring.")
+        scenario_file.write_text(
+            """
+(* -lib primitives.pvl *)
+
+new key: bitstring.
+
+(*** Attack A [1 time]
+attacker(a).
+***)
+
+query attacker(secret).
+"""
+        )
+
+        preprocessor = ScenarioPreprocessor(check_all_scenarios=True)
+        generated, output_dir = preprocessor.preprocess(str(scenario_file), str(tmp_scenario_dir / "output"))
+
+        assert (output_dir / "primitives.pvl").exists()
+        assert generated
+        for generated_scenario in generated:
+            assert generated_scenario.libraries == ["primitives.pvl"]
+
+        def fake_run(command, capture_output, text, timeout, cwd):
+            assert command[:3] == ["proverif", "-lib", "primitives.pvl"]
+            assert Path(cwd) == output_dir
+            return Mock(returncode=0, stdout="RESULT query attacker(secret) is true.\n")
+
+        with patch("proverifbatch.scenarios.preprocessor.subprocess.run", side_effect=fake_run) as mock_run:
+            preprocessor.run_proverif(generated)
+
+        assert mock_run.call_count == len(generated)
     
     def test_print_analysis_no_false_results(self, capsys):
         """Test printing analysis when no queries return false."""
