@@ -43,6 +43,17 @@ class CapabilityAnalyzer:
             return None
         return analyzer
 
+    @classmethod
+    def from_manifest(cls, manifest_path: Path) -> "CapabilityAnalyzer":
+        """Build an analyzer from a manifest.json file.
+
+        This keeps the CLI API stable while sharing the same analysis backend as
+        the notebook and manifest-driven workflows.
+        """
+        analyzer = cls()
+        analyzer.analyze_from_manifest(manifest_path)
+        return analyzer
+
     @staticmethod
     def _collect_capability_costs_from_scenarios(
         scenarios: Sequence["ScenarioFile"],

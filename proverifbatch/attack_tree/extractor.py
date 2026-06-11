@@ -2,9 +2,9 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-import re
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence
 
+from proverifbatch.common import normalize_query_text
 from proverifbatch.proverif import Derivation, ProVerifRunner, ProVerifOutputParser, ProVerifOutput
 from proverifbatch.proverif.runner import DEFAULT_TIMEOUT
 
@@ -15,39 +15,22 @@ from .renderer import GraphvizRenderer
 if TYPE_CHECKING:
     from proverifbatch.scenarios.models import ScenarioFile
 
-
-def _normalize_query_text(query: str) -> str:
-    """Normalize query text so scenario query declarations match derivation query facts."""
-    if not query:
-        return ""
-
-    normalized = re.sub(r"\(\*.*?\*\)", "", query)
-    normalized = normalized.strip().lower()
-    normalized = normalized.replace("query ", "")
-    normalized = normalized.replace("weaksecret ", "")
-    normalized = normalized.replace("\n", "")
-    normalized = normalized.replace(" ", "")
-    normalized = normalized.replace("[", "").replace("]", "")
-    normalized = normalized.replace(";", "").replace(".", "")
-    return normalized
-
-
 def _build_query_tag_filter(
     query_tag: str,
     scenario_queries: Sequence[Dict[str, str]],
 ) -> Optional[Callable[[Derivation], bool]]:
     """Resolve a scenario query tag to a derivation filter."""
     target_queries = {
-        _normalize_query_text(query_info.get("query", ""))
+        normalize_query_text(query_info.get("query", ""))
         for query_info in scenario_queries
-        if _normalize_query_text(query_info.get("tag", ""))
-        == _normalize_query_text(query_tag)
+        if normalize_query_text(query_info.get("tag", ""))
+        == normalize_query_text(query_tag)
     }
     target_queries.discard("")
     if not target_queries:
         return None
 
-    return lambda derivation: _normalize_query_text(derivation.query or "") in target_queries
+    return lambda derivation: normalize_query_text(derivation.query or "") in target_queries
 
 
 @dataclass

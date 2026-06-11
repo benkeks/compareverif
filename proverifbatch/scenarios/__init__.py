@@ -20,6 +20,7 @@ from .generator import (
     build_scenario_content,
 )
 from .analyzer import analyze_minimal_false_combinations
+from .pareto import ParetoFrontRenderer, ParetoPoint
 from .serialization import format_costs, build_manifest_scenario_entry
 from .preprocessor import ScenarioPreprocessor
 
@@ -40,5 +41,7 @@ __all__ = [
     "format_costs",
     "build_manifest_scenario_entry",
     "analyze_minimal_false_combinations",
+    "ParetoFrontRenderer",
+    "ParetoPoint",
     "ScenarioPreprocessor",
 ]

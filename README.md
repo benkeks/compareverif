@@ -10,6 +10,7 @@ This can be used to compare the security of different protocol designs through t
 There are two main scripts in this project:
 
 - [`scenario_preprocessor.py`](#usage-of-the-scenario-preprocessor) automates the generation and verification of multiple attack scenarios, where capabilities are expressed as magical comments `(*** Attack name [price] some oracle code ***)` in ProVerif files.
+- [`pareto_comparison.py`](#usage-of-the-pareto-comparison) renders Pareto fronts from manifests so you can compare breaking costs across protocol variants.
 - [`attack_tree_extractor.py`](#usage-of-the-attack-tree-extractor) extracts and visualizes attack trees from ProVerif output, connecting it derivations back to underlying capabilities.
 
 The shared code is located in `proverifbatch/`.
@@ -86,6 +87,37 @@ The script automatically runs ProVerif on all generated scenarios. Detailed veri
 
 For each input file, the preprocessor generates a `manifest.json` file in the corresponding scenario directory (e.g., `_scenarios/hashed_passwords/manifest.json`). This manifest provides a comprehensive machine-readable record of all generated scenarios and their verification results. (Documented in [`docs/manifests.md`](docs/manifests.md).)
 
+## Usage of the Pareto Comparison
+
+The Pareto comparison tool renders a two-dimensional cost front for the queries that break a property. By default it uses the first two available price dimensions from the manifests and shows all queries. You can refine the plotted cost dimensions with `--costs`, and you can select a specific query by tag/name or by 1-based index with `--query`.
+
+**Basic usage:**
+
+```bash
+python3 pareto_comparison.py <manifest.json | manifest_dir> [additional_inputs ...]
+```
+
+**Examples:**
+
+Render the default comparison from the generated manifests:
+```bash
+python3 pareto_comparison.py _scenarios/hashed_passwords _scenarios/singularized_passwords
+```
+
+Render only one query and choose explicit cost dimensions:
+```bash
+python3 pareto_comparison.py \
+  _scenarios/hashed_passwords \
+  _scenarios/singularized_passwords \
+  --query "no pw leakage" \
+  --costs time,hack
+```
+
+**Options:**
+
+- `--costs X,Y` - Select the two cost dimensions to compare
+- `--query QUERY` - Select a query by tag/name or by 1-based index
+
 ## Usage of the Attack Tree Extractor
 
 The `attack_tree_extractor.py` script extracts clauses and derivations from ProVerif output and generates graphviz visualizations of attack trees.
@@ -145,7 +177,7 @@ Generate an annotated tree with clause IDs and attack highlighting:
 python3 attack_tree_extractor.py \
   _scenarios/singularized_passwords/rainbow_table_attack+intruder_at_database+intruder_at_singularization_database.pv \
   --manifest _scenarios/singularized_passwords/manifest.json \
-  --query 2 \
+  --query "no pw leakage" \
   --show-clause-ids \
   --highlight-attack \
   --graphviz-pdf trees/
@@ -170,7 +202,7 @@ Details about the structure of the generated attack trees and the semantics of t
 - `--no-summary` - Skip printing the console summary
 - `--manifest FILE` - Use manifest.json for capability analysis (annotates clauses with capabilities)
 - `--original-terms` - Use original ProVerif terms in node labels instead of human-readable formatting
-- `--query INDEX` - Select a specific query to visualize (1-based index, matching ProVerif numbering)
+- `--query QUERY` - Select a specific query to visualize by 1-based index or query name
 - `--show-clause-ids` - Include ProVerif clause numbers in fact node labels
 - `--highlight-attack` - Emphasize attack-relevant paths and fade less relevant branches
 

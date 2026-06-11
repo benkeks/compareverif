@@ -13,6 +13,7 @@ import re
 import sys
 from pathlib import Path
 
+from proverifbatch.common import QuerySelectionOption, normalize_query_text, resolve_query_selector
 from proverifbatch.attack_tree import (
     AttackTreeExtractor,
     CapabilityAnalyzer,
@@ -20,20 +21,83 @@ from proverifbatch.attack_tree import (
 )
 
 
-def _normalize_query_text(query: str) -> str:
-    """Normalize query text for robust exact matching across formats."""
-    if not query:
-        return ""
+def _describe_query(query: str) -> str:
+    """Build a short user-facing query name when no manifest tag exists."""
+    match = re.search(r"(not\s+)?(\w+)\(", query)
+    if match:
+        negation = "not " if match.group(1) else ""
+        predicate = match.group(2)
+        return f"{negation}{predicate}(...)"
 
-    normalized = re.sub(r"\(\*.*?\*\)", "", query)
-    normalized = normalized.strip().lower()
-    normalized = normalized.replace("query ", "")
-    normalized = normalized.replace("weaksecret ", "")
-    normalized = normalized.replace("\n", "")
-    normalized = normalized.replace(" ", "")
-    normalized = normalized.replace("[", "").replace("]", "")
-    normalized = normalized.replace(";", "").replace(".", "")
-    return normalized
+    return query[:50] + "..." if len(query) > 50 else query
+
+
+def _find_matching_manifest_scenarios(manifest_data, scenario_file: Path):
+    """Find manifest scenarios corresponding to one scenario file."""
+    if not manifest_data:
+        return []
+
+    scenario_name = scenario_file.name
+    base_scenario_name = re.sub(r"___\d+_\w+_", "", scenario_name)
+    matching_scenarios = []
+
+    for scenario in manifest_data.get("scenarios", []):
+        if scenario.get("file") in [scenario_name, base_scenario_name]:
+            matching_scenarios.append(scenario)
+
+    if matching_scenarios:
+        return matching_scenarios
+
+    for scenario in manifest_data.get("scenarios", []):
+        scenario_file_base = scenario.get("file", "").replace(".pv", "")
+        our_file_base = base_scenario_name.replace(".pv", "")
+        scenario_file_base = re.sub(r"___\d+_\w+_", "", scenario_file_base)
+        if scenario_file_base in our_file_base or our_file_base in scenario_file_base:
+            matching_scenarios.append(scenario)
+
+    return matching_scenarios
+
+
+def _query_options_for_output(output, manifest_data, scenario_file: Path):
+    """Build ordered query selection options for one ProVerif output."""
+    canonical_to_display = {}
+    ordered_canonicals = []
+    canonical_to_name = {}
+
+    for derivation in output.derivations:
+        if not derivation.query:
+            continue
+        canonical = normalize_query_text(derivation.query)
+        if canonical and canonical not in canonical_to_display:
+            canonical_to_display[canonical] = derivation.query
+            ordered_canonicals.append(canonical)
+
+    for scenario in _find_matching_manifest_scenarios(manifest_data, scenario_file):
+        for query_info in scenario.get("queries", []):
+            canonical = normalize_query_text(query_info.get("query", ""))
+            if not canonical:
+                continue
+            tag = str(query_info.get("tag", "")).strip()
+            if tag and tag != "query":
+                canonical_to_name[canonical] = tag
+            elif canonical not in canonical_to_name:
+                comment_match = re.search(r"\(\*\s*([^*]+?)\s*\*\)", query_info.get("query", ""))
+                if comment_match:
+                    canonical_to_name[canonical] = comment_match.group(1).strip()
+
+    options = []
+    for canonical in ordered_canonicals:
+        display_query = canonical_to_display[canonical]
+        option_name = canonical_to_name.get(canonical, _describe_query(display_query))
+        options.append(
+            QuerySelectionOption(
+                name=option_name,
+                value=canonical,
+                aliases=(display_query,),
+            )
+        )
+
+    return options, canonical_to_display
 
 
 def main():
@@ -74,9 +138,8 @@ def main():
     )
     parser.add_argument(
         "--query",
-        metavar="INDEX",
-        type=int,
-        help="Select which query to visualize (1=first, 2=second, etc.) matching ProVerif numbering",
+        metavar="QUERY",
+        help="Select which query to visualize by 1-based index or query name",
     )
     parser.add_argument(
         "--show-clause-ids",
@@ -92,7 +155,7 @@ def main():
     args = parser.parse_args()
 
     if not args.files and not args.manifest:
-        print("Usage: python3 attack_tree_extractor_refactored.py <scenario_file.pv> [scenario_file2.pv ...]")
+        print("Usage: python3 attack_tree_extractor.py <scenario_file.pv> [scenario_file2.pv ...]")
         print("\nOptions:")
         print("  --graphviz-dot DIR      Output graphviz dot files to DIR")
         print("  --graphviz-pdf DIR      Output graphviz PDF files to DIR (requires graphviz)")
@@ -100,17 +163,17 @@ def main():
         print("  --no-summary            Skip printing the summary")
         print("  --manifest FILE         Use manifest.json for capability analysis")
         print("  --original-terms        Use original ProVerif syntax for node labels")
-        print("  --query INDEX           Select query by index when multiple queries exist (1=first)")
+        print("  --query QUERY           Select query by index or name when multiple queries exist")
         print("  --show-clause-ids       Include ProVerif clause IDs in node labels")
         print("  --highlight-attack      Highlight paths above attack capabilities")
         print("\nExamples:")
         print("  # Basic extraction")
-        print("  python3 attack_tree_extractor_refactored.py scenario.pv --graphviz-pdf output/")
+        print("  python3 attack_tree_extractor.py scenario.pv --graphviz-pdf output/")
         print("\n  # With capability analysis")
-        print("  python3 attack_tree_extractor_refactored.py --manifest _scenarios/hashed_passwords/manifest.json \\")
+        print("  python3 attack_tree_extractor.py --manifest _scenarios/hashed_passwords/manifest.json \\")
         print("      _scenarios/hashed_passwords/*.pv --graphviz-pdf annotated/")
         print("\n  # Select specific query (if multiple exist)")
-        print("  python3 attack_tree_extractor_refactored.py scenario.pv --query 1 --graphviz-pdf output/")
+        print("  python3 attack_tree_extractor.py scenario.pv --query 'no pw leakage' --graphviz-pdf output/")
         sys.exit(1)
 
     if not args.manifest and args.files:
@@ -161,136 +224,71 @@ def main():
     for scenario_path in args.files:
         scenario_file = Path(scenario_path)
         output = extractor.extract(scenario_file, verbose_clauses=True)
+        selected_query_option = None
 
         if capability_analyzer:
             capability_analyzer.update_capability_clause_numbers_from_output(output)
 
         # Handle multiple queries: filter derivations if --query specified
         if output.derivations:
-            # Collect unique queries from derivations by canonical form
-            unique_queries = []
-            canonical_to_display = {}
-            for deriv in output.derivations:
-                if deriv.query:
-                    canonical = _normalize_query_text(deriv.query)
-                    if canonical and canonical not in canonical_to_display:
-                        canonical_to_display[canonical] = deriv.query
-                        unique_queries.append(canonical)
+            query_options, canonical_to_display = _query_options_for_output(
+                output,
+                manifest_data,
+                scenario_file,
+            )
 
-            # Validate --query argument if provided
             if args.query is not None:
-                # User explicitly requested a query index (1-based, like ProVerif)
-                if args.query < 1 or args.query > len(unique_queries):
-                    print(f"Error: --query {args.query} out of range.")
-                    if unique_queries:
-                        print(f"Available queries (1-{len(unique_queries)}):")
-                        for i, q in enumerate(unique_queries):
-                            print(f"  {i + 1}: {canonical_to_display[q]}")
+                try:
+                    selected_query_option = resolve_query_selector(query_options, args.query)[0]
+                except ValueError as exc:
+                    print(f"Error: {exc}")
+                    if query_options:
+                        print("Available queries:")
+                        for index, option in enumerate(query_options, start=1):
+                            print(f"  {index}: {option.name}")
                     else:
                         print("No queries found in derivations!")
                     continue
-                # Select the requested query
-                selected_canonical = unique_queries[args.query - 1]
+
+                selected_canonical = selected_query_option.value
                 output.derivations = [
                     d
                     for d in output.derivations
-                    if _normalize_query_text(d.query or "") == selected_canonical
+                    if normalize_query_text(d.query or "") == selected_canonical
                 ]
                 output.query = canonical_to_display[selected_canonical]
                 if not args.no_summary:
-                    print(f"Selected query {args.query}: {output.query}")
+                    print(f"Selected query {args.query}: {selected_query_option.name}")
 
-            # If multiple queries and user didn't specify one
-            elif len(unique_queries) > 1:
-                # Multiple queries found, inform user
+            elif len(query_options) > 1:
                 if not args.no_summary:
-                    print(f"\nWarning: Multiple queries found ({len(unique_queries)} total).")
+                    print(f"\nWarning: Multiple queries found ({len(query_options)} total).")
                     print("Available queries:")
-                    for i, q in enumerate(unique_queries):
-                        print(f"  {i + 1}: {canonical_to_display[q]}")
-                    print(f"Using first query. To select another, use: --query <index>")
-                # Use first query by default
-                selected_canonical = unique_queries[0]
+                    for index, option in enumerate(query_options, start=1):
+                        print(f"  {index}: {option.name}")
+                    print("Using first query. To select another, use: --query <index-or-name>")
+                selected_query_option = query_options[0]
+                selected_canonical = selected_query_option.value
                 output.derivations = [
                     d
                     for d in output.derivations
-                    if _normalize_query_text(d.query or "") == selected_canonical
+                    if normalize_query_text(d.query or "") == selected_canonical
                 ]
                 output.query = canonical_to_display[selected_canonical]
 
-            elif len(unique_queries) == 1:
-                # Single query, update output.query if not already set
+            elif len(query_options) == 1:
+                selected_query_option = query_options[0]
                 if not output.query:
-                    output.query = canonical_to_display[unique_queries[0]]
+                    output.query = canonical_to_display[selected_query_option.value]
 
         if not args.no_summary:
             extractor.print_summary(output)
 
         # Generate graphviz files if requested
         if output.derivations:
-            # Try to find a query tag from manifest
-            query_tag = None
-            if manifest_data and output.query:
-                # Try multiple scenario name variations (for cost-annotated files)
-                scenario_name = scenario_file.name
-                # Strip cost annotations like ___100_time_ to find base scenario
-                base_scenario_name = scenario_name
-                base_scenario_name = re.sub(r"___\d+_\w+_", "", base_scenario_name)
-
-                # Try to find matching scenario in manifest
-                matching_scenarios = []
-                for scenario in manifest_data.get("scenarios", []):
-                    if scenario.get("file") in [scenario_name, base_scenario_name]:
-                        matching_scenarios.append(scenario)
-
-                # If no exact match, try to find any scenario with similar name
-                if not matching_scenarios:
-                    for scenario in manifest_data.get("scenarios", []):
-                        scenario_file_base = scenario.get("file", "").replace(".pv", "")
-                        our_file_base = base_scenario_name.replace(".pv", "")
-                        # Remove cost annotations for comparison
-                        scenario_file_base = re.sub(r"___\d+_\w+_", "", scenario_file_base)
-                        if scenario_file_base in our_file_base or our_file_base in scenario_file_base:
-                            matching_scenarios.append(scenario)
-
-                # Search for matching query in all candidate scenarios
-                for scenario in matching_scenarios:
-                    for query_info in scenario.get("queries", []):
-                        query_text = query_info.get("query", "")
-
-                        normalized_manifest = _normalize_query_text(query_text)
-                        normalized_output = _normalize_query_text(output.query)
-
-                        # Require canonical exact match to bind the correct query tag
-                        if normalized_output and normalized_output == normalized_manifest:
-                            tag = query_info.get("tag", "")
-                            # Prefer meaningful tags over generic "query" tag
-                            if tag and tag != "query":
-                                query_tag = tag
-                                break
-                            elif tag == "query" and not query_tag:
-                                # Use generic tag as fallback
-                                comment_match = re.search(r"\(\*\s*([^*]+?)\s*\*\)", query_text)
-                                if comment_match:
-                                    query_tag = comment_match.group(1).strip()
-                    if query_tag and query_tag != "query":
-                        break
-
-            # If no tag from manifest, extract a short version of the query
+            query_tag = selected_query_option.name if selected_query_option else None
             if not query_tag and output.query:
-                # Use a simplified version: just show what's being queried
-                match = re.search(r"(not\s+)?(\w+)\(", output.query)
-                if match:
-                    negation = "not " if match.group(1) else ""
-                    predicate = match.group(2)
-                    query_tag = f"{negation}{predicate}(...)"
-                else:
-                    # Truncate long queries
-                    query_tag = (
-                        output.query[:50] + "..."
-                        if len(output.query) > 50
-                        else output.query
-                    )
+                query_tag = _describe_query(output.query)
 
             # Use readable nodes by default, unless --original-terms is specified
             use_readable = not args.original_terms

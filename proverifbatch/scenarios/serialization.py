@@ -21,6 +21,7 @@ def build_manifest_scenario_entry(
     scenario_info: Dict[str, Any] = {
         'file': str(scenario_file.path.name),
         'path': str(scenario_file.path),
+        'capability_names': list(scenario_file.capability_names),
         'capabilities': [
             {
                 'name': variant.name,

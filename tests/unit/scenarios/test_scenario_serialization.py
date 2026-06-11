@@ -23,6 +23,7 @@ def test_build_manifest_scenario_entry_without_result():
     entry = build_manifest_scenario_entry(scenario)
 
     assert entry["file"] == "scenario.pv"
+    assert entry["capability_names"] == ["Attack A"]
     assert entry["capabilities"] == [{"name": "Attack A", "costs": {"time": 5}}]
     assert entry["total_costs"] == {"time": 5}
     assert "verification" not in entry
