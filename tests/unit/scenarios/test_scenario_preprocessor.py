@@ -19,6 +19,7 @@ class TestScenarioPreprocessor:
         preprocessor = ScenarioPreprocessor()
         assert preprocessor.timeout == 300
         assert preprocessor.check_all_scenarios is False
+        assert preprocessor.dump_logs is False
     
     def test_preprocess_with_no_capabilities(self, tmp_scenario_dir):
         """Test preprocessing a file with no magical comments."""
@@ -245,6 +246,35 @@ query attacker(secret).
             preprocessor.run_proverif(generated)
 
         assert mock_run.call_count == len(generated)
+
+    def test_run_proverif_writes_logs_when_enabled(self, tmp_scenario_dir):
+        """With dump_logs enabled, each scenario should get a .pv.log file."""
+        scenario_file = tmp_scenario_dir / "logs.pv"
+        scenario_file.write_text(
+            """
+new key: bitstring.
+
+(*** Attack A [1 time]
+attacker(a).
+***)
+
+query attacker(secret).
+"""
+        )
+
+        preprocessor = ScenarioPreprocessor(check_all_scenarios=True, dump_logs=True)
+        generated, _ = preprocessor.preprocess(str(scenario_file), str(tmp_scenario_dir / "output"))
+
+        def fake_run(command, capture_output, text, timeout, cwd):
+            return Mock(returncode=0, stdout="RESULT query attacker(secret) is true.\n", stderr="")
+
+        with patch("proverifbatch.scenarios.preprocessor.subprocess.run", side_effect=fake_run):
+            preprocessor.run_proverif(generated)
+
+        for generated_scenario in generated:
+            log_path = generated_scenario.path.with_suffix(generated_scenario.path.suffix + ".log")
+            assert log_path.exists()
+            assert "RESULT query attacker(secret) is true." in log_path.read_text()
     
     def test_print_analysis_no_false_results(self, capsys):
         """Test printing analysis when no queries return false."""

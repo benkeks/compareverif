@@ -34,7 +34,7 @@ The scenario preprocessor automatically generates multiple security scenarios fr
 **Basic usage:**
 
 ```bash
-python3 scenario_preprocessor.py [--verbose] [--check-all-scenarios] <input_file.pv> [additional_files.pv ...]
+python3 scenario_preprocessor.py [--verbose] [--check-all-scenarios] [--logs] <input_file.pv> [additional_files.pv ...]
 ```
 
 By default, output is concise. The generated-file list and per-scenario ProVerif status reports are shown only when `--verbose` is enabled.
@@ -61,6 +61,11 @@ Force the previous exhaustive behavior over every capability variant combination
 python3 scenario_preprocessor.py --check-all-scenarios examples/hashed_passwords.pv
 ```
 
+Persist the full ProVerif console output for each generated scenario in `.pv.log` files:
+```bash
+python3 scenario_preprocessor.py --logs examples/hashed_passwords.pv
+```
+
 ### How It Works
 
 The preprocessor looks for special comment blocks in your ProVerif files:
@@ -84,6 +89,7 @@ Generated scenarios are placed in `_scenarios/<filename>/` subdirectories. For e
 - `_scenarios/singularized_passwords/base_scenario.pv`
 
 The script automatically runs ProVerif on all generated scenarios. Detailed verification logs are displayed only in verbose mode. 
+With `--logs`, the full ProVerif console output for each scenario is written to a sibling log file with the name `<scenario>.pv.log` in the same `_scenarios/<filename>/` directory.
 
 For each input file, the preprocessor generates a `manifest.json` file in the corresponding scenario directory (e.g., `_scenarios/hashed_passwords/manifest.json`). This manifest provides a comprehensive machine-readable record of all generated scenarios and their verification results. (Documented in [`docs/manifests.md`](docs/manifests.md).)
 

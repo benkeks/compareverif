@@ -55,6 +55,7 @@ class ScenarioPreprocessor:
         timeout: int = DEFAULT_PROVERIF_TIMEOUT,
         verbose: bool = False,
         check_all_scenarios: bool = False,
+        dump_logs: bool = False,
     ):
         """Initialize the preprocessor.
         
@@ -63,10 +64,13 @@ class ScenarioPreprocessor:
             verbose: Enable detailed logging for generated files and ProVerif status
             check_all_scenarios: When True, eagerly generate and verify every
                 capability-variant combination instead of using monotone search
+            dump_logs: When True, write ProVerif console output to
+                <scenario>.pv.log files next to generated scenarios
         """
         self.timeout = timeout
         self.verbose = verbose
         self.check_all_scenarios = check_all_scenarios
+        self.dump_logs = dump_logs
         self._prepared_inputs: Dict[str, PreparedScenarioInput] = {}
         self._generated_files: Dict[str, Dict[Tuple[int, ...], ScenarioFile]] = {}
         self._result_cache: Dict[Tuple[str, Tuple[int, ...]], ScenarioResult] = {}
@@ -345,6 +349,12 @@ class ScenarioPreprocessor:
                 timeout=self.timeout,
                 cwd=file.path.parent,
             )
+
+            self._write_proverif_log(
+                file=file,
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
             
             if result.returncode == 0:
                 file_result.status = 'success'
@@ -375,20 +385,67 @@ class ScenarioPreprocessor:
                         'result': None
                     })
             
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             file_result.status = 'timeout'
             file_result.error_message = 'Exceeded timeout'
             print(f"⏱ Timeout: {file.path.name} (exceeded {self.timeout} seconds)")
+            self._write_proverif_log(
+                file=file,
+                stdout=exc.stdout,
+                stderr=exc.stderr,
+                status_note=f"Timed out after {self.timeout} seconds.",
+            )
         except FileNotFoundError:
             file_result.status = 'exception'
             file_result.error_message = 'ProVerif command not found'
             print("Error: proverif command not found. Please ensure ProVerif is installed and in PATH.")
+            self._write_proverif_log(
+                file=file,
+                stdout=None,
+                stderr=None,
+                status_note='ProVerif command not found. Please ensure ProVerif is installed and in PATH.',
+            )
         except Exception as e:
             file_result.status = 'exception'
             file_result.error_message = str(e)
             print(f"Error running proverif on {file.path.name}: {e}")
+            self._write_proverif_log(
+                file=file,
+                stdout=None,
+                stderr=None,
+                status_note=f"Unhandled exception while running ProVerif: {e}",
+            )
 
         return file_result
+
+    def _write_proverif_log(
+        self,
+        file: ScenarioFile,
+        stdout: Optional[str],
+        stderr: Optional[str],
+        status_note: Optional[str] = None,
+    ) -> None:
+        """Write a per-scenario ProVerif console log if enabled."""
+        if not self.dump_logs:
+            return
+
+        log_lines: List[str] = []
+        if stdout:
+            log_lines.append(stdout.rstrip("\n"))
+        if stderr:
+            if log_lines:
+                log_lines.append("")
+            log_lines.append(stderr.rstrip("\n"))
+        if status_note:
+            if log_lines:
+                log_lines.append("")
+            log_lines.append(status_note)
+
+        log_path = file.path.with_suffix(file.path.suffix + '.log')
+        content = "\n".join(log_lines)
+        if content:
+            content += "\n"
+        log_path.write_text(content)
 
     def _copy_declared_libraries(
         self,

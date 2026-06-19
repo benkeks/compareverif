@@ -38,6 +38,11 @@ def main() -> None:
         action="store_true",
         help="Generate and verify every capability-variant combination instead of using monotone search"
     )
+    parser.add_argument(
+        "--logs",
+        action="store_true",
+        help="Write ProVerif console output for each scenario to <scenario>.pv.log"
+    )
     args = parser.parse_args()
 
     input_files = args.input_files
@@ -46,6 +51,7 @@ def main() -> None:
     preprocessor = ScenarioPreprocessor(
         verbose=args.verbose,
         check_all_scenarios=args.check_all_scenarios,
+        dump_logs=args.logs,
     )
     
     # Preprocess each input file
