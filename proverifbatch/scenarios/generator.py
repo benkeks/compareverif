@@ -85,7 +85,7 @@ def build_scenario_content(
         capabilities: List of capabilities being combined
         content_chunks: Content chunks with None placeholders for capabilities
         use_primary_variants_only: When True, include snippets as booleans and
-            attach only the primary capability names without variant costs
+            use each capability's primary variant as representative metadata
         
     Returns:
         Tuple of (output_content, attack_variants_used, total_costs)
@@ -103,19 +103,19 @@ def build_scenario_content(
                 choice = combination[cap_idx]
                 if choice > 0:
                     if use_primary_variants_only:
+                        primary_variant = capabilities[cap_idx].variants[0]
                         variant = AttackVariant(
                             name=capabilities[cap_idx].primary_name,
-                            costs={},
+                            costs=dict(primary_variant.costs),
                         )
                     else:
                         variant = capabilities[cap_idx].variants[choice - 1]
                     attack_variants.append(variant)
                     output_content += capabilities[cap_idx].content
-                    
-                    if not use_primary_variants_only:
-                        # Accumulate costs when variant choices are part of the scenario.
-                        for cost_dim, cost_val in variant.costs.items():
-                            total_costs[cost_dim] = total_costs.get(cost_dim, 0) + cost_val
+
+                    # Accumulate costs for whichever variant metadata is represented.
+                    for cost_dim, cost_val in variant.costs.items():
+                        total_costs[cost_dim] = total_costs.get(cost_dim, 0) + cost_val
                 else:
                     output_content += f'(* No {capabilities[cap_idx].primary_name}*)'
                 cap_idx += 1

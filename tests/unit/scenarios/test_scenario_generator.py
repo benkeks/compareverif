@@ -179,8 +179,8 @@ class TestBuildScenarioContent:
         assert len(variants) == 2
         assert costs == {"time": 100, "hack": 50}
 
-    def test_primary_variant_only_mode_discards_variant_costs(self):
-        """Boolean snippet mode should keep names but not variant-dependent costs."""
+    def test_primary_variant_only_mode_uses_primary_variant_costs(self):
+        """Boolean snippet mode should preserve representative primary-variant costs."""
         cap = AttackerCapability(
             primary_name="Attack A",
             variants=[
@@ -200,7 +200,8 @@ class TestBuildScenarioContent:
 
         assert "attack code" in content
         assert [variant.name for variant in variants] == ["Attack A"]
-        assert costs == {}
+        assert variants[0].costs == {"time": 100}
+        assert costs == {"time": 100}
 
 
 class TestExtractQueries:
