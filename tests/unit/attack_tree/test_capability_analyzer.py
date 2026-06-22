@@ -124,6 +124,45 @@ class TestClausesStructurallyMatch:
 class TestAnalyzeFromManifest:
     """Test capability analysis from manifest.json files."""
 
+    @patch("proverifbatch.attack_tree.capability_analyzer.CapabilityAnalyzer._extract_clauses_from_scenario")
+    def test_from_manifest_collects_capability_costs(self, mock_extract):
+        """Manifest-based analyzer should expose capability costs for rendering."""
+        base_output = ProVerifOutput(clauses=[], derivations=[])
+        cap_output = ProVerifOutput(
+            clauses=[
+                Clause(head="table(rainbow(h))", original_text="table(rainbow(h))", clause_number=2)
+            ],
+            derivations=[],
+        )
+        mock_extract.side_effect = [base_output, cap_output]
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            manifest = {
+                "input_file": "test.pv",
+                "scenarios": [
+                    {
+                        "file": "base.pv",
+                        "path": "base.pv",
+                        "capabilities": [],
+                    },
+                    {
+                        "file": "rainbow.pv",
+                        "path": "rainbow.pv",
+                        "capabilities": [
+                            {"name": "Rainbow", "costs": {"time": 5}}
+                        ],
+                    },
+                ],
+            }
+            json.dump(manifest, f)
+            manifest_path = Path(f.name)
+
+        try:
+            analyzer = CapabilityAnalyzer.from_manifest(manifest_path)
+            assert analyzer.capability_costs == {"Rainbow": {"time": 5}}
+        finally:
+            manifest_path.unlink()
+
     def test_analyze_no_base_scenario(self):
         """Test analyzing manifest without base scenario."""
         analyzer = CapabilityAnalyzer()

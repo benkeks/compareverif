@@ -3,7 +3,7 @@
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from proverifbatch.proverif import ProVerifRunner, ProVerifOutputParser, ProVerifOutput
 
@@ -37,7 +37,15 @@ class CapabilityAnalyzer:
         if not scenarios:
             return None
 
-        analyzer = cls(cls._collect_capability_costs_from_scenarios(scenarios))
+        analyzer = cls(
+            cls._collect_capability_costs(
+                (
+                    (capability.name, capability.costs)
+                    for scenario in scenarios
+                    for capability in scenario.capabilities
+                )
+            )
+        )
         analysis = analyzer.analyze_from_scenarios(scenarios)
         if analysis is None:
             return None
@@ -50,20 +58,30 @@ class CapabilityAnalyzer:
         This keeps the CLI API stable while sharing the same analysis backend as
         the notebook and manifest-driven workflows.
         """
-        analyzer = cls()
+        with open(manifest_path, "r") as handle:
+            manifest = json.load(handle)
+
+        analyzer = cls(
+            cls._collect_capability_costs(
+                (
+                    (capability.get("name"), capability.get("costs", {}))
+                    for scenario in manifest.get("scenarios", [])
+                    for capability in scenario.get("capabilities", [])
+                )
+            )
+        )
         analyzer.analyze_from_manifest(manifest_path)
         return analyzer
 
     @staticmethod
-    def _collect_capability_costs_from_scenarios(
-        scenarios: Sequence["ScenarioFile"],
+    def _collect_capability_costs(
+        capability_entries: Iterable[Tuple[Optional[str], Dict[str, int]]],
     ) -> Dict[str, Dict[str, int]]:
-        """Collect one cost mapping per capability from generated scenarios."""
+        """Collect one cost mapping per capability from any (name, costs) sequence."""
         capability_costs: Dict[str, Dict[str, int]] = {}
-        for scenario in scenarios:
-            for capability in scenario.capabilities:
-                if capability.name not in capability_costs and capability.costs:
-                    capability_costs[capability.name] = capability.costs
+        for name, costs in capability_entries:
+            if name and name not in capability_costs and costs:
+                capability_costs[name] = costs
         return capability_costs
 
     def analyze_from_scenarios(
