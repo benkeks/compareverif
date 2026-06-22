@@ -119,10 +119,21 @@ python3 pareto_comparison.py \
   --costs time,hack
 ```
 
+Render and save the plot to PNG (useful for notebook/console workflows):
+```bash
+python3 pareto_comparison.py \
+  _scenarios/hashed_passwords \
+  _scenarios/singularized_passwords \
+  --query "no pw leakage" \
+  --costs time,hack \
+  --out-png trees/pareto_no_pw_leakage.png
+```
+
 **Options:**
 
 - `--costs X,Y` - Select the two cost dimensions to compare
 - `--query QUERY` - Select a query by tag/name or by 1-based index
+- `--out-png PATH` - Save rendered figure(s) as PNG files instead of opening an interactive window
 
 ## Usage of the Attack Tree Extractor
 
@@ -142,6 +153,9 @@ python3 attack_tree_extractor.py <scenario_file.pv> --graphviz-dot <output_dir>
 
 # Generate PDF visualizations (requires graphviz installed)
 python3 attack_tree_extractor.py <scenario_file.pv> --graphviz-pdf <output_dir>
+
+# Generate SVG visualizations (requires graphviz installed)
+python3 attack_tree_extractor.py <scenario_file.pv> --graphviz-svg <output_dir>
 
 # Generate both dot and PDF
 python3 attack_tree_extractor.py <scenario_file.pv> --graphviz-dot <dir> --graphviz-pdf <dir>
@@ -204,6 +218,7 @@ Details about the structure of the generated attack trees and the semantics of t
 
 - `--graphviz-dot DIR` - Output directory for graphviz dot files
 - `--graphviz-pdf DIR` - Output directory for PDF files (requires graphviz package)
+- `--graphviz-svg DIR` - Output directory for SVG files (requires graphviz package)
 - `--json-out DIR` - Output directory for JSON tree dumps
 - `--no-summary` - Skip printing the console summary
 - `--manifest FILE` - Use manifest.json for capability analysis (annotates clauses with capabilities)

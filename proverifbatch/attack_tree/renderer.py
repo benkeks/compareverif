@@ -318,6 +318,36 @@ class GraphvizRenderer:
             print(f"PDF rendered to: {pdf_path}")
         except FileNotFoundError:
             print(f"Graphviz 'dot' command not found. Dot file saved to: {dot_file}")
+
+    @staticmethod
+    def render_to_svg(tree: DerivationTree, output_path: Path) -> None:
+        """
+        Render a tree as SVG using graphviz.
+
+        Args:
+            tree: DerivationTree to render
+            output_path: Path to write the SVG file (without .svg extension)
+
+        Raises:
+            RuntimeError: If graphviz is not installed
+        """
+        dot_content = GraphvizRenderer.generate_dot(
+            tree,
+            label_wrapper=GraphvizRenderer.wrap_label_for_display,
+        )
+        dot_file = output_path.with_suffix(".dot")
+        dot_file.write_text(dot_content)
+
+        try:
+            svg_path = output_path.with_suffix(".svg")
+            subprocess.run(
+                ["dot", "-Tsvg", str(dot_file), "-o", str(svg_path)],
+                check=True,
+                capture_output=True,
+            )
+            print(f"SVG rendered to: {svg_path}")
+        except FileNotFoundError:
+            print(f"Graphviz 'dot' command not found. Dot file saved to: {dot_file}")
             print(
                 "To render as PDF, install graphviz and run: dot -Tpdf {dot_file} -o output.pdf"
             )

@@ -117,6 +117,11 @@ def main():
         help="Output directory for graphviz PDF files (requires graphviz installed)",
     )
     parser.add_argument(
+        "--graphviz-svg",
+        metavar="DIR",
+        help="Output directory for graphviz SVG files (requires graphviz installed)",
+    )
+    parser.add_argument(
         "--json-out",
         metavar="DIR",
         help="Output directory for plain JSON attack tree dumps",
@@ -159,6 +164,7 @@ def main():
         print("\nOptions:")
         print("  --graphviz-dot DIR      Output graphviz dot files to DIR")
         print("  --graphviz-pdf DIR      Output graphviz PDF files to DIR (requires graphviz)")
+        print("  --graphviz-svg DIR      Output graphviz SVG files to DIR (requires graphviz)")
         print("  --json-out DIR          Output plain JSON tree dumps to DIR")
         print("  --no-summary            Skip printing the summary")
         print("  --manifest FILE         Use manifest.json for capability analysis")
@@ -184,6 +190,7 @@ def main():
     # Create output directories if needed
     dot_dir = None
     pdf_dir = None
+    svg_dir = None
     json_dir = None
     if args.graphviz_dot:
         dot_dir = Path(args.graphviz_dot)
@@ -191,6 +198,9 @@ def main():
     if args.graphviz_pdf:
         pdf_dir = Path(args.graphviz_pdf)
         pdf_dir.mkdir(parents=True, exist_ok=True)
+    if args.graphviz_svg:
+        svg_dir = Path(args.graphviz_svg)
+        svg_dir.mkdir(parents=True, exist_ok=True)
     if args.json_out:
         json_dir = Path(args.json_out)
         json_dir.mkdir(parents=True, exist_ok=True)
@@ -316,6 +326,10 @@ def main():
                 if pdf_dir:
                     pdf_file = pdf_dir / f"{base_name}_derivation"
                     renderer.render_to_pdf(tree, pdf_file)
+
+                if svg_dir:
+                    svg_file = svg_dir / f"{base_name}_derivation"
+                    renderer.render_to_svg(tree, svg_file)
 
                 if json_dir:
                     json_file = json_dir / f"{base_name}_derivation.json"
