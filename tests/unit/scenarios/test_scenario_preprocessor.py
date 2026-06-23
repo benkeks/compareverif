@@ -18,7 +18,7 @@ class TestScenarioPreprocessor:
         """Test default timeout."""
         preprocessor = ScenarioPreprocessor()
         assert preprocessor.timeout == 300
-        assert preprocessor.check_all_scenarios is False
+        assert preprocessor.check_all_scenarios is True
         assert preprocessor.dump_logs is False
     
     def test_preprocess_with_no_capabilities(self, tmp_scenario_dir):
@@ -33,31 +33,46 @@ class TestScenarioPreprocessor:
         assert output_dir == Path(tmp_scenario_dir / "output")
     
     def test_preprocess_with_capabilities(self, tmp_scenario_dir, sample_scenario_content):
-        """Default preprocessing materializes the support scenarios needed downstream."""
+        """Default preprocessing generates all capability combinations (exhaustive mode)."""
         scenario_file = tmp_scenario_dir / "test.pv"
         scenario_file.write_text(sample_scenario_content)
         
         preprocessor = ScenarioPreprocessor()
         generated, output_dir = preprocessor.preprocess(str(scenario_file), str(tmp_scenario_dir / "output"))
         
-        assert sorted(s.path.stem for s in generated) == [
-            "base_scenario",
-            "intruder_at_database",
-            "rainbow_table_attack",
-        ]
+        # With check_all_scenarios=True by default, all combinations should be generated
+        assert len(generated) == 4  # base + 2 single + 1 combined
         assert output_dir == Path(tmp_scenario_dir / "output")
         for scenario_file_obj in generated:
             assert scenario_file_obj.path.exists()
 
     def test_preprocess_check_all_scenarios_generates_all_combinations(self, tmp_scenario_dir, sample_scenario_content):
-        """The exhaustive mode should preserve eager scenario generation."""
+        """The exhaustive mode (default) should preserve eager scenario generation."""
         scenario_file = tmp_scenario_dir / "test.pv"
         scenario_file.write_text(sample_scenario_content)
 
+        # Default behavior is check_all_scenarios=True
         preprocessor = ScenarioPreprocessor(check_all_scenarios=True)
         generated, output_dir = preprocessor.preprocess(str(scenario_file), str(tmp_scenario_dir / "output"))
 
         assert len(generated) == 4
+        assert output_dir == Path(tmp_scenario_dir / "output")
+        for scenario_file_obj in generated:
+            assert scenario_file_obj.path.exists()
+
+    def test_preprocess_lazy_mode_generates_support_scenarios(self, tmp_scenario_dir, sample_scenario_content):
+        """The lazy mode should only generate support scenarios needed downstream."""
+        scenario_file = tmp_scenario_dir / "test.pv"
+        scenario_file.write_text(sample_scenario_content)
+
+        preprocessor = ScenarioPreprocessor(check_all_scenarios=False)
+        generated, output_dir = preprocessor.preprocess(str(scenario_file), str(tmp_scenario_dir / "output"))
+
+        assert sorted(s.path.stem for s in generated) == [
+            "base_scenario",
+            "intruder_at_database",
+            "rainbow_table_attack",
+        ]
         assert output_dir == Path(tmp_scenario_dir / "output")
         for scenario_file_obj in generated:
             assert scenario_file_obj.path.exists()
@@ -117,7 +132,7 @@ attacker(b).
 """
         )
 
-        preprocessor = ScenarioPreprocessor()
+        preprocessor = ScenarioPreprocessor(check_all_scenarios=False)
         preprocessor.preprocess(str(scenario_file), str(tmp_scenario_dir / "output"))
 
         def fake_run(command, capture_output, text, timeout, cwd):
@@ -161,7 +176,7 @@ query attacker(secret).
 """
         )
 
-        preprocessor = ScenarioPreprocessor()
+        preprocessor = ScenarioPreprocessor(check_all_scenarios=False)
         generated, _ = preprocessor.preprocess(str(scenario_file), str(tmp_scenario_dir / "output"))
 
         assert sorted(scenario.path.stem for scenario in generated) == [
@@ -190,7 +205,7 @@ query attacker(secret).
 """
         )
 
-        preprocessor = ScenarioPreprocessor()
+        preprocessor = ScenarioPreprocessor(check_all_scenarios=False)
         preprocessor.preprocess(str(scenario_file), str(tmp_scenario_dir / "output"))
 
         before = preprocessor.get_execution_stats()

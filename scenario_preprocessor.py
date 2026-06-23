@@ -34,9 +34,9 @@ def main() -> None:
         help="Show generated-file list and detailed ProVerif status output"
     )
     parser.add_argument(
-        "--check-all-scenarios",
+        "--check-lazily",
         action="store_true",
-        help="Generate and verify every capability-variant combination instead of using monotone search"
+        help="Use lazy generation and monotone search instead of checking all scenarios"
     )
     parser.add_argument(
         "--logs",
@@ -48,9 +48,11 @@ def main() -> None:
     input_files = args.input_files
     all_generated_scenarios = []
     file_to_output_dir = {}
+    # Default is check_all_scenarios=True (exhaustive mode), --check-lazily switches to lazy mode
+    check_all_scenarios = not args.check_lazily
     preprocessor = ScenarioPreprocessor(
         verbose=args.verbose,
-        check_all_scenarios=args.check_all_scenarios,
+        check_all_scenarios=check_all_scenarios,
         dump_logs=args.logs,
     )
     

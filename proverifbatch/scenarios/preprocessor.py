@@ -54,7 +54,7 @@ class ScenarioPreprocessor:
         self,
         timeout: int = DEFAULT_PROVERIF_TIMEOUT,
         verbose: bool = False,
-        check_all_scenarios: bool = False,
+        check_all_scenarios: bool = True,
         dump_logs: bool = False,
     ):
         """Initialize the preprocessor.
@@ -62,8 +62,9 @@ class ScenarioPreprocessor:
         Args:
             timeout: Timeout for ProVerif execution in seconds
             verbose: Enable detailed logging for generated files and ProVerif status
-            check_all_scenarios: When True, eagerly generate and verify every
-                capability-variant combination instead of using monotone search
+            check_all_scenarios: When True (default), eagerly generate and verify every
+                capability-variant combination. When False, use lazy generation
+                with monotone search to find minimal breaking combinations.
             dump_logs: When True, write ProVerif console output to
                 <scenario>.pv.log files next to generated scenarios
         """
