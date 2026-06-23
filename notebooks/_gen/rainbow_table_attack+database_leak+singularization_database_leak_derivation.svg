@@ -140,7 +140,7 @@
 <title>node_9</title>
 <polygon fill="#f4cccc" stroke="#cc0000" points="1085.79,-120.11 1085.79,-147.06 1011.03,-166.11 905.3,-166.11 830.54,-147.06 830.54,-120.11 905.3,-101.06 1011.03,-101.06 1085.79,-120.11"/>
 <text xml:space="preserve" text-anchor="start" x="882.79" y="-137.53" font-family="Times,serif" font-size="14.00" fill="#cc0000">Rainbow table attack</text>
-<text xml:space="preserve" text-anchor="start" x="935.29" y="-120.28" font-family="Times,serif" font-size="14.00" fill="#cc0000">2 time</text>
+<text xml:space="preserve" text-anchor="start" x="935.29" y="-120.28" font-family="Times,serif" font-size="14.00" fill="#cc0000">4 time</text>
 </g>
 <!-- node_9&#45;&gt;node_3 -->
 <g id="edge9" class="edge">
