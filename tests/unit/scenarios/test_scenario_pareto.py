@@ -5,7 +5,7 @@ from pathlib import Path
 
 import matplotlib
 
-from proverifbatch.scenarios import ParetoFrontRenderer
+from compareverif.scenarios import ParetoFrontRenderer
 
 matplotlib.use("Agg")
 

@@ -1,12 +1,12 @@
 """Tests for scenario parser module."""
 
 import pytest
-from proverifbatch.scenarios.parser import (
+from compareverif.scenarios.parser import (
     parse_costs,
     parse_magical_comment,
     extract_attacker_capabilities,
 )
-from proverifbatch.scenarios.models import AttackVariant
+from compareverif.scenarios.models import AttackVariant
 
 
 class TestParseCosts:

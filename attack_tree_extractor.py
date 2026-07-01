@@ -13,8 +13,8 @@ import re
 import sys
 from pathlib import Path
 
-from proverifbatch.common import QuerySelectionOption, normalize_query_text, resolve_query_selector
-from proverifbatch.attack_tree import (
+from compareverif.common import QuerySelectionOption, normalize_query_text, resolve_query_selector
+from compareverif.attack_tree import (
     AttackTreeExtractor,
     CapabilityAnalyzer,
     GraphvizRenderer,

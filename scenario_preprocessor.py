@@ -6,11 +6,11 @@ import sys
 import json
 from pathlib import Path
 
-from proverifbatch.scenarios import (
+from compareverif.scenarios import (
     ScenarioPreprocessor,
     build_manifest_scenario_entry,
 )
-from proverifbatch.common.formatting import print_headline
+from compareverif.common.formatting import print_headline
 
 DEFAULT_TABLE_WIDTH = 60
 

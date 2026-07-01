@@ -1,7 +1,7 @@
 """Tests for scenario generator module."""
 
 import pytest
-from proverifbatch.scenarios.generator import (
+from compareverif.scenarios.generator import (
     generate_capability_presence_combinations,
     generate_base_capability_presence_combination,
     generate_full_capability_presence_combination,
@@ -11,7 +11,7 @@ from proverifbatch.scenarios.generator import (
     extract_queries,
     create_scenario_filename,
 )
-from proverifbatch.scenarios.models import AttackerCapability, AttackVariant
+from compareverif.scenarios.models import AttackerCapability, AttackVariant
 
 
 class TestGenerateScenarioCombinations:

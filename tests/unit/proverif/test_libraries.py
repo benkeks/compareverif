@@ -1,6 +1,6 @@
 """Tests for ProVerif -lib directive parsing helpers."""
 
-from proverifbatch.proverif.libraries import extract_declared_libraries
+from compareverif.proverif.libraries import extract_declared_libraries
 
 
 def test_extract_declared_libraries_from_top_comments_only():

@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch
-from proverifbatch.scenarios.preprocessor import ScenarioPreprocessor
+from compareverif.scenarios.preprocessor import ScenarioPreprocessor
 
 
 class TestScenarioPreprocessor:
@@ -141,7 +141,7 @@ attacker(b).
             is_false = stem == "attack_a+attack_b"
             return Mock(returncode=0, stdout=f"RESULT query attacker(secret) is {'false' if is_false else 'true'}.\n")
 
-        with patch("proverifbatch.scenarios.preprocessor.subprocess.run", side_effect=fake_run) as mock_run:
+        with patch("compareverif.scenarios.preprocessor.subprocess.run", side_effect=fake_run) as mock_run:
             results = preprocessor.run_proverif([])
 
         assert len(results) == 4
@@ -218,7 +218,7 @@ query attacker(secret).
             is_false = stem == "attack_a+attack_b"
             return Mock(returncode=0, stdout=f"RESULT query attacker(secret) is {'false' if is_false else 'true'}.\n")
 
-        with patch("proverifbatch.scenarios.preprocessor.subprocess.run", side_effect=fake_run):
+        with patch("compareverif.scenarios.preprocessor.subprocess.run", side_effect=fake_run):
             preprocessor.run_proverif([])
 
         after = preprocessor.get_execution_stats()
@@ -257,7 +257,7 @@ query attacker(secret).
             assert Path(cwd) == output_dir
             return Mock(returncode=0, stdout="RESULT query attacker(secret) is true.\n")
 
-        with patch("proverifbatch.scenarios.preprocessor.subprocess.run", side_effect=fake_run) as mock_run:
+        with patch("compareverif.scenarios.preprocessor.subprocess.run", side_effect=fake_run) as mock_run:
             preprocessor.run_proverif(generated)
 
         assert mock_run.call_count == len(generated)
@@ -283,7 +283,7 @@ query attacker(secret).
         def fake_run(command, capture_output, text, timeout, cwd):
             return Mock(returncode=0, stdout="RESULT query attacker(secret) is true.\n", stderr="")
 
-        with patch("proverifbatch.scenarios.preprocessor.subprocess.run", side_effect=fake_run):
+        with patch("compareverif.scenarios.preprocessor.subprocess.run", side_effect=fake_run):
             preprocessor.run_proverif(generated)
 
         for generated_scenario in generated:
@@ -293,7 +293,7 @@ query attacker(secret).
     
     def test_print_analysis_no_false_results(self, capsys):
         """Test printing analysis when no queries return false."""
-        from proverifbatch.scenarios.models import ScenarioFile, ScenarioResult
+        from compareverif.scenarios.models import ScenarioFile, ScenarioResult
         
         preprocessor = ScenarioPreprocessor()
         

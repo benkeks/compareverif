@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from proverifbatch.scenarios.analyzer import analyze_minimal_false_combinations
-from proverifbatch.scenarios.models import ScenarioFile, ScenarioResult, AttackerCapability, AttackVariant
+from compareverif.scenarios.analyzer import analyze_minimal_false_combinations
+from compareverif.scenarios.models import ScenarioFile, ScenarioResult, AttackerCapability, AttackVariant
 
 
 def _result(path: str, capability_names: list[str], costs: dict[str, float], outcome: bool) -> ScenarioResult:

@@ -6,7 +6,7 @@ import re
 import sys
 from pathlib import Path
 
-from proverifbatch.scenarios import ParetoFrontRenderer
+from compareverif.scenarios import ParetoFrontRenderer
 
 
 def main() -> None:

@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from proverifbatch.proverif import Derivation
+from compareverif.proverif import Derivation
 from .models import DerivationTree
 
 

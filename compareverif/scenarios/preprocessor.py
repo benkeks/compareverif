@@ -19,8 +19,8 @@ from .generator import (
 )
 from .analyzer import analyze_minimal_false_combinations
 from .serialization import format_costs
-from proverifbatch.common.formatting import print_headline, print_subheading
-from proverifbatch.proverif.libraries import append_library_arguments, extract_declared_libraries
+from compareverif.common.formatting import print_headline, print_subheading
+from compareverif.proverif.libraries import append_library_arguments, extract_declared_libraries
 
 DEFAULT_PROVERIF_TIMEOUT = 300  # 5 minutes
 DEFAULT_TABLE_WIDTH = 60

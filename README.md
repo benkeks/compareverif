@@ -1,6 +1,6 @@
-# ProVerif Batch Analysis for Protocol Comparison
+# **CompareVerif**: ProVerif Batch Analysis for Protocol Comparison
 
-This repository contains tools for batch processing of ProVerif models, in particular, to survey combinations of attacker capabilities, and to express found attacks in trees.
+This repository contains **CompareVerif**, a tool for batch processing of ProVerif models, in particular, to survey combinations of attacker capabilities, and to express found attacks in trees.
 This can be used to compare the security of different protocol designs through their resilience in the face of various attack vectors.
 
 - **Contact:** benjamin.bisping@telecom-sudparis.eu
@@ -13,7 +13,7 @@ There are two main scripts in this project:
 - [`pareto_comparison.py`](#usage-of-the-pareto-comparison) renders Pareto fronts from manifests so you can compare breaking costs across protocol variants.
 - [`attack_tree_extractor.py`](#usage-of-the-attack-tree-extractor) extracts and visualizes attack trees from ProVerif output, connecting it derivations back to underlying capabilities.
 
-The shared code is located in `proverifbatch/`.
+The shared code is located in `compareverif/`.
 
 Under `examples`, this project contains ProVerif models for analyzing the security of password authentication systems:
 

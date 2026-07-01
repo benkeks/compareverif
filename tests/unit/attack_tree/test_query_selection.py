@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from attack_tree_extractor import _query_options_for_output
-from proverifbatch.proverif import Derivation, ProVerifOutput
+from compareverif.proverif import Derivation, ProVerifOutput
 
 
 def test_query_options_use_manifest_tags_and_support_indexing():

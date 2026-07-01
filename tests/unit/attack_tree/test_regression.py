@@ -3,8 +3,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from proverifbatch.attack_tree import DerivationTree, CapabilityAnalyzer
-from proverifbatch.proverif import ProVerifOutput, Clause
+from compareverif.attack_tree import DerivationTree, CapabilityAnalyzer
+from compareverif.proverif import ProVerifOutput, Clause
 
 class TestFuzzyClauseMatchingRegression:
     """Regression tests for fuzzy structural clause matching (false attribution).

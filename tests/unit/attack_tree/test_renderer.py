@@ -1,8 +1,8 @@
 """Unit tests for attack tree GraphvizRenderer."""
 
 import pytest
-from proverifbatch.proverif import Derivation
-from proverifbatch.attack_tree import GraphvizRenderer, DerivationTree
+from compareverif.proverif import Derivation
+from compareverif.attack_tree import GraphvizRenderer, DerivationTree
 
 
 class TestGraphvizRenderer:

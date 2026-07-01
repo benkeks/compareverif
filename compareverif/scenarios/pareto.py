@@ -11,7 +11,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 import matplotlib.pyplot as plt
 
 from .analyzer import analyze_minimal_false_combinations
-from proverifbatch.common import QuerySelectionOption, resolve_query_selector
+from compareverif.common import QuerySelectionOption, resolve_query_selector
 from .generator import create_scenario_filename
 from .models import ScenarioFile, ScenarioResult
 from .parser import extract_attacker_capabilities

@@ -5,10 +5,10 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from proverifbatch.proverif import ProVerifRunner, ProVerifOutputParser, ProVerifOutput
+from compareverif.proverif import ProVerifRunner, ProVerifOutputParser, ProVerifOutput
 
 if TYPE_CHECKING:
-    from proverifbatch.scenarios.models import ScenarioFile
+    from compareverif.scenarios.models import ScenarioFile
 
 
 class CapabilityAnalyzer:

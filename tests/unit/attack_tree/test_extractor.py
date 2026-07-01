@@ -3,8 +3,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from proverifbatch.attack_tree import AttackTreeExtractor, CapabilityAnalyzer
-from proverifbatch.proverif import Derivation, ProVerifOutput
+from compareverif.attack_tree import AttackTreeExtractor, CapabilityAnalyzer
+from compareverif.proverif import Derivation, ProVerifOutput
 
 
 class TestAttackTreeExtractor:
@@ -46,7 +46,7 @@ class TestAttackTreeExtractor:
         mock_analyzer.annotate_tree_with_capabilities.side_effect = lambda tree, _: tree
 
         with patch.object(extractor, "extract", return_value=output), patch(
-            "proverifbatch.attack_tree.extractor.CapabilityAnalyzer.from_scenarios",
+            "compareverif.attack_tree.extractor.CapabilityAnalyzer.from_scenarios",
             return_value=mock_analyzer,
         ) as mock_from_scenarios:
             result = extractor.extract_tree(

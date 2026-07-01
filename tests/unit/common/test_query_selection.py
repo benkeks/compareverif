@@ -1,6 +1,6 @@
 """Tests for shared query-selection helpers."""
 
-from proverifbatch.common import QuerySelectionOption, normalize_query_text, resolve_query_selector
+from compareverif.common import QuerySelectionOption, normalize_query_text, resolve_query_selector
 
 
 def test_resolve_query_selector_supports_name_and_index():

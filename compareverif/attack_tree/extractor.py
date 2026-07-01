@@ -4,16 +4,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Sequence
 
-from proverifbatch.common import normalize_query_text
-from proverifbatch.proverif import Derivation, ProVerifRunner, ProVerifOutputParser, ProVerifOutput
-from proverifbatch.proverif.runner import DEFAULT_TIMEOUT
+from compareverif.common import normalize_query_text
+from compareverif.proverif import Derivation, ProVerifRunner, ProVerifOutputParser, ProVerifOutput
+from compareverif.proverif.runner import DEFAULT_TIMEOUT
 
 from .capability_analyzer import CapabilityAnalyzer
 from .models import DerivationTree
 from .renderer import GraphvizRenderer
 
 if TYPE_CHECKING:
-    from proverifbatch.scenarios.models import ScenarioFile
+    from compareverif.scenarios.models import ScenarioFile
 
 def _build_query_tag_filter(
     query_tag: str,

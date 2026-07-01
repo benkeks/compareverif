@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from proverifbatch.scenarios.models import AttackVariant, ScenarioFile, ScenarioResult
-from proverifbatch.scenarios.serialization import build_manifest_scenario_entry, format_costs
+from compareverif.scenarios.models import AttackVariant, ScenarioFile, ScenarioResult
+from compareverif.scenarios.serialization import build_manifest_scenario_entry, format_costs
 
 
 def test_format_costs_sorts_dimensions_and_handles_empty():
