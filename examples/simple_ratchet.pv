@@ -6,7 +6,7 @@
  * discards the old chain key. This gives forward secrecy: leaking a
  * chain key at step i does not reveal messages sent at steps < i.
  *
- * Alice sends 3 messages, Bob sends 2 messages, each over their own
+ * Alice sends 4 messages, Bob sends 2 messages, each over their own
  * independent sending chain.
  *)
 
@@ -33,10 +33,11 @@ free bob_chain0: bitstring [ private ].
 free ma1: bitstring [ private ].
 free ma2: bitstring [ private ].
 free ma3: bitstring [ private ].
+free ma4: bitstring [ private ].
 free mb1: bitstring [ private ].
 free mb2: bitstring [ private ].
 
-(* Alice's sending chain, 3 messages *)
+(* Alice's sending chain, 4 messages *)
 let alice(ck0: bitstring) =
     out(c, senc(ma1, MK(ck0)));
     let ck1 = CK(ck0) in
@@ -44,10 +45,12 @@ let alice(ck0: bitstring) =
     out(c, senc(ma2, MK(ck1)));
     let ck2 = CK(ck1) in
 
-    out(c, senc(ma3, MK(ck2)))
+    out(c, senc(ma3, MK(ck2)));
     (*** Alice chain key leak after message 2 [1 leak]
-    | out(c, ck2)
+    out(c, ck2);
     ***)
+    let ck3 = CK(ck2) in
+    out(c, senc(ma4, MK(ck3)))
     .
 
 
@@ -64,6 +67,8 @@ query attacker(ma1).
 query attacker(ma2).
 (* secrecy of ma3*)
 query attacker(ma3).
+(* secrecy of ma4*)
+query attacker(ma4).
 (* secrecy of mb1*)
 query attacker(mb1).
 (* secrecy of mb2*)
