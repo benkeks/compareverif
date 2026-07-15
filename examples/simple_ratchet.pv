@@ -1,0 +1,86 @@
+(*
+ * Simple symmetric-key ratchet.
+ *
+ * Each party derives, at every step, a fresh message key and a fresh
+ * chain key from its current chain key using one-way KDFs, then
+ * discards the old chain key. This gives forward secrecy: leaking a
+ * chain key at step i does not reveal messages sent at steps < i.
+ *
+ * Alice sends 3 messages, Bob sends 2 messages, each over their own
+ * independent sending chain.
+ *)
+
+
+
+(* one-way key derivation functions (no inverse given -> models a hash/KDF) *)
+fun MK(bitstring): bitstring. (* chain key -> message key *)
+fun CK(bitstring): bitstring. (* chain key -> next chain key *)
+
+(* symmetric encryption *)
+fun senc(bitstring, bitstring): bitstring.
+reduc forall m: bitstring, k: bitstring;
+    sdec(senc(m, k), k) = m.
+(*** KDF break [4 time]
+reduc forall x: bitstring; invCK(CK(x)) = x.
+***)
+free c: channel.
+
+(* initial chain keys, established out-of-band (e.g. from a prior key exchange) *)
+free alice_chain0: bitstring [ private ].
+free bob_chain0: bitstring [ private ].
+
+(* messages, declared free so they can appear in queries *)
+free ma1: bitstring [ private ].
+free ma2: bitstring [ private ].
+free ma3: bitstring [ private ].
+free mb1: bitstring [ private ].
+free mb2: bitstring [ private ].
+
+(* Alice's sending chain, 3 messages *)
+let alice(ck0: bitstring) =
+    out(c, senc(ma1, MK(ck0)));
+    let ck1 = CK(ck0) in
+
+    out(c, senc(ma2, MK(ck1)));
+    let ck2 = CK(ck1) in
+
+    out(c, senc(ma3, MK(ck2)))
+    (*** Alice chain key leak after message 2 [1 leak]
+    | out(c, ck2)
+    ***)
+    .
+
+
+(* Bob's sending chain, 2 messages *)
+let bob(ck0: bitstring) =
+    out(c, senc(mb1, MK(ck0)));
+    let ck1 = CK(ck0) in
+
+    out(c, senc(mb2, MK(ck1))).
+
+(* secrecy of ma1*)
+query attacker(ma1).
+(* secrecy of ma2*)
+query attacker(ma2).
+(* secrecy of ma3*)
+query attacker(ma3).
+(* secrecy of mb1*)
+query attacker(mb1).
+(* secrecy of mb2*)
+query attacker(mb2).
+
+process
+    ((*** Alice root chain key leak [1 hack]
+    out(c, alice_chain0)|
+    ***)
+    (*** Bob root chain key leak [1 hack]
+    out(c, bob_chain0)|
+    ***)
+     alice(alice_chain0) | bob(bob_chain0) 
+    (*** Leaked first message of Alice [1 shoulder surfing])
+    |out(c,ma1) 
+    ***)
+    (*** Leaked first message of Bob [1 shoulder surfing])
+    |out(c,mb1) 
+    ***)
+    )
