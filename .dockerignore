@@ -1,0 +1,14 @@
+_scenarios/
+out/
+*.pyc
+*.pdf
+*.dot
+*.json
+.coverage
+__pycache__/
+.ipynb_checkpoints/
+.github
+.git
+
+Dockerfile
+artifact/
