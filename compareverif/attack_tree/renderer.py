@@ -3,6 +3,7 @@
 import json
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -360,6 +361,49 @@ class GraphvizRenderer:
         json_content = tree.to_json()
         output_path.write_text(json.dumps(json_content, indent=2))
         print(f"JSON tree written to: {output_path}")
+
+    @staticmethod
+    def render_to_window(tree: DerivationTree, title: Optional[str] = None) -> None:
+        """Render a tree in a Matplotlib window using a temporary PNG."""
+        import matplotlib.image as mpimg
+        import matplotlib.pyplot as plt
+
+        dot_content = GraphvizRenderer.generate_dot(
+            tree,
+            label_wrapper=GraphvizRenderer.wrap_label_for_display,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="compareverif_tree_") as temp_dir:
+            dot_file = Path(temp_dir) / "tree.dot"
+            png_file = Path(temp_dir) / "tree.png"
+            dot_file.write_text(dot_content)
+
+            try:
+                subprocess.run(
+                    ["dot", "-Tpng", str(dot_file), "-o", str(png_file)],
+                    check=True,
+                    capture_output=True,
+                )
+            except FileNotFoundError:
+                print("Graphviz 'dot' command not found. Cannot open interactive window.")
+                return
+            except subprocess.CalledProcessError as e:
+                print(f"Error rendering PNG: {e.stderr.decode()}")
+                return
+
+            image = mpimg.imread(png_file)
+            figure, ax = plt.subplots()
+            ax.imshow(image)
+            ax.axis("off")
+            if title:
+                figure.suptitle(title)
+
+    @staticmethod
+    def show_windows() -> None:
+        """Show all queued Matplotlib windows."""
+        import matplotlib.pyplot as plt
+
+        plt.show()
 
     @staticmethod
     def wrap_label_for_display(label: str) -> List[str]:

@@ -103,7 +103,10 @@ def _query_options_for_output(output, manifest_data, scenario_file: Path):
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Extract clauses and derivations from ProVerif output. Optionally render derivations as graphviz trees.",
+        description=(
+            "Extract clauses and derivations from ProVerif output. "
+            "When no output target is set, opens interactive attack-tree window(s)."
+        ),
     )
     parser.add_argument("files", nargs="*", help="ProVerif scenario files (.pv)")
     parser.add_argument(
@@ -172,6 +175,7 @@ def main():
         print("  --query QUERY           Select query by index or name when multiple queries exist")
         print("  --show-clause-ids       Include ProVerif clause IDs in node labels")
         print("  --highlight-attack      Highlight paths above attack capabilities")
+        print("\nIf no output target is provided, attack trees are shown in interactive windows.")
         print("\nExamples:")
         print("  # Basic extraction")
         print("  python3 attack_tree_extractor.py scenario.pv --graphviz-pdf output/")
@@ -204,6 +208,9 @@ def main():
     if args.json_out:
         json_dir = Path(args.json_out)
         json_dir.mkdir(parents=True, exist_ok=True)
+
+    show_window = not any([dot_dir, pdf_dir, svg_dir, json_dir])
+    windows_created = False
 
     extractor = AttackTreeExtractor()
     renderer = GraphvizRenderer()
@@ -334,6 +341,13 @@ def main():
                 if json_dir:
                     json_file = json_dir / f"{base_name}_derivation.json"
                     renderer.render_to_json(tree, json_file)
+
+                if show_window:
+                    renderer.render_to_window(tree, title=f"Attack Tree: {base_name}")
+                    windows_created = True
+
+    if show_window and windows_created:
+        renderer.show_windows()
 
 
 if __name__ == "__main__":
