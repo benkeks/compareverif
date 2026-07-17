@@ -21,7 +21,7 @@ docker run compareverif python3 scenario_preprocessor.py examples/hashed_passwor
 echo "---end of output---"
 echo ""
 
-echo "Section 4.1, end: Production of Pareto Fronts"
+echo "Section 4.1, end: Production of Pareto Fronts (resembling Fig. 3)"
 read  -n 1 -p "Ready? (Will open windows with the visualizations for each query.) [Hit any key!]" input_selection
 
 docker run compareverif python3 scenario_preprocessor.py examples/hashed_passwords_paper.pv >> /dev/null \
