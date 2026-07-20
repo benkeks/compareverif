@@ -270,3 +270,13 @@ python3 -m coverage run -m pytest tests/
 # View coverage report
 python3 -m coverage report -m
 ```
+
+## Artifact
+
+The Dockerfile describes how to bundle dependencies and the CompareVerif code into a Docker image. To build and save the Docker image for distribution, run the following commands:
+
+```bash
+docker build . -t compareverif
+```
+
+[`artifact/README.md`](artifact/README.md) contains instructions for using the Docker image and reproducing paper results.docker save compareverif | gzip > artifact/compareverif-docker.tar.gz
