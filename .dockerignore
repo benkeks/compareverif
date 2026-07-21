@@ -11,4 +11,4 @@ __pycache__/
 .git
 
 Dockerfile
-artifact/
+artefact/

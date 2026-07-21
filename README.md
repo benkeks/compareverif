@@ -88,7 +88,7 @@ Generated scenarios are placed in `_scenarios/<filename>/` subdirectories. For e
 - `_scenarios/hashed_passwords/intruder_at_database.pv`
 - `_scenarios/singularized_passwords/base_scenario.pv`
 
-The script automatically runs ProVerif on all generated scenarios. Detailed verification logs are displayed only in verbose mode. 
+The script automatically runs ProVerif on all generated scenarios. Detailed verification logs are displayed only in verbose mode.
 With `--logs`, the full ProVerif console output for each scenario is written to a sibling log file with the name `<scenario>.pv.log` in the same `_scenarios/<filename>/` directory.
 
 For each input file, the preprocessor generates a `manifest.json` file in the corresponding scenario directory (e.g., `_scenarios/hashed_passwords/manifest.json`). This manifest provides a comprehensive machine-readable record of all generated scenarios and their verification results. (Documented in [`docs/manifests.md`](docs/manifests.md).)
@@ -271,12 +271,20 @@ python3 -m coverage run -m pytest tests/
 python3 -m coverage report -m
 ```
 
-## Artifact
+## Artefact
 
-The Dockerfile describes how to bundle dependencies and the CompareVerif code into a Docker image. To build and save the Docker image for distribution, run the following commands:
+The Dockerfile describes how to bundle dependencies and the CompareVerif code into a Docker image.
+You can either download it from [here](https://zenodo.org/records/21480719) or you can build it yourself. To do so simply run
 
 ```bash
 docker build . -t compareverif
 ```
+in the main folder containing the dockerfile.
 
-[`artifact/README.md`](artifact/README.md) contains instructions for using the Docker image and reproducing paper results.docker save compareverif | gzip > artifact/compareverif-docker.tar.gz
+If you have downloaded the tar, you need to load it:
+
+```bash
+docker load < compareverif-docker.tar.gz
+```
+Once this is done, please follow the steps described in
+[`artefact/README.md`](artefact/README.md) on how to work with the image.

@@ -1,38 +1,41 @@
-# Using the Artifact of CompareVerif
+# Using the Artefact of CompareVerif
 
 ## Starting up
 
 The only prerequisites for this walk-through are Docker and Bash.
 (Tested on Debian GNU/Linux 14 (forky), Docker version 28.5.2.)
 
-Load the image and start:
+After having build or loaded the image, please verify it actual presence
+using
 
-```
-docker load < compareverif-docker.tar.gz
+```bash
+docker image ls
 ```
 
-## Using the artifact
+which lists you all available images and compareverif should be among them.
+
+## Using the artefact
 
 You can now run CompareVerif scripts with the prefix `docker run compareverif python3`. For example, to look for minimal attacks on the example file `examples/hashed_passwords_paper.pv`, enter:
 
-```
-docker run compareverif python3 scenario_preprocessor.py examples/hashed_passwords_paper.pv
+```bash
+docker run --rm compareverif python3 scenario_preprocessor.py examples/hashed_passwords_paper.pv
 ```
 
 ## Running unit tests
 
 The code base's unit tests can be started by:
 
-```
-docker run compareverif python3 -m pytest
+```bash
+docker run --rm compareverif python3 -m pytest
 ```
 
 ## Reproducing results
 
-All the figures of the paper can be reproduced by running the script `reproduce-results.sh` in the root of the artifact.
+All the figures of the paper can be reproduced by running the script `reproduce-results.sh` in the root of the artefact.
 
-```
-bash ./reproduce-results.sh
+```bash
+./reproduce-results.sh
 ```
 
 As mentioned in the paper, the scripts should run virtually instantaneous for this problem size on common machines. (At least, they do so on our laptops.) The script will wait for user input in order to facilitate inspection of output.
@@ -71,11 +74,11 @@ python3 scenario_preprocessor.py examples/singularized_passwords_paper.pv exampl
 
 ## Cleaning up
 
-The reproduction script creates a container named `compareverif` that is used to run the artifact. You can stop and remove it with:
+The reproduction script creates a container named `compareverifRecreate` that is used to run the artefact. You can stop and remove it with:
 
 ```
-docker stop compareverif
-docker rm compareverif
+docker stop compareverifRecreate
+docker rm compareverifv
 ```
 
 To remove the image from your system, enter:

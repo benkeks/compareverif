@@ -7,5 +7,5 @@ out/
 .coverage
 __pycache__/
 .ipynb_checkpoints/
-artifact/compareverif-docker.tar.gz
-artifact/out-*
+artefact/compareverif-docker.tar.gz
+artefact/out-*
