@@ -2,6 +2,7 @@
 
 docker create --name compareverif -t compareverif bash
 docker start compareverif
+rm -rf out-hashed out-comparison out-singularization
 
 echo "Section 2: Running example"
 echo "Should end with two \`is true\` messages for the two queries of password and hashed password security."
@@ -47,7 +48,6 @@ echo ""
 
 echo "Section 5.3, Fig. 5: Bechmarking Singularization Using CompareVerif"
 read  -n 1 -p "Ready? (Will write results to out-comparison) [Hit any key!]" input_selection
-echo "[Output in window]"
 
 docker exec compareverif python3 scenario_preprocessor.py examples/hashed_passwords_paper.pv examples/singularized_passwords_paper.pv >> /dev/null
 docker exec compareverif python3 pareto_comparison.py --out-png out-comparison/comparison --query "no pw leakage" _scenarios/hashed_passwords_paper/ _scenarios/singularized_passwords_paper/

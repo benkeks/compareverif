@@ -71,6 +71,13 @@ python3 scenario_preprocessor.py examples/singularized_passwords_paper.pv exampl
 
 ## Cleaning up
 
+The reproduction script creates a container named `compareverif` that is used to run the artifact. You can stop and remove it with:
+
+```
+docker stop compareverif
+docker rm compareverif
+```
+
 To remove the image from your system, enter:
 
 ```
