@@ -6,6 +6,11 @@ MYDOCKER() {
 
 docker create --name compareverifRecreate -t compareverif bash
 docker start compareverifRecreate
+
+echo "Installing graphviz..."
+docker exec compareverifRecreate apt-get update
+docker exec compareverifRecreate apt-get install -y graphviz
+
 rm -rf out-hashed out-comparison out-singularization
 
 echo "Section 2: Running example"
