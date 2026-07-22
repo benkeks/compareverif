@@ -43,7 +43,7 @@ As mentioned in the paper, the scripts should run virtually instantaneous for th
 
 ## Installing graphviz
 
-Graphviz is not natively installed in the docke. Execute the script below in interactive mode to have it installed. This is only necessary to build pdf files of attack trees.
+Graphviz is not natively installed in the docker. Execute the script below in interactive mode to have it installed. This is only necessary to build pdf files of attack trees.
 
 ```bash
 apt install graphviz
