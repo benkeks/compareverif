@@ -5,6 +5,12 @@
 The only prerequisites for this walk-through are Docker and Bash.
 (Tested on Debian GNU/Linux 14 (forky), Docker version 28.5.2.)
 
+Load the image using the command below.
+
+```bash
+docker load < compareverif-docker.tar.gz
+```
+
 After having build or loaded the image, please verify it actual presence
 using
 
