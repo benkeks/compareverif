@@ -40,15 +40,6 @@ All the figures of the paper can be reproduced by running the script `reproduce-
 
 As mentioned in the paper, the scripts should run virtually instantaneous for this problem size on common machines. (At least, they do so on our laptops.) The script will wait for user input in order to facilitate inspection of output.
 
-
-## Installing graphviz
-
-Graphviz is not natively installed in the docker. Execute the script below in interactive mode to have it installed. This is only necessary to build pdf files of attack trees.
-
-```bash
-apt install graphviz
-```
-
 ## Checking other claims
 
 If you want to check the file output of scenario preprocessing described by Section 4.1, you can inspect it interactively like this:
