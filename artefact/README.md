@@ -87,7 +87,7 @@ The reproduction script creates a container named `compareverifRecreate` that is
 
 ```
 docker stop compareverifRecreate
-docker rm compareverifv
+docker rm compareverif
 ```
 
 To remove the image from your system, enter:
