@@ -100,8 +100,9 @@ class UppaalGenerator:
         declaration = ET.SubElement(nta, "declaration")
         declaration_lines = ["// Event booleans. All start false."]
         for key, node in tree.nodes.items():
-            declaration_lines.append(f"// {cls._pretty_text(node)}")
+            declaration_lines.append(f"\n// {cls._pretty_text(node)}")
             declaration_lines.append(f"bool {variable_names[key]} = false;")
+            declaration_lines.append(f"broadcast chan {variable_names[key]}_c;")
         declaration.text = "\n".join(declaration_lines) + "\n"
 
         template = ET.SubElement(nta, "template")
@@ -145,10 +146,18 @@ class UppaalGenerator:
             )
             assignment.text = f"{variable_names[key]} = true"
 
+            synchronization = ET.SubElement(
+                transition,
+                "label",
+                {"kind": "synchronisation", "x": str(base_x), "y": str(base_y + 52)},
+            )
+            synchronization.text = f"{variable_names[key]}_c!"
+
+            # Though not mentioned in the XML doc, `comments` is the correct kind for a comment label.
             comment = ET.SubElement(
                 transition,
                 "label",
-                {"kind": "comments", "x": str(base_x), "y": str(base_y + 52)},
+                {"kind": "comments", "x": str(base_x), "y": str(base_y + 78)},
             )
             comment.text = cls._pretty_text(node)
 

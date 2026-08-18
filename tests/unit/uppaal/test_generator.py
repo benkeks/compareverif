@@ -37,7 +37,7 @@ def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     transitions = root.findall(".//transition")
     assert len(transitions) == len(tree.nodes)
     first_transition_children = [child.tag for child in transitions[0]]
-    assert first_transition_children == ["source", "target", "label", "label", "label", "nail", "nail"]
+    assert first_transition_children == ["source", "target", "label", "label", "label", "label", "nail", "nail"]
     loop_heights = [transition.findall("nail")[0].attrib["y"] for transition in transitions]
     assert len(loop_heights) == len(set(loop_heights))
     assert "// Attacker learns secret." in document
@@ -46,13 +46,20 @@ def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     assert "bool goal_attacker_secret_goal_1 = false;" in document
     assert "bool ev_event_login_2 = false;" in document
     assert "bool cap_rainbow_table_attack = false;" in document
+    assert "broadcast chan goal_attacker_secret_goal_1_c;" in document
+    assert "broadcast chan ev_event_login_2_c;" in document
+    assert "broadcast chan cap_rainbow_table_attack_c;" in document
     assert "!goal_attacker_secret_goal_1" in document
     assert "ev_event_login_2 == true" in document
     assert "cap_rainbow_table_attack == true" in document
+    assert "goal_attacker_secret_goal_1!" in document
+    assert "ev_event_login_2!" in document
+    assert "cap_rainbow_table_attack!" in document
     assert "<formula>E&lt;&gt; goal_attacker_secret_goal_1</formula>" in document
     assert "<comment>Attacker learns secret.</comment>" in document
     assert "<location id=\"event_loop\"" in document
     assert "<nail x=" in document
+    assert 'kind="synchronisation"' in document
     assert 'kind="comments"' in document
 
 
