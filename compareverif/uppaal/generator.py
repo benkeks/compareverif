@@ -65,6 +65,19 @@ class UppaalGenerator:
         return variable_names
 
     @classmethod
+    def _resource_budgets(cls, tree: DerivationTree) -> dict:
+        """Sum capability costs into budgets sufficient for all tree transitions."""
+        budgets = {}
+        for node in tree.nodes.values():
+            if node.node_type != "capability":
+                continue
+            for capability in node.capabilities or {node.fact}:
+                for resource, cost in tree.capability_costs.get(capability, {}).items():
+                    if isinstance(cost, int) and cost > 0:
+                        budgets[resource] = budgets.get(resource, 0) + cost
+        return budgets
+
+    @classmethod
     def render_empty(cls, output_file: Path) -> None:
         """Write a minimal but valid empty UPPAAL document."""
         nta = ET.Element("nta")
@@ -90,6 +103,11 @@ class UppaalGenerator:
             return
 
         variable_names = cls._node_variable_names(tree)
+        resource_budgets = cls._resource_budgets(tree)
+        resource_names = {
+            resource: f"res_{cls._slugify_name(resource)}"
+            for resource in resource_budgets
+        }
         prerequisites = {key: [] for key in tree.nodes}
         for source_key, target_key in tree.edges:
             if source_key in prerequisites:
@@ -103,6 +121,10 @@ class UppaalGenerator:
             declaration_lines.append(f"\n// {cls._pretty_text(node)}")
             declaration_lines.append(f"bool {variable_names[key]} = false;")
             declaration_lines.append(f"broadcast chan {variable_names[key]}_c;")
+        if resource_budgets:
+            declaration_lines.append("\n// Attacker resource budgets.")
+            for resource, budget in resource_budgets.items():
+                declaration_lines.append(f"int {resource_names[resource]} = {budget};")
         declaration.text = "\n".join(declaration_lines) + "\n"
 
         template = ET.SubElement(nta, "template")
@@ -127,7 +149,15 @@ class UppaalGenerator:
                 nail_height = -180 - (index // 4) * 140
             guard_parts = [f"!{variable_names[key]}"]
             for req_key in prerequisites[key]:
-                guard_parts.append(f"{variable_names[req_key]} == true")
+                guard_parts.append(f"{variable_names[req_key]}")
+            capability_costs = {}
+            if node.node_type == "capability":
+                for capability in node.capabilities or {node.fact}:
+                    for resource, cost in tree.capability_costs.get(capability, {}).items():
+                        if resource in resource_names and isinstance(cost, int) and cost > 0:
+                            capability_costs[resource] = capability_costs.get(resource, 0) + cost
+                for resource, cost in capability_costs.items():
+                    guard_parts.append(f"{resource_names[resource]} >= {cost}")
             guard_text = " && ".join(guard_parts)
 
             base_x = nail_offset + 30
@@ -144,7 +174,12 @@ class UppaalGenerator:
                 "label",
                 {"kind": "assignment", "x": str(base_x), "y": str(base_y + 26)},
             )
-            assignment.text = f"{variable_names[key]} = true"
+            assignments = [f"{variable_names[key]} = true"]
+            assignments.extend(
+                f"{resource_names[resource]} -= {cost}"
+                for resource, cost in capability_costs.items()
+            )
+            assignment.text = ", ".join(assignments)
 
             synchronization = ET.SubElement(
                 transition,

@@ -24,9 +24,17 @@ def test_render_empty_writes_an_empty_nta_document(tmp_path):
 
 def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     output_file = tmp_path / "model.xml"
-    tree = DerivationTree(goal="attacker(secret)")
+    tree = DerivationTree(
+        goal="attacker(secret)",
+        capability_costs={"Rainbow table attack": {"time": 10, "hack": 1}},
+    )
     tree.add_node("event(login)", node_type="fact")
-    tree.add_node("Rainbow table attack", node_type="capability", variant_id="capability_leaf")
+    tree.add_node(
+        "Rainbow table attack",
+        node_type="capability",
+        capabilities={"Rainbow table attack"},
+        variant_id="capability_leaf",
+    )
     tree.add_edge("attacker(secret)", "event(login)")
     tree.add_edge("event(login)", "Rainbow table attack", target_variant="capability_leaf")
 
@@ -49,12 +57,17 @@ def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     assert "broadcast chan goal_attacker_secret_goal_1_c;" in document
     assert "broadcast chan ev_event_login_2_c;" in document
     assert "broadcast chan cap_rainbow_table_attack_c;" in document
+    assert "int res_time = 10;" in document
+    assert "int res_hack = 1;" in document
     assert "!goal_attacker_secret_goal_1" in document
-    assert "ev_event_login_2 == true" in document
-    assert "cap_rainbow_table_attack == true" in document
-    assert "goal_attacker_secret_goal_1!" in document
-    assert "ev_event_login_2!" in document
-    assert "cap_rainbow_table_attack!" in document
+    assert "ev_event_login_2" in document
+    assert "cap_rainbow_table_attack" in document
+    assert "res_time &gt;= 10" in document
+    assert "res_hack &gt;= 1" in document
+    assert "cap_rainbow_table_attack = true, res_time -= 10, res_hack -= 1" in document
+    assert "goal_attacker_secret_goal_1_c!" in document
+    assert "ev_event_login_2_c!" in document
+    assert "cap_rainbow_table_attack_c!" in document
     assert "<formula>E&lt;&gt; goal_attacker_secret_goal_1</formula>" in document
     assert "<comment>Attacker learns secret.</comment>" in document
     assert "<location id=\"event_loop\"" in document
