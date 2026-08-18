@@ -1,5 +1,6 @@
 """Tests for UPPAAL XML generation."""
 
+import re
 import sys
 from xml.etree import ElementTree as ET
 
@@ -37,18 +38,22 @@ def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     assert len(transitions) == len(tree.nodes)
     first_transition_children = [child.tag for child in transitions[0]]
     assert first_transition_children == ["source", "target", "label", "label", "label", "nail", "nail"]
+    loop_heights = [transition.findall("nail")[0].attrib["y"] for transition in transitions]
+    assert len(loop_heights) == len(set(loop_heights))
     assert "// Attacker learns secret." in document
     assert "// Event login happens." in document
     assert "// Rainbow table attack" in document
-    assert "bool_attacker_secret_goal_1" in document
-    assert "bool_event_login_2" in document
-    assert "bool_rainbow_table_attack_capability_leaf_3" in document
-    assert "!bool_attacker_secret_goal_1" in document
-    assert "bool_event_login_2 == true" in document
-    assert "bool_rainbow_table_attack_capability_leaf_3 == true" in document
+    assert "bool goal_attacker_secret_goal_1 = false;" in document
+    assert "bool ev_event_login_2 = false;" in document
+    assert "bool cap_rainbow_table_attack = false;" in document
+    assert "!goal_attacker_secret_goal_1" in document
+    assert "ev_event_login_2 == true" in document
+    assert "cap_rainbow_table_attack == true" in document
+    assert "<formula>E&lt;&gt; goal_attacker_secret_goal_1</formula>" in document
+    assert "<comment>Attacker learns secret.</comment>" in document
     assert "<location id=\"event_loop\"" in document
     assert "<nail x=" in document
-    assert 'kind="comment"' in document
+    assert 'kind="comments"' in document
 
 
 def test_cli_uppaal_out_writes_model_for_all_tree_nodes(tmp_path, monkeypatch):
@@ -88,6 +93,21 @@ def test_cli_uppaal_out_writes_model_for_all_tree_nodes(tmp_path, monkeypatch):
     attack_tree_extractor.main()
 
     document = output_file.read_text()
-    assert "bool_attacker_secret_goal_1" in document
-    assert "bool_event_login_2" in document
+    assert "goal_attacker_secret_goal_1" in document
+    assert "ev_event_login_2" in document
+    assert "<formula>E&lt;&gt; goal_attacker_secret_goal_1</formula>" in document
     assert ET.parse(output_file).getroot().tag == "nta"
+
+
+def test_render_tree_limits_non_capability_variable_names_to_100_characters(tmp_path):
+    output_file = tmp_path / "model.xml"
+    long_fact = f"attacker({'secret_' * 30})"
+    tree = DerivationTree(goal=long_fact)
+    tree.add_node("Attack-A", node_type="capability", variant_id="capability_leaf")
+
+    UppaalGenerator.render_tree(output_file, tree)
+
+    declarations = ET.parse(output_file).getroot().find("declaration").text
+    variable_names = re.findall(r"^bool (\w+) = false;$", declarations, re.MULTILINE)
+    assert all(len(name) <= 60 for name in variable_names)
+    assert "cap_attack_a" in variable_names

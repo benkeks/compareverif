@@ -5,6 +5,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from compareverif.attack_tree import DerivationTree, TreeNode
+from compareverif.scenarios.generator import create_scenario_filename
 
 
 class UppaalGenerator:
@@ -36,12 +37,31 @@ class UppaalGenerator:
     def _node_variable_names(cls, tree: DerivationTree) -> dict:
         """Return one collision-free variable slug for each concrete tree node."""
         variable_names = {}
-        for index, ((fact, variant_id), _node) in enumerate(tree.nodes.items(), start=1):
-            parts = [fact]
-            if variant_id:
-                parts.append(variant_id)
-            slug = cls._slugify_name("_".join(parts))
-            variable_names[(fact, variant_id)] = f"{slug}_{index}"
+        used_names = set()
+        for index, ((fact, variant_id), node) in enumerate(tree.nodes.items(), start=1):
+            if node.rule == "goal":
+                prefix = "goal"
+            elif node.node_type == "capability":
+                prefix = "cap"
+            else:
+                prefix = "ev"
+
+            if node.node_type == "capability":
+                candidate = f"{prefix}_{create_scenario_filename([fact])}"
+            else:
+                parts = [fact]
+                if variant_id:
+                    parts.append(variant_id)
+                suffix = f"_{index}"
+                max_slug_length = 60 - len(prefix) - 1 - len(suffix)
+                slug = cls._slugify_name("_".join(parts))[:max_slug_length]
+                candidate = f"{prefix}_{slug}{suffix}"
+
+            if candidate in used_names:
+                suffix = f"_{index}"
+                candidate = f"{candidate[:60 - len(suffix)]}{suffix}"
+            used_names.add(candidate)
+            variable_names[(fact, variant_id)] = candidate
         return variable_names
 
     @classmethod
@@ -81,7 +101,7 @@ class UppaalGenerator:
         declaration_lines = ["// Event booleans. All start false."]
         for key, node in tree.nodes.items():
             declaration_lines.append(f"// {cls._pretty_text(node)}")
-            declaration_lines.append(f"bool bool_{variable_names[key]} = false;")
+            declaration_lines.append(f"bool {variable_names[key]} = false;")
         declaration.text = "\n".join(declaration_lines) + "\n"
 
         template = ET.SubElement(nta, "template")
@@ -92,16 +112,21 @@ class UppaalGenerator:
         ET.SubElement(location, "name", {"x": "0", "y": "-34"}).text = "EventLoop"
         ET.SubElement(template, "init", {"ref": "event_loop"})
 
+        node_count = len(tree.nodes)
         for index, (key, node) in enumerate(tree.nodes.items()):
             transition = ET.SubElement(template, "transition", {"id": f"t_{index}"})
             ET.SubElement(transition, "source", {"ref": "event_loop"})
             ET.SubElement(transition, "target", {"ref": "event_loop"})
 
-            nail_offset = 180 + (index % 4) * 180
-            nail_height = -180 - (index // 4) * 140
-            guard_parts = [f"!bool_{variable_names[key]}"]
+            if node_count < 20:
+                nail_offset = 180
+                nail_height = -180 - index * 140
+            else:
+                nail_offset = 180 + (index % 4) * 180
+                nail_height = -180 - (index // 4) * 140
+            guard_parts = [f"!{variable_names[key]}"]
             for req_key in prerequisites[key]:
-                guard_parts.append(f"bool_{variable_names[req_key]} == true")
+                guard_parts.append(f"{variable_names[req_key]} == true")
             guard_text = " && ".join(guard_parts)
 
             base_x = nail_offset + 30
@@ -118,7 +143,7 @@ class UppaalGenerator:
                 "label",
                 {"kind": "assignment", "x": str(base_x), "y": str(base_y + 26)},
             )
-            assignment.text = f"bool_{variable_names[key]} = true"
+            assignment.text = f"{variable_names[key]} = true"
 
             comment = ET.SubElement(
                 transition,
@@ -135,8 +160,9 @@ class UppaalGenerator:
 
         queries = ET.SubElement(nta, "queries")
         query = ET.SubElement(queries, "query")
-        ET.SubElement(query, "formula").text = "A[] not deadlock"
-        ET.SubElement(query, "comment").text = "Generated attack-tree event structure."
+        goal_key = (tree.goal, tree.GOAL_VARIANT)
+        ET.SubElement(query, "formula").text = f"E<> {variable_names[goal_key]}"
+        ET.SubElement(query, "comment").text = cls._pretty_text(tree.nodes[goal_key])
 
         cls._write_document(output_file, nta)
 
