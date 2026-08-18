@@ -99,9 +99,6 @@ class UppaalGenerator:
 
             nail_offset = 180 + (index % 4) * 180
             nail_height = -180 - (index // 4) * 140
-            ET.SubElement(transition, "nail", {"x": str(nail_offset), "y": str(nail_height)})
-            ET.SubElement(transition, "nail", {"x": str(nail_offset + 60), "y": str(nail_height)})
-
             guard_parts = [f"!bool_{variable_names[key]}"]
             for req_key in prerequisites[key]:
                 guard_parts.append(f"bool_{variable_names[req_key]} == true")
@@ -126,9 +123,12 @@ class UppaalGenerator:
             comment = ET.SubElement(
                 transition,
                 "label",
-                {"kind": "comment", "x": str(base_x), "y": str(base_y + 52)},
+                {"kind": "comments", "x": str(base_x), "y": str(base_y + 52)},
             )
             comment.text = cls._pretty_text(node)
+
+            ET.SubElement(transition, "nail", {"x": str(nail_offset), "y": str(nail_height)})
+            ET.SubElement(transition, "nail", {"x": str(nail_offset + 60), "y": str(nail_height)})
 
         system = ET.SubElement(nta, "system")
         system.text = "Process = EventLoop();\nsystem Process;\n"

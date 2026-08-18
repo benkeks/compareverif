@@ -5,7 +5,7 @@ from xml.etree import ElementTree as ET
 
 import attack_tree_extractor
 from compareverif.attack_tree import AttackTreeExtractor, DerivationTree
-from compareverif.proverif import ProVerifOutput
+from compareverif.proverif import Derivation, ProVerifOutput
 from compareverif.uppaal import UppaalGenerator
 
 
@@ -35,6 +35,8 @@ def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     root = ET.parse(output_file).getroot()
     transitions = root.findall(".//transition")
     assert len(transitions) == len(tree.nodes)
+    first_transition_children = [child.tag for child in transitions[0]]
+    assert first_transition_children == ["source", "target", "label", "label", "label", "nail", "nail"]
     assert "// Attacker learns secret." in document
     assert "// Event login happens." in document
     assert "// Rainbow table attack" in document
@@ -65,7 +67,7 @@ def test_cli_uppaal_out_writes_model_for_all_tree_nodes(tmp_path, monkeypatch):
         AttackTreeExtractor,
         "extract",
         lambda _self, *_args, **_kwargs: ProVerifOutput(
-            derivations=[],
+            derivations=[Derivation(conclusion="attacker(secret)", rule_name="goal", indent_level=0)],
         ),
     )
 
