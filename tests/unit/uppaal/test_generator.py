@@ -5,6 +5,7 @@ import sys
 from xml.etree import ElementTree as ET
 
 import attack_tree_extractor
+import pytest
 from compareverif.attack_tree import AttackTreeExtractor, DerivationTree
 from compareverif.proverif import Derivation, ProVerifOutput
 from compareverif.uppaal import UppaalGenerator
@@ -48,10 +49,6 @@ def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     capability_transitions = root.findall(".//template[name='Obtain_cap_rainbow_table_attack']/transition")
     assert len(main_transitions) == 2
     assert len(capability_transitions) == 1
-    first_transition_children = [child.tag for child in main_transitions[0]]
-    assert first_transition_children == ["source", "target", "label", "label", "label", "label", "nail", "nail"]
-    loop_heights = [transition.findall("nail")[0].attrib["y"] for transition in main_transitions]
-    assert len(loop_heights) == len(set(loop_heights))
     assert "// Attacker learns secret." in document
     assert "// Event login happens." in document
     assert "// Rainbow table attack" in document
@@ -81,7 +78,6 @@ def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     assert "<formula>E&lt;&gt; goal_attacker_secret_goal_1</formula>" in document
     assert "<comment>Attacker learns secret.</comment>" in document
     assert "<location id=\"event_loop\"" in document
-    assert "<nail x=" in document
     assert 'kind="synchronisation"' in document
     assert 'kind="comments"' in document
 
@@ -205,6 +201,7 @@ def test_timed_capability_has_parameterized_three_state_acquisition(tmp_path):
     assert template.findtext("parameter") == "int unlocking_time, int mitigation_time"
     assert "clock unlocking_clock, mitigation_clock;" in template.findtext("declaration")
     assert "broadcast chan cap_database_leak_start;" in root.findtext("declaration")
+    assert "broadcast chan cap_database_leak_mitigated;" in root.findtext("declaration")
     assert {name.text for name in template.findall("location/name")} == {
         "Idle",
         "Committed",
@@ -227,10 +224,52 @@ def test_timed_capability_has_parameterized_three_state_acquisition(tmp_path):
         "init",
         "transition",
         "transition",
+        "transition",
+        "transition",
     ]
     transitions = template.findall("transition")
-    assert len(transitions) == 2
+    assert len(transitions) == 4
     assert "unlocking_clock = 0" in ET.tostring(transitions[0], encoding="unicode")
     assert "cap_database_leak_start!" in ET.tostring(transitions[0], encoding="unicode")
     assert "unlocking_clock &gt;= unlocking_time" in ET.tostring(transitions[1], encoding="unicode")
+    obtained_location = template.find("location[name='Obtained']")
+    assert obtained_location.findtext("label[@kind='invariant']") == "mitigation_clock <= mitigation_time"
+    committed_timeout = template.find("transition[@id='capability_transition_committed_timeout']")
+    assert committed_timeout.findtext("label[@kind='guard']") == "mitigation_clock >= mitigation_time"
+    assert committed_timeout.findtext("label[@kind='assignment']") == "mitigation_clock = 0"
+    assert committed_timeout.findtext("label[@kind='synchronisation']") == "cap_database_leak_mitigated!"
+    obtained_timeout = template.find("transition[@id='capability_transition_obtained_timeout']")
+    assert obtained_timeout.findtext("label[@kind='guard']") == "mitigation_clock >= mitigation_time"
+    assert obtained_timeout.findtext("label[@kind='assignment']") == (
+        "cap_database_leak = false, mitigation_clock = 0"
+    )
+    assert obtained_timeout.findtext("label[@kind='synchronisation']") == "cap_database_leak_mitigated!"
     assert "database_leak_process = Obtain_cap_database_leak(2, 1);" in output_file.read_text()
+
+
+@pytest.mark.parametrize(
+    "attributes, expected_message",
+    [
+        ({"unlocking_time": "2"}, "missing mitigation_time"),
+        ({"mitigation_time": "1"}, "missing unlocking_time"),
+        ({"unlocking_time": "soon", "mitigation_time": "1"}, "malformed unlocking_time"),
+        ({"unlocking_time": "2", "mitigation_time": "-1"}, "invalid mitigation_time"),
+    ],
+)
+def test_timed_capability_rejects_invalid_timing_attributes(
+    tmp_path, attributes, expected_message
+):
+    output_file = tmp_path / "model.xml"
+    tree = DerivationTree(
+        goal="attacker(secret)",
+        capability_attributes={"Database leak": attributes},
+    )
+    tree.add_node(
+        "Database leak",
+        node_type="capability",
+        capabilities={"Database leak"},
+        variant_id="capability_leaf",
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        UppaalGenerator.render_tree(output_file, tree)

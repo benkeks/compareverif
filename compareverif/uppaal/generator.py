@@ -82,11 +82,10 @@ class UppaalGenerator:
     @classmethod
     def _capability_backend(cls, tree: DerivationTree, node: TreeNode) -> str:
         """Select the capability automaton backend from its declared attributes."""
-        attributes = {}
-        for capability in node.capabilities or {node.fact}:
-            attributes.update(tree.capability_attributes.get(capability, {}))
+        attributes = cls._capability_attributes(tree, node)
 
         if "unlocking_time" in attributes or "mitigation_time" in attributes:
+            cls._timing_parameters(tree, node)
             return "mitigatable_capability"
         return "immediate_capability"
 
@@ -98,14 +97,36 @@ class UppaalGenerator:
             attributes.update(tree.capability_attributes.get(capability, {}))
         return attributes
 
-    @staticmethod
-    def _attribute_number(attributes: dict, name: str, default: int = 0) -> int:
-        """Read a non-negative integer template parameter from capability metadata."""
-        try:
-            value = int(attributes.get(name, default))
-        except (TypeError, ValueError):
-            return default
-        return max(value, 0)
+    @classmethod
+    def _timing_parameters(cls, tree: DerivationTree, node: TreeNode) -> tuple[int, int]:
+        """Validate and return both timing attributes for a timed capability."""
+        attributes = cls._capability_attributes(tree, node)
+        timing_names = ("unlocking_time", "mitigation_time")
+        capability_names = ", ".join(sorted(node.capabilities or {node.fact}))
+        missing = [name for name in timing_names if name not in attributes]
+        if missing:
+            raise ValueError(
+                f"Capability {capability_names!r} must define both unlocking_time "
+                f"and mitigation_time; missing {', '.join(missing)}"
+            )
+
+        values = []
+        for name in timing_names:
+            raw_value = attributes[name]
+            try:
+                value = int(raw_value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Capability {capability_names!r} has malformed {name}: {raw_value!r}; "
+                    "expected a non-negative integer"
+                ) from exc
+            if value < 0:
+                raise ValueError(
+                    f"Capability {capability_names!r} has invalid {name}: {value}; "
+                    "expected a non-negative integer"
+                )
+            values.append(value)
+        return values[0], values[1]
 
     @classmethod
     def render_empty(cls, output_file: Path) -> None:
@@ -156,6 +177,7 @@ class UppaalGenerator:
                 and cls._capability_backend(tree, node) == "mitigatable_capability"
             ):
                 declaration_lines.append(f"broadcast chan {variable_names[key]}_start;")
+                declaration_lines.append(f"broadcast chan {variable_names[key]}_mitigated;")
         if resource_budgets:
             declaration_lines.append("\n// Attacker resource budgets.")
             for resource, budget in resource_budgets.items():
@@ -291,9 +313,11 @@ class UppaalGenerator:
             if capability_backend == "mitigatable_capability":
                 backend_kwargs["committed_id"] = committed_id
                 backend_kwargs["start_channel"] = f"{capability_name}_start"
-                attributes = cls._capability_attributes(tree, node)
-                backend_kwargs["unlocking_time"] = cls._attribute_number(attributes, "unlocking_time")
-                backend_kwargs["mitigation_time"] = cls._attribute_number(attributes, "mitigation_time")
+                backend_kwargs["mitigated_channel"] = f"{capability_name}_mitigated"
+                backend_kwargs["obtained_location"] = obtained
+                unlocking_time, mitigation_time = cls._timing_parameters(tree, node)
+                backend_kwargs["unlocking_time"] = unlocking_time
+                backend_kwargs["mitigation_time"] = mitigation_time
             backend.render(**backend_kwargs)
 
         system = ET.SubElement(nta, "system")
@@ -302,9 +326,7 @@ class UppaalGenerator:
             capability_name = variable_names[key]
             node = tree.nodes[key]
             if cls._capability_backend(tree, node) == "mitigatable_capability":
-                attributes = cls._capability_attributes(tree, node)
-                unlocking_time = cls._attribute_number(attributes, "unlocking_time")
-                mitigation_time = cls._attribute_number(attributes, "mitigation_time")
+                unlocking_time, mitigation_time = cls._timing_parameters(tree, node)
                 system_lines.append(
                     f"{capability_name}_process = Obtain_{capability_name}({unlocking_time}, {mitigation_time});"
                 )
