@@ -135,8 +135,14 @@ class UppaalGenerator:
         ET.SubElement(location, "name", {"x": "0", "y": "-34"}).text = "EventLoop"
         ET.SubElement(template, "init", {"ref": "event_loop"})
 
-        node_count = len(tree.nodes)
-        for index, (key, node) in enumerate(tree.nodes.items()):
+        event_nodes = [
+            (key, node) for key, node in tree.nodes.items() if node.node_type != "capability"
+        ]
+        capability_nodes = [
+            (key, node) for key, node in tree.nodes.items() if node.node_type == "capability"
+        ]
+        node_count = len(event_nodes)
+        for index, (key, node) in enumerate(event_nodes):
             transition = ET.SubElement(template, "transition", {"id": f"t_{index}"})
             ET.SubElement(transition, "source", {"ref": "event_loop"})
             ET.SubElement(transition, "target", {"ref": "event_loop"})
@@ -150,14 +156,6 @@ class UppaalGenerator:
             guard_parts = [f"!{variable_names[key]}"]
             for req_key in prerequisites[key]:
                 guard_parts.append(f"{variable_names[req_key]}")
-            capability_costs = {}
-            if node.node_type == "capability":
-                for capability in node.capabilities or {node.fact}:
-                    for resource, cost in tree.capability_costs.get(capability, {}).items():
-                        if resource in resource_names and isinstance(cost, int) and cost > 0:
-                            capability_costs[resource] = capability_costs.get(resource, 0) + cost
-                for resource, cost in capability_costs.items():
-                    guard_parts.append(f"{resource_names[resource]} >= {cost}")
             guard_text = " && ".join(guard_parts)
 
             base_x = nail_offset + 30
@@ -174,12 +172,7 @@ class UppaalGenerator:
                 "label",
                 {"kind": "assignment", "x": str(base_x), "y": str(base_y + 26)},
             )
-            assignments = [f"{variable_names[key]} = true"]
-            assignments.extend(
-                f"{resource_names[resource]} -= {cost}"
-                for resource, cost in capability_costs.items()
-            )
-            assignment.text = ", ".join(assignments)
+            assignment.text = f"{variable_names[key]} = true"
 
             synchronization = ET.SubElement(
                 transition,
@@ -199,8 +192,84 @@ class UppaalGenerator:
             ET.SubElement(transition, "nail", {"x": str(nail_offset), "y": str(nail_height)})
             ET.SubElement(transition, "nail", {"x": str(nail_offset + 60), "y": str(nail_height)})
 
+        for index, (key, node) in enumerate(capability_nodes):
+            capability_name = variable_names[key]
+            capability_template_name = f"Obtain_{capability_name}"
+            capability_template = ET.SubElement(nta, "template")
+            ET.SubElement(capability_template, "name").text = capability_template_name
+            ET.SubElement(capability_template, "declaration").text = "clock acquisition_clock;\n"
+
+            idle_id = f"{capability_name}_idle"
+            obtained_id = f"{capability_name}_obtained"
+            idle = ET.SubElement(
+                capability_template,
+                "location",
+                {"id": idle_id, "x": "0", "y": "0"},
+            )
+            ET.SubElement(idle, "name", {"x": "0", "y": "-34"}).text = "Idle"
+            obtained = ET.SubElement(
+                capability_template,
+                "location",
+                {"id": obtained_id, "x": "260", "y": "0"},
+            )
+            ET.SubElement(obtained, "name", {"x": "260", "y": "-34"}).text = "Obtained"
+            ET.SubElement(capability_template, "init", {"ref": idle_id})
+
+            capability_costs = {}
+            for capability in node.capabilities or {node.fact}:
+                for resource, cost in tree.capability_costs.get(capability, {}).items():
+                    if resource in resource_names and isinstance(cost, int) and cost > 0:
+                        capability_costs[resource] = capability_costs.get(resource, 0) + cost
+
+            transition = ET.SubElement(
+                capability_template,
+                "transition",
+                {"id": f"capability_transition_{index}"},
+            )
+            ET.SubElement(transition, "source", {"ref": idle_id})
+            ET.SubElement(transition, "target", {"ref": obtained_id})
+            guard = ET.SubElement(transition, "label", {"kind": "guard", "x": "40", "y": "-30"})
+            guard_parts = [f"{resource_names[resource]} >= {cost}" for resource, cost in capability_costs.items()]
+            guard.text = " && ".join(guard_parts) if guard_parts else "true"
+            assignment = ET.SubElement(
+                transition,
+                "label",
+                {"kind": "assignment", "x": "40", "y": "0"},
+            )
+            assignments = [f"{capability_name} = true"]
+            assignments.extend(
+                f"{resource_names[resource]} -= {cost}"
+                for resource, cost in capability_costs.items()
+            )
+            assignment.text = ", ".join(assignments)
+            synchronization = ET.SubElement(
+                transition,
+                "label",
+                {"kind": "synchronisation", "x": "40", "y": "30"},
+            )
+            synchronization.text = f"{capability_name}_c!"
+            comment = ET.SubElement(
+                transition,
+                "label",
+                {"kind": "comments", "x": "40", "y": "60"},
+            )
+            comment.text = cls._pretty_text(node)
+
         system = ET.SubElement(nta, "system")
-        system.text = "Process = EventLoop();\nsystem Process;\n"
+        system_lines = ["main_process = EventLoop();"]
+        for key, _node in capability_nodes:
+            capability_name = variable_names[key]
+            system_lines.append(
+                f"{capability_name}_process = Obtain_{capability_name}();"
+            )
+        system_lines.append(
+            "system " + ", ".join(
+                ["main_process"]
+                + [f"{variable_names[key]}_process" for key, _node in capability_nodes]
+            )
+            + ";"
+        )
+        system.text = "\n".join(system_lines) + "\n"
 
         queries = ET.SubElement(nta, "queries")
         query = ET.SubElement(queries, "query")

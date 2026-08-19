@@ -44,9 +44,13 @@ def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     root = ET.parse(output_file).getroot()
     transitions = root.findall(".//transition")
     assert len(transitions) == len(tree.nodes)
-    first_transition_children = [child.tag for child in transitions[0]]
+    main_transitions = root.findall(".//template[name='EventLoop']/transition")
+    capability_transitions = root.findall(".//template[name='Obtain_cap_rainbow_table_attack']/transition")
+    assert len(main_transitions) == 2
+    assert len(capability_transitions) == 1
+    first_transition_children = [child.tag for child in main_transitions[0]]
     assert first_transition_children == ["source", "target", "label", "label", "label", "label", "nail", "nail"]
-    loop_heights = [transition.findall("nail")[0].attrib["y"] for transition in transitions]
+    loop_heights = [transition.findall("nail")[0].attrib["y"] for transition in main_transitions]
     assert len(loop_heights) == len(set(loop_heights))
     assert "// Attacker learns secret." in document
     assert "// Event login happens." in document
@@ -65,6 +69,12 @@ def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     assert "res_time &gt;= 10" in document
     assert "res_hack &gt;= 1" in document
     assert "cap_rainbow_table_attack = true, res_time -= 10, res_hack -= 1" in document
+    assert "<name>Obtain_cap_rainbow_table_attack</name>" in document
+    capability_template = root.find(".//template[name='Obtain_cap_rainbow_table_attack']")
+    assert any(name.text == "Obtained" for name in capability_template.findall("location/name"))
+    assert "cap_rainbow_table_attack_process = Obtain_cap_rainbow_table_attack();" in document
+    assert "<source ref=\"cap_rainbow_table_attack_idle\"" in document
+    assert "<target ref=\"cap_rainbow_table_attack_obtained\"" in document
     assert "goal_attacker_secret_goal_1_c!" in document
     assert "ev_event_login_2_c!" in document
     assert "cap_rainbow_table_attack_c!" in document
