@@ -44,6 +44,9 @@ For each input file, the preprocessor generates a `manifest.json` file in the co
   - **`capabilities`**: List of attacker capabilities included in this scenario:
     - `name`: Capability name (e.g., "Rainbow table attack")
     - `costs`: Cost dictionary for this capability (e.g., `{"time": 10}`)
+    - `attributes`: String key-value metadata declared for this capability with the
+      `{key: value, ...}` header notation (e.g., `{"unlock": "1", "mitigate": "2"}`);
+      empty if the capability declared none
   - **`total_costs`**: Aggregated costs across all capabilities in this scenario
   - **`queries`**: List of ProVerif security checks (`query`/`weaksecret`):
     - `tag`: Human-readable query label

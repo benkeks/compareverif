@@ -9,7 +9,7 @@ This can be used to compare the security of different protocol designs through t
 
 There are two main scripts in this project:
 
-- [`scenario_preprocessor.py`](#usage-of-the-scenario-preprocessor) automates the generation and verification of multiple attack scenarios, where capabilities are expressed as magical comments `(*** Attack name [price] some oracle code ***)` in ProVerif files.
+- [`scenario_preprocessor.py`](#usage-of-the-scenario-preprocessor) automates the generation and verification of multiple attack scenarios, where capabilities are expressed as magical comments `(*** Attack name [price] {key: value} some oracle code ***)` in ProVerif files.
 - [`pareto_comparison.py`](#usage-of-the-pareto-comparison) renders Pareto fronts from manifests so you can compare breaking costs across protocol variants.
 - [`attack_tree_extractor.py`](#usage-of-the-attack-tree-extractor) extracts and visualizes attack trees from ProVerif output, connecting it derivations back to underlying capabilities.
 
@@ -92,6 +92,8 @@ The script automatically runs ProVerif on all generated scenarios. Detailed veri
 With `--logs`, the full ProVerif console output for each scenario is written to a sibling log file with the name `<scenario>.pv.log` in the same `_scenarios/<filename>/` directory.
 
 For each input file, the preprocessor generates a `manifest.json` file in the corresponding scenario directory (e.g., `_scenarios/hashed_passwords/manifest.json`). This manifest provides a comprehensive machine-readable record of all generated scenarios and their verification results. (Documented in [`docs/manifests.md`](docs/manifests.md).)
+
+Capability headers may also specify costs in square brackets and arbitrary string key-value attributes in curly braces, e.g. `Database leak [1 hack] {unlock: 1, mitigate: 2}`. Attribute values may be wrapped in single or double quotes to include commas or colons, e.g. `{note: "a, b: c"}`. Attributes carry no built-in semantics for the preprocessor itself; they are propagated verbatim to `manifest.json` (see [`docs/manifests.md`](docs/manifests.md)), so downstream tooling or readers can attach custom metadata to attacker capabilities.
 
 ## Usage of the Pareto Comparison
 

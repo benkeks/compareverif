@@ -107,6 +107,7 @@ def build_scenario_content(
                         variant = AttackVariant(
                             name=capabilities[cap_idx].primary_name,
                             costs=dict(primary_variant.costs),
+                            attributes=dict(primary_variant.attributes),
                         )
                     else:
                         variant = capabilities[cap_idx].variants[choice - 1]

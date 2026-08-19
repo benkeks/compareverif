@@ -228,6 +228,7 @@ def main():
     capability_analyzer = None
     manifest_data = None
     capability_costs = {}  # Initialize capability costs (empty if no manifest)
+    capability_attributes = {}  # Initialize capability attributes (empty if no manifest)
     if args.manifest:
         manifest_path = Path(args.manifest)
         if not manifest_path.exists():
@@ -245,6 +246,7 @@ def main():
 
         capability_analyzer = CapabilityAnalyzer.from_manifest(manifest_path)
         capability_costs = capability_analyzer.capability_costs
+        capability_attributes = capability_analyzer.capability_attributes
         print()
 
     for scenario_path in args.files:
@@ -325,6 +327,7 @@ def main():
                 use_readable,
                 args.show_clause_ids,
                 args.highlight_attack,
+                capability_attributes,
             )
             if tree:
                 # Annotate with capabilities if analyzer is available

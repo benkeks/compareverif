@@ -3,7 +3,7 @@
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from compareverif.proverif import ProVerifRunner, ProVerifOutputParser, ProVerifOutput
 
@@ -14,7 +14,11 @@ if TYPE_CHECKING:
 class CapabilityAnalyzer:
     """Analyzes which clauses and facts are introduced by specific capabilities."""
 
-    def __init__(self, capability_costs: Optional[Dict[str, Dict[str, int]]] = None):
+    def __init__(
+        self,
+        capability_costs: Optional[Dict[str, Dict[str, int]]] = None,
+        capability_attributes: Optional[Dict[str, Dict[str, str]]] = None,
+    ):
         self.base_clauses: Set[str] = set()
         self.capability_clauses: Dict[str, Set[str]] = {}
         self.capability_clause_numbers: Dict[
@@ -23,6 +27,9 @@ class CapabilityAnalyzer:
         self.capability_costs = (
             capability_costs or {}
         )  # Map: capability name -> {"time": X, "hack": Y, ...}
+        self.capability_attributes = (
+            capability_attributes or {}
+        )  # Map: capability name -> {"unlock": "1", "mitigate": "2", ...}
 
     @classmethod
     def from_scenarios(
@@ -44,7 +51,14 @@ class CapabilityAnalyzer:
                     for scenario in scenarios
                     for capability in scenario.capabilities
                 )
-            )
+            ),
+            cls._collect_capability_costs(
+                (
+                    (capability.name, capability.attributes)
+                    for scenario in scenarios
+                    for capability in scenario.capabilities
+                )
+            ),
         )
         analysis = analyzer.analyze_from_scenarios(scenarios)
         if analysis is None:
@@ -68,21 +82,31 @@ class CapabilityAnalyzer:
                     for scenario in manifest.get("scenarios", [])
                     for capability in scenario.get("capabilities", [])
                 )
-            )
+            ),
+            cls._collect_capability_costs(
+                (
+                    (capability.get("name"), capability.get("attributes", {}))
+                    for scenario in manifest.get("scenarios", [])
+                    for capability in scenario.get("capabilities", [])
+                )
+            ),
         )
         analyzer.analyze_from_manifest(manifest_path)
         return analyzer
 
     @staticmethod
     def _collect_capability_costs(
-        capability_entries: Iterable[Tuple[Optional[str], Dict[str, int]]],
-    ) -> Dict[str, Dict[str, int]]:
-        """Collect one cost mapping per capability from any (name, costs) sequence."""
-        capability_costs: Dict[str, Dict[str, int]] = {}
-        for name, costs in capability_entries:
-            if name and name not in capability_costs and costs:
-                capability_costs[name] = costs
-        return capability_costs
+        capability_entries: Iterable[Tuple[Optional[str], Dict[str, Any]]],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Collect one metadata mapping per capability from any (name, values) sequence.
+
+        Shared helper for both numeric costs and string attributes.
+        """
+        capability_values: Dict[str, Dict[str, Any]] = {}
+        for name, values in capability_entries:
+            if name and name not in capability_values and values:
+                capability_values[name] = values
+        return capability_values
 
     def analyze_from_scenarios(
         self,

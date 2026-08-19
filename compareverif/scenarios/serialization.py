@@ -26,6 +26,7 @@ def build_manifest_scenario_entry(
             {
                 'name': variant.name,
                 'costs': variant.costs,
+                'attributes': variant.attributes,
             }
             for variant in scenario_file.capabilities
         ],

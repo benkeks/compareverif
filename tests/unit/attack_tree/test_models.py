@@ -237,6 +237,29 @@ class TestDerivationTree:
         assert "10 time" in dot_output
         assert "clause 7" not in dot_output or "Brute Force<BR/>clause 7" not in dot_output
 
+    def test_capability_attributes_as_xlabel(self):
+        """Test that capability attributes are rendered as an xlabel next to the node."""
+        tree = DerivationTree(
+            goal="attacker(x)",
+            capability_attributes={"Database leak": {"unlock": "1", "mitigate": "2"}},
+        )
+        tree.add_node("crack", rule="clause", clause_number=7)
+        tree.add_node(
+            "Database leak",
+            rule=tree.CAPABILITY_RULE,
+            node_type="capability",
+            capabilities={"Database leak"},
+            variant_id="cap_leaf",
+        )
+        tree.add_edge("crack", "Database leak", target_variant="cap_leaf", target_node_type="capability")
+
+        dot_output = tree.to_graphviz()
+        capability_node_id = tree.nodes[("Database leak", "cap_leaf")].node_id
+        node_line = next(
+            line for line in dot_output.splitlines() if line.strip().startswith(f"{capability_node_id} [")
+        )
+        assert 'xlabel="mitigate: 2\\nunlock: 1"' in node_line
+
     def test_variant_nodes(self):
         """Test tree with variant nodes (multiple ways to achieve same fact)."""
         tree = DerivationTree(goal="attacker(x)")

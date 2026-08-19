@@ -129,10 +129,14 @@ class DerivationTree:
         readable_nodes: bool = False,
         show_clause_ids: bool = False,
         highlight_attack: bool = False,
+        capability_attributes: Optional[Dict[str, Dict[str, str]]] = None,
     ):
         self.goal = goal
         self.query_tag = query_tag  # Tag/name of the violated query
         self.capability_costs = capability_costs or {}  # Map: capability name -> {"time": X, "hack": Y, ...}
+        self.capability_attributes = (
+            capability_attributes or {}
+        )  # Map: capability name -> {"unlock": "1", "mitigate": "2", ...}
         self.readable_nodes = readable_nodes  # Whether to use readable node labels
         self.show_clause_ids = show_clause_ids  # Whether to display clause numbers in node labels
         self.highlight_attack = highlight_attack  # Fade branches not above attack capability nodes
@@ -280,10 +284,12 @@ class DerivationTree:
         nodes = []
         for (fact, variant_id), node in self.nodes.items():
             costs: Dict[str, int] = {}
+            attributes: Dict[str, str] = {}
             if node.node_type == "capability":
                 for cap in sorted(node.capabilities or {node.fact}):
                     for cost_type, cost_value in self.capability_costs.get(cap, {}).items():
                         costs[cost_type] = costs.get(cost_type, 0) + cost_value
+                    attributes.update(self.capability_attributes.get(cap, {}))
 
             conjunctive_ids: Set[str] = set()
             disjunctive_groups: List[List[str]] = []
@@ -317,6 +323,7 @@ class DerivationTree:
                     "depends_on_all": sorted(conjunctive_ids),
                     "depends_on_any": disjunctive_groups,
                     **({"costs": costs} if node.node_type == "capability" else {}),
+                    **({"attributes": attributes} if node.node_type == "capability" else {}),
                 }
             )
 

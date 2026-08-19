@@ -10,6 +10,7 @@ class AttackVariant:
     """Represents a cost variant of an attacker capability."""
     name: str
     costs: Dict[str, float]
+    attributes: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

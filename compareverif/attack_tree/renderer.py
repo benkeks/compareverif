@@ -105,6 +105,19 @@ class GraphvizRenderer:
                 attrs["color"] = '"#A6A6A6"'
                 attrs["fontcolor"] = '"#A6A6A6"'
 
+            if node.node_type == "capability":
+                capability_attributes: Dict[str, str] = {}
+                for cap in sorted(node.capabilities or {fact}):
+                    capability_attributes.update(tree.capability_attributes.get(cap, {}))
+                if capability_attributes:
+                    xlabel_lines = [
+                        f"{GraphvizRenderer._escape_dot_string(key)}: "
+                        f"{GraphvizRenderer._escape_dot_string(value)}"
+                        for key, value in sorted(capability_attributes.items())
+                    ]
+                    xlabel_text = "\\n".join(xlabel_lines)
+                    attrs["xlabel"] = f'"{xlabel_text}"'
+
             attrs_str = ", ".join(f"{key}={value}" for key, value in attrs.items())
             dot_lines.append(f"  {node.node_id} [{attrs_str}];")
 
@@ -144,6 +157,7 @@ class GraphvizRenderer:
         readable_nodes: bool = False,
         show_clause_ids: bool = False,
         highlight_attack: bool = False,
+        capability_attributes: Optional[Dict[str, Dict[str, str]]] = None,
     ) -> Optional[DerivationTree]:
         """
         Build a derivation tree from a list of derivations.
@@ -159,6 +173,7 @@ class GraphvizRenderer:
             readable_nodes: Whether to use readable format for nodes
             show_clause_ids: Whether to show clause numbers
             highlight_attack: Whether to fade non-attack-relevant branches
+            capability_attributes: Dict mapping capability names to string attribute dicts
 
         Returns:
             DerivationTree object or None if no derivations
@@ -196,6 +211,7 @@ class GraphvizRenderer:
             readable_nodes,
             show_clause_ids,
             highlight_attack,
+            capability_attributes,
         )
 
         # Separate derivations into different categories
@@ -499,3 +515,8 @@ class GraphvizRenderer:
     def _format_label_html(text: str) -> str:
         """Escape HTML special characters in text while preserving known tags."""
         return re.sub(r"&(?![a-z]+;)", "&amp;", text)
+
+    @staticmethod
+    def _escape_dot_string(text: str) -> str:
+        """Escape backslashes and double quotes for a quoted DOT string attribute."""
+        return text.replace("\\", "\\\\").replace('"', '\\"')
