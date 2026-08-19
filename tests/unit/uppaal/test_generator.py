@@ -141,3 +141,96 @@ def test_render_tree_limits_non_capability_variable_names_to_100_characters(tmp_
     variable_names = re.findall(r"^bool (\w+) = false;$", declarations, re.MULTILINE)
     assert all(len(name) <= 60 for name in variable_names)
     assert "cap_attack_a" in variable_names
+
+
+def test_capability_backend_selects_timed_skeleton_from_attributes(tmp_path):
+    output_file = tmp_path / "model.xml"
+    tree = DerivationTree(
+        goal="attacker(secret)",
+        capability_attributes={
+            "Database leak": {"unlocking_time": "2", "mitigation_time": "1"},
+            "Rainbow table attack": {},
+        },
+    )
+    tree.add_node(
+        "Database leak",
+        node_type="capability",
+        capabilities={"Database leak"},
+        variant_id="capability_leaf_1",
+    )
+    tree.add_node(
+        "Rainbow table attack",
+        node_type="capability",
+        capabilities={"Rainbow table attack"},
+        variant_id="capability_leaf_2",
+    )
+
+    UppaalGenerator.render_tree(output_file, tree)
+
+    templates = ET.parse(output_file).getroot().findall("template")
+    declarations = {
+        template.findtext("name"): template.findtext("declaration")
+        for template in templates
+    }
+    assert "// Backend: mitigatable_capability" in declarations["Obtain_cap_database_leak"]
+    assert "// Backend: immediate_capability" in declarations["Obtain_cap_rainbow_table_attack"]
+
+    standard_template = ET.parse(output_file).getroot().find(
+        ".//template[name='Obtain_cap_rainbow_table_attack']"
+    )
+    assert "clock" not in (standard_template.findtext("declaration") or "")
+    assert not any(name.text == "Committed" for name in standard_template.findall("location/name"))
+
+
+def test_timed_capability_has_parameterized_three_state_acquisition(tmp_path):
+    output_file = tmp_path / "model.xml"
+    tree = DerivationTree(
+        goal="attacker(secret)",
+        capability_costs={"Database leak": {"hack": 1}},
+        capability_attributes={
+            "Database leak": {"unlocking_time": "2", "mitigation_time": "1"}
+        },
+    )
+    tree.add_node(
+        "Database leak",
+        node_type="capability",
+        capabilities={"Database leak"},
+        variant_id="capability_leaf",
+    )
+
+    UppaalGenerator.render_tree(output_file, tree)
+
+    root = ET.parse(output_file).getroot()
+    template = root.find(".//template[name='Obtain_cap_database_leak']")
+    assert template.findtext("parameter") == "int unlocking_time, int mitigation_time"
+    assert "clock unlocking_clock, mitigation_clock;" in template.findtext("declaration")
+    assert "broadcast chan cap_database_leak_start;" in root.findtext("declaration")
+    assert {name.text for name in template.findall("location/name")} == {
+        "Idle",
+        "Committed",
+        "Obtained",
+    }
+    locations = {
+        location.findtext("name"): (location.attrib["x"], location.attrib["y"])
+        for location in template.findall("location")
+    }
+    assert locations["Idle"] == ("0", "0")
+    assert locations["Committed"] == ("260", "-140")
+    assert locations["Obtained"] == ("520", "0")
+    assert [child.tag for child in template] == [
+        "name",
+        "parameter",
+        "declaration",
+        "location",
+        "location",
+        "location",
+        "init",
+        "transition",
+        "transition",
+    ]
+    transitions = template.findall("transition")
+    assert len(transitions) == 2
+    assert "unlocking_clock = 0" in ET.tostring(transitions[0], encoding="unicode")
+    assert "cap_database_leak_start!" in ET.tostring(transitions[0], encoding="unicode")
+    assert "unlocking_clock &gt;= unlocking_time" in ET.tostring(transitions[1], encoding="unicode")
+    assert "database_leak_process = Obtain_cap_database_leak(2, 1);" in output_file.read_text()

@@ -6,6 +6,8 @@ from xml.etree import ElementTree as ET
 
 from compareverif.attack_tree import DerivationTree, TreeNode
 from compareverif.scenarios.generator import create_scenario_filename
+from .immediate_capability import ImmediateCapabilityAutomaton
+from .mitigatable_capability import MitigatableCapabilityAutomaton
 
 
 class UppaalGenerator:
@@ -78,13 +80,41 @@ class UppaalGenerator:
         return budgets
 
     @classmethod
+    def _capability_backend(cls, tree: DerivationTree, node: TreeNode) -> str:
+        """Select the capability automaton backend from its declared attributes."""
+        attributes = {}
+        for capability in node.capabilities or {node.fact}:
+            attributes.update(tree.capability_attributes.get(capability, {}))
+
+        if "unlocking_time" in attributes or "mitigation_time" in attributes:
+            return "mitigatable_capability"
+        return "immediate_capability"
+
+    @classmethod
+    def _capability_attributes(cls, tree: DerivationTree, node: TreeNode) -> dict:
+        """Merge attributes for all capability names represented by a node."""
+        attributes = {}
+        for capability in node.capabilities or {node.fact}:
+            attributes.update(tree.capability_attributes.get(capability, {}))
+        return attributes
+
+    @staticmethod
+    def _attribute_number(attributes: dict, name: str, default: int = 0) -> int:
+        """Read a non-negative integer template parameter from capability metadata."""
+        try:
+            value = int(attributes.get(name, default))
+        except (TypeError, ValueError):
+            return default
+        return max(value, 0)
+
+    @classmethod
     def render_empty(cls, output_file: Path) -> None:
         """Write a minimal but valid empty UPPAAL document."""
         nta = ET.Element("nta")
         ET.SubElement(nta, "declaration").text = "// No derivation nodes available.\n"
         template = ET.SubElement(nta, "template")
         ET.SubElement(template, "name").text = "EventLoop"
-        ET.SubElement(template, "declaration").text = "clock event_clock;\n"
+        ET.SubElement(template, "declaration").text = "clock main_clock;\n"
         location = ET.SubElement(template, "location", {"id": "event_loop", "x": "0", "y": "0"})
         ET.SubElement(location, "name", {"x": "0", "y": "-34"}).text = "EventLoop"
         ET.SubElement(template, "init", {"ref": "event_loop"})
@@ -121,6 +151,11 @@ class UppaalGenerator:
             declaration_lines.append(f"\n// {cls._pretty_text(node)}")
             declaration_lines.append(f"bool {variable_names[key]} = false;")
             declaration_lines.append(f"broadcast chan {variable_names[key]}_c;")
+            if (
+                node.node_type == "capability"
+                and cls._capability_backend(tree, node) == "mitigatable_capability"
+            ):
+                declaration_lines.append(f"broadcast chan {variable_names[key]}_start;")
         if resource_budgets:
             declaration_lines.append("\n// Attacker resource budgets.")
             for resource, budget in resource_budgets.items():
@@ -129,7 +164,7 @@ class UppaalGenerator:
 
         template = ET.SubElement(nta, "template")
         ET.SubElement(template, "name").text = "EventLoop"
-        ET.SubElement(template, "declaration").text = "clock event_clock;\n"
+        ET.SubElement(template, "declaration").text = "clock main_clock;\n"
 
         location = ET.SubElement(template, "location", {"id": "event_loop", "x": "0", "y": "0"})
         ET.SubElement(location, "name", {"x": "0", "y": "-34"}).text = "EventLoop"
@@ -192,14 +227,29 @@ class UppaalGenerator:
             ET.SubElement(transition, "nail", {"x": str(nail_offset), "y": str(nail_height)})
             ET.SubElement(transition, "nail", {"x": str(nail_offset + 60), "y": str(nail_height)})
 
-        for index, (key, node) in enumerate(capability_nodes):
+        backend_by_name = {
+            "immediate_capability": ImmediateCapabilityAutomaton,
+            "mitigatable_capability": MitigatableCapabilityAutomaton,
+        }
+        for key, node in capability_nodes:
             capability_name = variable_names[key]
             capability_template_name = f"Obtain_{capability_name}"
+            capability_backend = cls._capability_backend(tree, node)
             capability_template = ET.SubElement(nta, "template")
             ET.SubElement(capability_template, "name").text = capability_template_name
-            ET.SubElement(capability_template, "declaration").text = "clock acquisition_clock;\n"
+            if capability_backend == "mitigatable_capability":
+                ET.SubElement(capability_template, "parameter").text = (
+                    "int unlocking_time, int mitigation_time"
+                )
+                ET.SubElement(capability_template, "declaration").text = (
+                    "// Backend: mitigatable_capability\n"
+                    "clock unlocking_clock, mitigation_clock;\n"
+                )
+            else:
+                ET.SubElement(capability_template, "declaration").text = "// Backend: immediate_capability\n"
 
             idle_id = f"{capability_name}_idle"
+            committed_id = f"{capability_name}_committed"
             obtained_id = f"{capability_name}_obtained"
             idle = ET.SubElement(
                 capability_template,
@@ -207,12 +257,19 @@ class UppaalGenerator:
                 {"id": idle_id, "x": "0", "y": "0"},
             )
             ET.SubElement(idle, "name", {"x": "0", "y": "-34"}).text = "Idle"
+            if capability_backend == "mitigatable_capability":
+                committed = ET.SubElement(
+                    capability_template,
+                    "location",
+                    {"id": committed_id, "x": "260", "y": "-140"},
+                )
+                ET.SubElement(committed, "name", {"x": "260", "y": "-174"}).text = "Committed"
             obtained = ET.SubElement(
                 capability_template,
                 "location",
-                {"id": obtained_id, "x": "260", "y": "0"},
+                {"id": obtained_id, "x": "520", "y": "0"},
             )
-            ET.SubElement(obtained, "name", {"x": "260", "y": "-34"}).text = "Obtained"
+            ET.SubElement(obtained, "name", {"x": "520", "y": "-34"}).text = "Obtained"
             ET.SubElement(capability_template, "init", {"ref": idle_id})
 
             capability_costs = {}
@@ -221,47 +278,40 @@ class UppaalGenerator:
                     if resource in resource_names and isinstance(cost, int) and cost > 0:
                         capability_costs[resource] = capability_costs.get(resource, 0) + cost
 
-            transition = ET.SubElement(
-                capability_template,
-                "transition",
-                {"id": f"capability_transition_{index}"},
-            )
-            ET.SubElement(transition, "source", {"ref": idle_id})
-            ET.SubElement(transition, "target", {"ref": obtained_id})
-            guard = ET.SubElement(transition, "label", {"kind": "guard", "x": "40", "y": "-30"})
-            guard_parts = [f"{resource_names[resource]} >= {cost}" for resource, cost in capability_costs.items()]
-            guard.text = " && ".join(guard_parts) if guard_parts else "true"
-            assignment = ET.SubElement(
-                transition,
-                "label",
-                {"kind": "assignment", "x": "40", "y": "0"},
-            )
-            assignments = [f"{capability_name} = true"]
-            assignments.extend(
-                f"{resource_names[resource]} -= {cost}"
-                for resource, cost in capability_costs.items()
-            )
-            assignment.text = ", ".join(assignments)
-            synchronization = ET.SubElement(
-                transition,
-                "label",
-                {"kind": "synchronisation", "x": "40", "y": "30"},
-            )
-            synchronization.text = f"{capability_name}_c!"
-            comment = ET.SubElement(
-                transition,
-                "label",
-                {"kind": "comments", "x": "40", "y": "60"},
-            )
-            comment.text = cls._pretty_text(node)
+            backend_kwargs = {
+                "template": capability_template,
+                "capability_name": capability_name,
+                "idle_id": idle_id,
+                "obtained_id": obtained_id,
+                "capability_costs": capability_costs,
+                "resource_names": resource_names,
+                "pretty_text": cls._pretty_text(node),
+            }
+            backend = backend_by_name[capability_backend]
+            if capability_backend == "mitigatable_capability":
+                backend_kwargs["committed_id"] = committed_id
+                backend_kwargs["start_channel"] = f"{capability_name}_start"
+                attributes = cls._capability_attributes(tree, node)
+                backend_kwargs["unlocking_time"] = cls._attribute_number(attributes, "unlocking_time")
+                backend_kwargs["mitigation_time"] = cls._attribute_number(attributes, "mitigation_time")
+            backend.render(**backend_kwargs)
 
         system = ET.SubElement(nta, "system")
         system_lines = ["main_process = EventLoop();"]
         for key, _node in capability_nodes:
             capability_name = variable_names[key]
-            system_lines.append(
-                f"{capability_name}_process = Obtain_{capability_name}();"
-            )
+            node = tree.nodes[key]
+            if cls._capability_backend(tree, node) == "mitigatable_capability":
+                attributes = cls._capability_attributes(tree, node)
+                unlocking_time = cls._attribute_number(attributes, "unlocking_time")
+                mitigation_time = cls._attribute_number(attributes, "mitigation_time")
+                system_lines.append(
+                    f"{capability_name}_process = Obtain_{capability_name}({unlocking_time}, {mitigation_time});"
+                )
+            else:
+                system_lines.append(
+                    f"{capability_name}_process = Obtain_{capability_name}();"
+                )
         system_lines.append(
             "system " + ", ".join(
                 ["main_process"]
