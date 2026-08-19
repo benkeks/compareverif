@@ -165,6 +165,9 @@ python3 attack_tree_extractor.py <scenario_file.pv> --graphviz-pdf <dir> --highl
 
 # Dump the extracted attack tree as JSON
 python3 attack_tree_extractor.py <scenario_file.pv> --json-out <dir>
+
+# Generate a UPPAAL timed-automata model
+python3 attack_tree_extractor.py <scenario_file.pv> --uppaal-out attack_tree.xml
 ```
 
 **Examples:**
@@ -192,6 +195,15 @@ python3 attack_tree_extractor.py \
   --graphviz-dot trees/
 ```
 
+Generate a UPPAAL model for a selected attack-tree query:
+```bash
+python3 attack_tree_extractor.py \
+  _scenarios/singularized_passwords/rainbow_table_attack+intruder_at_database+intruder_at_singularization_database.pv \
+  --manifest _scenarios/singularized_passwords/manifest.json \
+  --query "no pw leakage" \
+  --uppaal-out singpass.xml
+```
+
 Generate an annotated tree with clause IDs and attack highlighting:
 ```bash
 python3 attack_tree_extractor.py \
@@ -211,6 +223,7 @@ The script produces:
 2. **Dot files** (optional) - Graphviz graph description format, loadable in any graphviz tool
 3. **PDF files** (optional) - Visual diagrams of attack trees
 4. **JSON files** (optional) - Plain machine-readable attack tree structure
+5. **UPPAAL XML files** (optional) - A timed-automata event-structure model
 
 Details about the structure of the generated attack trees and the semantics of the JSON output are documented in [`docs/attack-trees.md`](docs/attack-trees.md).
 
@@ -220,6 +233,7 @@ Details about the structure of the generated attack trees and the semantics of t
 - `--graphviz-pdf DIR` - Output directory for PDF files (requires graphviz package)
 - `--graphviz-svg DIR` - Output directory for SVG files (requires graphviz package)
 - `--json-out DIR` - Output directory for JSON tree dumps
+- `--uppaal-out FILE` - Output a UPPAAL timed-automata XML model
 - `--no-summary` - Skip printing the console summary
 - `--manifest FILE` - Use manifest.json for capability analysis (annotates clauses with capabilities)
 - `--original-terms` - Use original ProVerif terms in node labels instead of human-readable formatting
@@ -242,6 +256,20 @@ python3 attack_tree_extractor.py \
   _scenarios/hashed_passwords/rainbow_table_attack+intruder_at_database.pv \
   --graphviz-pdf annotated_trees/
 ```
+
+#### Automata Output for UPPAAL
+
+The UPPAAL output contains one boolean variable and one self-loop transition for each node in the selected derivation tree.
+
+- Main goals use `goal_` names,
+- intermediate nodes use `ev_` names, and
+- capability nodes use the capability slug used in generated scenario filenames, prefixed with `cap_`.
+
+Transition guards require prerequisite nodes to be true, and each transition emits a matching broadcast synchronization event so it can be observed in the UPPAAL simulator.
+
+Capability costs from the manifest become integer resources named `res_<resource>`. Capability transitions require sufficient resources and decrement them when the capability is activated. The initial budgets are sized to enable the attack.
+
+The model includes a reachability query for the main attack goal.
 
 ## Testing
 
