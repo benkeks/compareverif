@@ -134,12 +134,12 @@ class UppaalGenerator:
         nta = ET.Element("nta")
         ET.SubElement(nta, "declaration").text = "// No derivation nodes available.\n"
         template = ET.SubElement(nta, "template")
-        ET.SubElement(template, "name").text = "EventLoop"
+        ET.SubElement(template, "name").text = "AttackProgress"
         ET.SubElement(template, "declaration").text = "clock main_clock;\n"
-        location = ET.SubElement(template, "location", {"id": "event_loop", "x": "0", "y": "0"})
-        ET.SubElement(location, "name", {"x": "0", "y": "-34"}).text = "EventLoop"
-        ET.SubElement(template, "init", {"ref": "event_loop"})
-        ET.SubElement(nta, "system").text = "Process = EventLoop();\nsystem Process;\n"
+        location = ET.SubElement(template, "location", {"id": "attack_progress", "x": "0", "y": "0"})
+        ET.SubElement(location, "name", {"x": "0", "y": "-34"}).text = "AttackProgress"
+        ET.SubElement(template, "init", {"ref": "attack_progress"})
+        ET.SubElement(nta, "system").text = "Process = AttackProgress();\nsystem Process;\n"
         queries = ET.SubElement(nta, "queries")
         query = ET.SubElement(queries, "query")
         ET.SubElement(query, "formula").text = "A[] true"
@@ -185,12 +185,12 @@ class UppaalGenerator:
         declaration.text = "\n".join(declaration_lines) + "\n"
 
         template = ET.SubElement(nta, "template")
-        ET.SubElement(template, "name").text = "EventLoop"
+        ET.SubElement(template, "name").text = "AttackProgress"
         ET.SubElement(template, "declaration").text = "clock main_clock;\n"
 
-        location = ET.SubElement(template, "location", {"id": "event_loop", "x": "0", "y": "0"})
-        ET.SubElement(location, "name", {"x": "0", "y": "-34"}).text = "EventLoop"
-        ET.SubElement(template, "init", {"ref": "event_loop"})
+        location = ET.SubElement(template, "location", {"id": "attack_progress", "x": "0", "y": "0"})
+        ET.SubElement(location, "name", {"x": "0", "y": "-34"}).text = "AttackProgress"
+        ET.SubElement(template, "init", {"ref": "attack_progress"})
 
         event_nodes = [
             (key, node) for key, node in tree.nodes.items() if node.node_type != "capability"
@@ -201,8 +201,8 @@ class UppaalGenerator:
         node_count = len(event_nodes)
         for index, (key, node) in enumerate(event_nodes):
             transition = ET.SubElement(template, "transition", {"id": f"t_{index}"})
-            ET.SubElement(transition, "source", {"ref": "event_loop"})
-            ET.SubElement(transition, "target", {"ref": "event_loop"})
+            ET.SubElement(transition, "source", {"ref": "attack_progress"})
+            ET.SubElement(transition, "target", {"ref": "attack_progress"})
 
             if node_count < 20:
                 nail_offset = 180
@@ -261,7 +261,7 @@ class UppaalGenerator:
             ET.SubElement(capability_template, "name").text = capability_template_name
             if capability_backend == "mitigatable_capability":
                 ET.SubElement(capability_template, "parameter").text = (
-                    "int unlocking_time, int mitigation_time"
+                    "const int unlocking_time, const int mitigation_time"
                 )
                 ET.SubElement(capability_template, "declaration").text = (
                     "// Backend: mitigatable_capability\n"
@@ -321,27 +321,35 @@ class UppaalGenerator:
             backend.render(**backend_kwargs)
 
         system = ET.SubElement(nta, "system")
-        system_lines = ["main_process = EventLoop();"]
+        system_blocks = ["main_process = AttackProgress();"]
         for key, _node in capability_nodes:
             capability_name = variable_names[key]
             node = tree.nodes[key]
             if cls._capability_backend(tree, node) == "mitigatable_capability":
                 unlocking_time, mitigation_time = cls._timing_parameters(tree, node)
-                system_lines.append(
-                    f"{capability_name}_process = Obtain_{capability_name}({unlocking_time}, {mitigation_time});"
+                capability_constant_prefix = capability_name.removeprefix("cap_").upper()
+                system_blocks.append(
+                    "\n".join(
+                        [
+                            f"const int {capability_constant_prefix}_UNLOCKING_TIME = {unlocking_time};",
+                            f"const int {capability_constant_prefix}_MITIGATION_TIME = {mitigation_time};",
+                            f"{capability_name}_process = Obtain_{capability_name}(",
+                            f"    {capability_constant_prefix}_UNLOCKING_TIME,",
+                            f"    {capability_constant_prefix}_MITIGATION_TIME",
+                            ");",
+                        ]
+                    )
                 )
             else:
-                system_lines.append(
-                    f"{capability_name}_process = Obtain_{capability_name}();"
-                )
-        system_lines.append(
+                system_blocks.append(f"{capability_name}_process = Obtain_{capability_name}();")
+        system_blocks.append(
             "system " + ", ".join(
                 ["main_process"]
                 + [f"{variable_names[key]}_process" for key, _node in capability_nodes]
             )
             + ";"
         )
-        system.text = "\n".join(system_lines) + "\n"
+        system.text = "\n\n".join(system_blocks) + "\n"
 
         queries = ET.SubElement(nta, "queries")
         query = ET.SubElement(queries, "query")

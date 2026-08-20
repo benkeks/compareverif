@@ -45,7 +45,7 @@ def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     root = ET.parse(output_file).getroot()
     transitions = root.findall(".//transition")
     assert len(transitions) == len(tree.nodes)
-    main_transitions = root.findall(".//template[name='EventLoop']/transition")
+    main_transitions = root.findall(".//template[name='AttackProgress']/transition")
     capability_transitions = root.findall(".//template[name='Obtain_cap_rainbow_table_attack']/transition")
     assert len(main_transitions) == 2
     assert len(capability_transitions) == 1
@@ -77,7 +77,7 @@ def test_render_tree_declares_all_nodes_and_prerequisite_loops(tmp_path):
     assert "cap_rainbow_table_attack_c!" in document
     assert "<formula>E&lt;&gt; goal_attacker_secret_goal_1</formula>" in document
     assert "<comment>Attacker learns secret.</comment>" in document
-    assert "<location id=\"event_loop\"" in document
+    assert "<location id=\"attack_progress\"" in document
     assert 'kind="synchronisation"' in document
     assert 'kind="comments"' in document
 
@@ -198,7 +198,7 @@ def test_timed_capability_has_parameterized_three_state_acquisition(tmp_path):
 
     root = ET.parse(output_file).getroot()
     template = root.find(".//template[name='Obtain_cap_database_leak']")
-    assert template.findtext("parameter") == "int unlocking_time, int mitigation_time"
+    assert template.findtext("parameter") == "const int unlocking_time, const int mitigation_time"
     assert "clock unlocking_clock, mitigation_clock;" in template.findtext("declaration")
     assert "broadcast chan cap_database_leak_start;" in root.findtext("declaration")
     assert "broadcast chan cap_database_leak_mitigated;" in root.findtext("declaration")
@@ -244,7 +244,11 @@ def test_timed_capability_has_parameterized_three_state_acquisition(tmp_path):
         "cap_database_leak = false, mitigation_clock = 0"
     )
     assert obtained_timeout.findtext("label[@kind='synchronisation']") == "cap_database_leak_mitigated!"
-    assert "database_leak_process = Obtain_cap_database_leak(2, 1);" in output_file.read_text()
+    document = output_file.read_text()
+    assert "const int DATABASE_LEAK_UNLOCKING_TIME = 2;" in document
+    assert "const int DATABASE_LEAK_MITIGATION_TIME = 1;" in document
+    assert "cap_database_leak_process = Obtain_cap_database_leak(\n    DATABASE_LEAK_UNLOCKING_TIME,\n    DATABASE_LEAK_MITIGATION_TIME\n);" in document
+    assert "\n\n" in document.split("<system>", 1)[1].split("</system>", 1)[0]
 
 
 @pytest.mark.parametrize(
