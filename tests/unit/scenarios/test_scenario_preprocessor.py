@@ -46,6 +46,41 @@ class TestScenarioPreprocessor:
         for scenario_file_obj in generated:
             assert scenario_file_obj.path.exists()
 
+    def test_preprocess_groups_same_named_snippets(self, tmp_scenario_dir):
+        """All snippets with one name share one include/exclude choice."""
+        scenario_file = tmp_scenario_dir / "grouped.pv"
+        scenario_file.write_text("""
+(*** Attack [10 time]
+first code.
+***)
+
+BASE_MARKER.
+
+(*** Attack
+second code.
+***)
+
+query attacker(secret).
+""")
+
+        preprocessor = ScenarioPreprocessor()
+        generated, output_dir = preprocessor.preprocess(
+            str(scenario_file), str(tmp_scenario_dir / "output")
+        )
+
+        assert len(generated) == 2
+        base = next(item for item in generated if item.path.stem == "base_scenario")
+        included = next(item for item in generated if item.path.stem == "attack")
+        assert "first code." not in base.path.read_text()
+        assert "second code." not in base.path.read_text()
+        included_content = included.path.read_text()
+        assert "first code." in included_content
+        assert "second code." in included_content
+        assert included_content.index("first code.") < included_content.index("BASE_MARKER.")
+        assert included_content.index("BASE_MARKER.") < included_content.index("second code.")
+        assert included.capability_names == ["Attack"]
+        assert output_dir == tmp_scenario_dir / "output"
+
     def test_preprocess_check_all_scenarios_generates_all_combinations(self, tmp_scenario_dir, sample_scenario_content):
         """The exhaustive mode (default) should preserve eager scenario generation."""
         scenario_file = tmp_scenario_dir / "test.pv"

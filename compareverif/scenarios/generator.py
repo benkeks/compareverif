@@ -3,7 +3,7 @@
 import re
 from typing import Dict, List, Tuple, Optional
 from itertools import product
-from .models import AttackerCapability, AttackVariant
+from .models import AttackerCapability, AttackVariant, CapabilityPlaceholder
 
 
 def generate_capability_presence_combinations(
@@ -75,7 +75,7 @@ def generate_scenario_combinations(capabilities: List[AttackerCapability]) -> Li
 def build_scenario_content(
     combination: Tuple[int, ...],
     capabilities: List[AttackerCapability],
-    content_chunks: List[Optional[str]],
+    content_chunks: List[Optional[object]],
     use_primary_variants_only: bool = False,
 ) -> Tuple[str, List[AttackVariant], Dict[str, float]]:
     """Build output content for a scenario combination.
@@ -97,29 +97,38 @@ def build_scenario_content(
     # Process content chunks and insert capabilities based on combination
     cap_idx = 0
     for chunk in content_chunks:
-        if chunk is None:
+        if isinstance(chunk, CapabilityPlaceholder) or chunk is None:
             # This is a capability placeholder
-            if cap_idx < len(capabilities):
-                choice = combination[cap_idx]
+            placeholder = chunk if isinstance(chunk, CapabilityPlaceholder) else None
+            current_cap_idx = (
+                placeholder.capability_index if placeholder is not None else cap_idx
+            )
+            if current_cap_idx < len(capabilities):
+                choice = combination[current_cap_idx]
                 if choice > 0:
                     if use_primary_variants_only:
-                        primary_variant = capabilities[cap_idx].variants[0]
+                        primary_variant = capabilities[current_cap_idx].variants[0]
                         variant = AttackVariant(
-                            name=capabilities[cap_idx].primary_name,
+                            name=capabilities[current_cap_idx].primary_name,
                             costs=dict(primary_variant.costs),
                             attributes=dict(primary_variant.attributes),
                         )
                     else:
-                        variant = capabilities[cap_idx].variants[choice - 1]
+                        variant = capabilities[current_cap_idx].variants[choice - 1]
                     attack_variants.append(variant)
-                    output_content += capabilities[cap_idx].content
+                    output_content += (
+                        placeholder.content
+                        if placeholder is not None
+                        else capabilities[current_cap_idx].content
+                    )
 
                     # Accumulate costs for whichever variant metadata is represented.
                     for cost_dim, cost_val in variant.costs.items():
                         total_costs[cost_dim] = total_costs.get(cost_dim, 0) + cost_val
                 else:
-                    output_content += f'(* No {capabilities[cap_idx].primary_name}*)'
-                cap_idx += 1
+                    output_content += f'(* No {capabilities[current_cap_idx].primary_name}*)'
+                if placeholder is None:
+                    cap_idx += 1
         else:
             # Regular content chunk
             output_content += chunk

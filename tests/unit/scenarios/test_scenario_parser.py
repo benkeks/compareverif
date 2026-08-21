@@ -8,6 +8,7 @@ from compareverif.scenarios.parser import (
     extract_attacker_capabilities,
 )
 from compareverif.scenarios.models import AttackVariant
+from compareverif.scenarios.models import CapabilityPlaceholder
 
 
 class TestParseCosts:
@@ -146,7 +147,7 @@ more content."""
         
         assert len(chunks) == 3
         assert "base content." in chunks[0]
-        assert chunks[1] is None  # Placeholder for capability
+        assert isinstance(chunks[1], CapabilityPlaceholder)
         assert "more content." in chunks[2]
     
     def test_multiple_capabilities(self):
@@ -165,7 +166,7 @@ final."""
         assert len(caps) == 2
         assert caps[0].primary_name == "Cap 1"
         assert caps[1].primary_name == "Cap 2"
-        assert len(chunks) == 5  # initial, None, middle, None, final
+        assert len(chunks) == 5  # initial, placeholder, middle, placeholder, final
     
     def test_variant_capability(self):
         """Test extracting capability with variants."""
@@ -178,3 +179,48 @@ code here.
         assert len(caps[0].variants) == 2
         assert caps[0].variants[0].name == "Attack"
         assert caps[0].variants[1].name == "Attack variant"
+
+    def test_same_named_snippets_are_grouped(self):
+        """Same-named snippets form one capability containing all code."""
+        content = """(*** Attack [100 time]
+first code.
+***)
+base.
+(*** Attack
+second code.
+***)"""
+
+        caps, chunks = extract_attacker_capabilities(content)
+
+        assert len(caps) == 1
+        assert caps[0].variants[0].costs == {"time": 100}
+        assert "first code." in caps[0].content
+        assert "second code." in caps[0].content
+        placeholders = [chunk for chunk in chunks if isinstance(chunk, CapabilityPlaceholder)]
+        assert len(placeholders) == 2
+        assert {placeholder.capability_index for placeholder in placeholders} == {0}
+
+    def test_same_named_snippets_use_the_only_metadata_source(self):
+        """Metadata from an otherwise plain duplicate supplies the variant."""
+        content = """(*** Attack
+first code.
+***)
+(*** Attack {unlock: 1}
+second code.
+***)"""
+
+        caps, _ = extract_attacker_capabilities(content)
+
+        assert caps[0].variants[0].attributes == {"unlock": "1"}
+
+    def test_same_named_snippets_reject_multiple_metadata_sources(self):
+        """Two metadata-bearing snippets for one capability are invalid."""
+        content = """(*** Attack [100 time]
+first code.
+***)
+(*** Attack [200 time]
+second code.
+***)"""
+
+        with pytest.raises(ValueError, match="multiple snippets"):
+            extract_attacker_capabilities(content)

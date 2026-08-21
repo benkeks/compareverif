@@ -21,6 +21,13 @@ class AttackerCapability:
     content: str
 
 
+@dataclass(frozen=True)
+class CapabilityPlaceholder:
+    """A capability snippet's location in the source document."""
+    capability_index: int
+    content: str
+
+
 @dataclass
 class ScenarioFile:
     """Result of generating a scenario file."""

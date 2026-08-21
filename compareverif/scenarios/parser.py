@@ -2,7 +2,7 @@
 
 import re
 from typing import Dict, List, Tuple
-from .models import AttackVariant, AttackerCapability
+from .models import AttackVariant, AttackerCapability, CapabilityPlaceholder
 
 
 def parse_costs(header_part: str) -> Dict[str, float]:
@@ -111,6 +111,9 @@ def extract_attacker_capabilities(content: str) -> Tuple[List[AttackerCapability
         return [], [content]
     
     capabilities: List[AttackerCapability] = []
+    capabilities_by_name: Dict[str, AttackerCapability] = {}
+    capability_indices: Dict[str, int] = {}
+    metadata_sources: Dict[str, AttackVariant] = {}
     content_chunks: List[str] = []
     last_pos = 0
     
@@ -124,13 +127,43 @@ def extract_attacker_capabilities(content: str) -> Tuple[List[AttackerCapability
         variants = parse_magical_comment(header)
         
         if variants:
-            capability = AttackerCapability(
-                primary_name=variants[0].name,
-                variants=variants,
-                content=match.group(2).strip()
+            primary_name = variants[0].name
+            snippet_content = match.group(2).strip()
+            metadata_variant = next(
+                (variant for variant in variants
+                 if variant.costs or variant.attributes),
+                None,
             )
-            capabilities.append(capability)
-            content_chunks.append(None)  # Placeholder for this capability
+
+            capability = capabilities_by_name.get(primary_name)
+            if capability is None:
+                capability = AttackerCapability(
+                    primary_name=primary_name,
+                    variants=variants,
+                    content=snippet_content,
+                )
+                capabilities_by_name[primary_name] = capability
+                capabilities.append(capability)
+                capability_indices[primary_name] = len(capabilities) - 1
+                if metadata_variant is not None:
+                    metadata_sources[primary_name] = metadata_variant
+            else:
+                if metadata_variant is not None:
+                    if primary_name in metadata_sources:
+                        raise ValueError(
+                            f"Capability '{primary_name}' has price or attributes "
+                            "defined in multiple snippets"
+                        )
+                    capability.variants = variants
+                    metadata_sources[primary_name] = metadata_variant
+                capability.content = f"{capability.content}\n{snippet_content}"
+
+            content_chunks.append(
+                CapabilityPlaceholder(
+                    capability_index=capability_indices[primary_name],
+                    content=snippet_content,
+                )
+            )
         
         last_pos = match.end()
     
