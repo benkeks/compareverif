@@ -13,6 +13,9 @@ The attack tree visualizations show:
 - **Table facts** (`table(...)`) as cylinder-shaped nodes
 - **Channel transport facts** (`mess(...)`) as note-shaped nodes
 - **Attack capabilities** as dedicated red octagonal leaf nodes with their costs (e.g., `1 hack`, `100 time`)
+- **Capability attributes** as graphviz `xlabel`s placed next to each capability node,
+  sourced from the `{key: value, ...}` annotations on the capability's magical comment
+  header (see [`docs/manifests.md`](docs/manifests.md))
 - **Optional clause IDs** inside fact nodes when `--show-clause-ids` is enabled
 - **Optional attack highlighting** (`--highlight-attack`) that fades branches not on paths above attack capability nodes
 - **OR markers on capability edges** when multiple capabilities can realize the same fact
@@ -26,6 +29,8 @@ When `--json-out` is enabled, each scenario additionally produces a JSON file
   - `depends_on_all`: conjunctive prerequisites (AND)
   - `depends_on_any`: disjunctive prerequisite groups (OR), represented as list-of-lists
   - `costs`: present for capability nodes, includes capability prices (e.g., `{"hack": 1}`)
+  - `attributes`: present for capability nodes, includes string key-value metadata declared
+    via the `{key: value, ...}` header notation (e.g., `{"unlock": "1"}`)
 
 Semantics example:
 

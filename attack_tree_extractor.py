@@ -19,6 +19,7 @@ from compareverif.attack_tree import (
     CapabilityAnalyzer,
     GraphvizRenderer,
 )
+from compareverif.uppaal import UppaalGenerator
 
 
 def _describe_query(query: str) -> str:
@@ -130,6 +131,11 @@ def main():
         help="Output directory for plain JSON attack tree dumps",
     )
     parser.add_argument(
+        "--uppaal-out",
+        metavar="FILE",
+        help="Output file for an empty UPPAAL timed automata model",
+    )
+    parser.add_argument(
         "--no-summary",
         action="store_true",
         help="Skip printing the summary to console",
@@ -169,6 +175,7 @@ def main():
         print("  --graphviz-pdf DIR      Output graphviz PDF files to DIR (requires graphviz)")
         print("  --graphviz-svg DIR      Output graphviz SVG files to DIR (requires graphviz)")
         print("  --json-out DIR          Output plain JSON tree dumps to DIR")
+        print("  --uppaal-out FILE       Output an empty UPPAAL timed automata model")
         print("  --no-summary            Skip printing the summary")
         print("  --manifest FILE         Use manifest.json for capability analysis")
         print("  --original-terms        Use original ProVerif syntax for node labels")
@@ -209,7 +216,9 @@ def main():
         json_dir = Path(args.json_out)
         json_dir.mkdir(parents=True, exist_ok=True)
 
-    show_window = not any([dot_dir, pdf_dir, svg_dir, json_dir])
+    uppaal_file = Path(args.uppaal_out) if args.uppaal_out else None
+
+    show_window = not any([dot_dir, pdf_dir, svg_dir, json_dir, uppaal_file])
     windows_created = False
 
     extractor = AttackTreeExtractor()
@@ -219,6 +228,7 @@ def main():
     capability_analyzer = None
     manifest_data = None
     capability_costs = {}  # Initialize capability costs (empty if no manifest)
+    capability_attributes = {}  # Initialize capability attributes (empty if no manifest)
     if args.manifest:
         manifest_path = Path(args.manifest)
         if not manifest_path.exists():
@@ -236,6 +246,7 @@ def main():
 
         capability_analyzer = CapabilityAnalyzer.from_manifest(manifest_path)
         capability_costs = capability_analyzer.capability_costs
+        capability_attributes = capability_analyzer.capability_attributes
         print()
 
     for scenario_path in args.files:
@@ -316,6 +327,7 @@ def main():
                 use_readable,
                 args.show_clause_ids,
                 args.highlight_attack,
+                capability_attributes,
             )
             if tree:
                 # Annotate with capabilities if analyzer is available
@@ -342,9 +354,16 @@ def main():
                     json_file = json_dir / f"{base_name}_derivation.json"
                     renderer.render_to_json(tree, json_file)
 
+                if uppaal_file:
+                    UppaalGenerator.render_tree(uppaal_file, tree)
+                    print(f"UPPAAL model written to: {uppaal_file}")
+
                 if show_window:
                     renderer.render_to_window(tree, title=f"Attack Tree: {base_name}")
                     windows_created = True
+
+    if uppaal_file and not args.files:
+        UppaalGenerator.render_empty(uppaal_file)
 
     if show_window and windows_created:
         renderer.show_windows()

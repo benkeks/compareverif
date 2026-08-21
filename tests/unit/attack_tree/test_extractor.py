@@ -43,6 +43,7 @@ class TestAttackTreeExtractor:
         )
         mock_analyzer = MagicMock(spec=CapabilityAnalyzer)
         mock_analyzer.capability_costs = {"Rainbow": {"time": 5}}
+        mock_analyzer.capability_attributes = {}
         mock_analyzer.annotate_tree_with_capabilities.side_effect = lambda tree, _: tree
 
         with patch.object(extractor, "extract", return_value=output), patch(

@@ -24,7 +24,9 @@ def test_build_manifest_scenario_entry_without_result():
 
     assert entry["file"] == "scenario.pv"
     assert entry["capability_names"] == ["Attack A"]
-    assert entry["capabilities"] == [{"name": "Attack A", "costs": {"time": 5}}]
+    assert entry["capabilities"] == [
+        {"name": "Attack A", "costs": {"time": 5}, "attributes": {}}
+    ]
     assert entry["total_costs"] == {"time": 5}
     assert "verification" not in entry
 

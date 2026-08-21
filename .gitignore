@@ -9,3 +9,4 @@ __pycache__/
 .ipynb_checkpoints/
 artefact/compareverif-docker.tar.gz
 artefact/out-*
+*.xml

@@ -3,6 +3,7 @@
 import pytest
 from compareverif.scenarios.parser import (
     parse_costs,
+    parse_attributes,
     parse_magical_comment,
     extract_attacker_capabilities,
 )
@@ -38,6 +39,45 @@ class TestParseCosts:
         assert result == {}
 
 
+class TestParseAttributes:
+    """Tests for parse_attributes function."""
+
+    def test_single_attribute(self):
+        """Test parsing a single key-value attribute."""
+        result = parse_attributes("{unlock: 1}")
+        assert result == {"unlock": "1"}
+
+    def test_multiple_attributes(self):
+        """Test parsing multiple key-value attributes."""
+        result = parse_attributes("{unlock: 1, mitigate: 2}")
+        assert result == {"unlock": "1", "mitigate": "2"}
+
+    def test_no_braces(self):
+        """Test handling text without braces."""
+        result = parse_attributes("no attributes here")
+        assert result == {}
+
+    def test_empty_braces(self):
+        """Test handling empty braces."""
+        result = parse_attributes("{}")
+        assert result == {}
+
+    def test_double_quoted_value(self):
+        """Test parsing a double-quoted value, stripping the quotes."""
+        result = parse_attributes('{note: "hello world"}')
+        assert result == {"note": "hello world"}
+
+    def test_single_quoted_value(self):
+        """Test parsing a single-quoted value, stripping the quotes."""
+        result = parse_attributes("{note: 'hello world'}")
+        assert result == {"note": "hello world"}
+
+    def test_quoted_value_with_comma_and_colon(self):
+        """Test that quoted values can contain commas and colons."""
+        result = parse_attributes('{note: "a, b: c", tag: 2}')
+        assert result == {"note": "a, b: c", "tag": "2"}
+
+
 class TestParseMagicalComment:
     """Tests for parse_magical_comment function."""
     
@@ -63,6 +103,21 @@ class TestParseMagicalComment:
         assert len(result) == 1
         assert result[0].name == "Simple attack"
         assert result[0].costs == {}
+
+    def test_costs_and_attributes(self):
+        """Test parsing a variant with both costs and attributes."""
+        result = parse_magical_comment("Database leak [1 hack] {unlock: 1, mitigate: 2}")
+        assert len(result) == 1
+        assert result[0].name == "Database leak"
+        assert result[0].costs == {"hack": 1}
+        assert result[0].attributes == {"unlock": "1", "mitigate": "2"}
+
+    def test_attributes_only(self):
+        """Test parsing a variant with attributes but no costs."""
+        result = parse_magical_comment("Simple attack {tag: value}")
+        assert result[0].name == "Simple attack"
+        assert result[0].costs == {}
+        assert result[0].attributes == {"tag": "value"}
 
 
 class TestExtractAttackerCapabilities:

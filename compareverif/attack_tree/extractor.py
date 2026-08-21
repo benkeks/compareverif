@@ -106,10 +106,14 @@ class AttackTreeExtractor:
         capability_costs = (
             capability_analyzer.capability_costs if capability_analyzer is not None else None
         )
+        capability_attributes = (
+            capability_analyzer.capability_attributes if capability_analyzer is not None else None
+        )
         tree = GraphvizRenderer.build_tree_from_derivations(
             derivations,
             query_tag=query_tag,
             capability_costs=capability_costs,
+            capability_attributes=capability_attributes,
             readable_nodes=readable_nodes,
             show_clause_ids=show_clause_ids,
             highlight_attack=highlight_attack,

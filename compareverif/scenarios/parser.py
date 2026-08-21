@@ -32,11 +32,43 @@ def parse_costs(header_part: str) -> Dict[str, float]:
     return costs
 
 
+def parse_attributes(header_part: str) -> Dict[str, str]:
+    """Extract key-value attributes from a header part like '{unlock: 1, mitigate: 2}'.
+
+    Values may optionally be wrapped in single or double quotes, which allows
+    commas and colons to appear inside the value (e.g. '{note: "a, b: c"}').
+
+    Args:
+        header_part: String containing attribute specifications in braces
+
+    Returns:
+        Dictionary mapping attribute key to string value
+    """
+    attributes: Dict[str, str] = {}
+    brace_contents = re.findall(r'\{([^}]*)\}', header_part)
+    pair_pattern = re.compile(r'([^,:{}]+):\s*(?:"([^"]*)"|\'([^\']*)\'|([^,}]*))')
+    for content in brace_contents:
+        for match in pair_pattern.finditer(content):
+            key = match.group(1).strip()
+            if not key:
+                continue
+            value = match.group(2)
+            if value is None:
+                value = match.group(3)
+            if value is None:
+                value = match.group(4) or ''
+            attributes[key] = value.strip()
+    return attributes
+
+
 def parse_magical_comment(header: str) -> List[AttackVariant]:
     """Parse a magical comment header into variants.
     
     Supports syntax like:
         'Rainbow table attack [100 time] / Side-channel attack [10 time]'
+    
+    Variants may also carry string key-value attributes in braces, e.g.:
+        'Database leak [1 hack] {unlock: 1, mitigate: 2}'
     
     Args:
         header: Header string to parse
@@ -49,8 +81,10 @@ def parse_magical_comment(header: str) -> List[AttackVariant]:
     
     for part in header_parts:
         costs = parse_costs(part)
-        clean_name = re.sub(r'\s*\[[^\]]+\]', '', part).strip()
-        variants.append(AttackVariant(name=clean_name, costs=costs))
+        attributes = parse_attributes(part)
+        clean_name = re.sub(r'\s*\[[^\]]+\]', '', part)
+        clean_name = re.sub(r'\s*\{[^}]*\}', '', clean_name).strip()
+        variants.append(AttackVariant(name=clean_name, costs=costs, attributes=attributes))
     
     return variants
 
