@@ -21,6 +21,7 @@ class TreeNode:
     clause_number: Optional[int] = None  # Clause number if derived from a clause
     clause_scope: Optional[int] = None  # Query-scope identifier for the clause number
     variant_id: Optional[str] = None  # Variant identifier for disjunctive alternatives
+    required_seconds: Optional[int] = None  # Elapsed-time (attacker(seconds(N))) gate this step depends on
 
     def __post_init__(self):
         if self.node_id is None:
@@ -215,6 +216,15 @@ class DerivationTree:
                     self.nodes[key].clause_scope = clause_scope
         return self.nodes[key]
 
+    def mark_required_seconds(self, fact: str, variant_id: Optional[str], seconds: int) -> None:
+        """Record that reaching a node's fact required at least `seconds` elapsed time."""
+        key = (fact, variant_id)
+        node = self.nodes.get(key)
+        if node is None:
+            return
+        if node.required_seconds is None or seconds > node.required_seconds:
+            node.required_seconds = seconds
+
     def _allocate_node_id(self) -> str:
         """Return a collision-free node ID within this tree."""
         self._node_id_counter += 1
@@ -324,6 +334,11 @@ class DerivationTree:
                     "depends_on_any": disjunctive_groups,
                     **({"costs": costs} if node.node_type == "capability" else {}),
                     **({"attributes": attributes} if node.node_type == "capability" else {}),
+                    **(
+                        {"required_seconds": node.required_seconds}
+                        if node.required_seconds is not None
+                        else {}
+                    ),
                 }
             )
 
