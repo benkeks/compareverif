@@ -186,7 +186,7 @@ class UppaalGenerator:
 
         template = ET.SubElement(nta, "template")
         ET.SubElement(template, "name").text = "AttackProgress"
-        ET.SubElement(template, "declaration").text = "clock main_clock;\n"
+        ET.SubElement(template, "declaration").text = "clock main_clock, attack_clock;\n"
 
         location = ET.SubElement(template, "location", {"id": "attack_progress", "x": "0", "y": "0"})
         ET.SubElement(location, "name", {"x": "0", "y": "-34"}).text = "AttackProgress"
@@ -213,6 +213,8 @@ class UppaalGenerator:
             guard_parts = [f"!{variable_names[key]}"]
             for req_key in prerequisites[key]:
                 guard_parts.append(f"{variable_names[req_key]}")
+            if node.required_seconds is not None:
+                guard_parts.append(f"attack_clock >= {node.required_seconds}")
             guard_text = " && ".join(guard_parts)
 
             base_x = nail_offset + 30
@@ -224,12 +226,15 @@ class UppaalGenerator:
             )
             guard.text = guard_text
 
+            assignment_parts = [f"{variable_names[key]} = true"]
+            if node.required_seconds is not None:
+                assignment_parts.append("attack_clock = 0")
             assignment = ET.SubElement(
                 transition,
                 "label",
                 {"kind": "assignment", "x": str(base_x), "y": str(base_y + 26)},
             )
-            assignment.text = f"{variable_names[key]} = true"
+            assignment.text = ", ".join(assignment_parts)
 
             synchronization = ET.SubElement(
                 transition,
