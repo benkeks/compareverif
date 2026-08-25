@@ -13,6 +13,7 @@ from compareverif.proverif.libraries import (
     append_library_arguments,
     extract_declared_libraries_from_file,
 )
+from compareverif.uppaal import render_channel_skeleton
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -22,6 +23,11 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("scenario_file", type=Path, help="ProVerif input file (.pv)")
     parser.add_argument(
         "--proverif", default="proverif", help="ProVerif executable (default: proverif)"
+    )
+    parser.add_argument(
+        "--uppaal-out",
+        type=Path,
+        help="Write a blank UPPAAL model declaring the process's channels to this file",
     )
     return parser.parse_args()
 
@@ -59,6 +65,10 @@ def main() -> int:
         return 1
 
     print(process.render_tree())
+
+    if args.uppaal_out:
+        render_channel_skeleton(args.uppaal_out, process)
+
     return 0
 
 

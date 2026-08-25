@@ -7,8 +7,8 @@ from xml.etree import ElementTree as ET
 from compareverif.attack_tree import DerivationTree, TreeNode
 from compareverif.scenarios.generator import create_scenario_filename
 from .document import DOCTYPE, write_document
-from .immediate_capability import ImmediateCapabilityAutomaton
-from .mitigatable_capability import MitigatableCapabilityAutomaton
+from .attack_tree_immediate_capability import ImmediateCapabilityAutomaton
+from .attack_tree_mitigatable_capability import MitigatableCapabilityAutomaton
 
 
 class AttackTreeUppaalGenerator:
