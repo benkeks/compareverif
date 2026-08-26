@@ -25,11 +25,88 @@ _FREE_DECLARATION_RE = re.compile(r"^\s*free\s+([^:]+)\s*:", re.MULTILINE)
 _TABLE_ROW_CAPACITY = 3
 _TABLE_FIELD_NAMES = ["first", "second", "third", "fourth", "fifth", "sixth"]
 _FORK_CHANNEL = "_fork"
-_PROCESS_KEYWORDS = {"in", "out", "insert", "get", "if", "let", "event"}
+_PROCESS_KEYWORDS = {
+    "in",
+    "out",
+    "insert",
+    "get",
+    "if",
+    "let",
+    "event",
+    "suchthat",
+    "then",
+    "else",
+}
+_EVENT_RE = re.compile(r"^event\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*\((.*)\))?$")
+_GET_RE = re.compile(r"^get\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+_TYPED_VARIABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\s*:\s*[A-Za-z_][A-Za-z0-9_]*$")
+_SECONDS_PATTERN_RE = re.compile(r"^seconds\s*\(\s*(\d+)\s*\)$")
+_LET_SINGLE_RE = re.compile(r"^let\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*[^=]+?=\s*(.+?)\s+in$")
 
 
 class DynamicChannelError(ValueError):
     """Raised when a channel used in in(...)/out(...) is not a static, global name."""
+
+
+class NestedReplicationError(ValueError):
+    """Raised when a process component contains nested replication."""
+
+
+class TupleDataError(ValueError):
+    """Raised when a statement uses tuple data in a binding or as a function argument."""
+
+
+class ComplexInputPatternError(ValueError):
+    """Raised when an input statement does not bind one typed variable."""
+
+
+def _reject_tuple_data(process: IntermediateProcess) -> None:
+    """Raise TupleDataError if any statement contains a tuple literal (grouped, comma-separated
+    parentheses that are not a function/table/event call's argument list)."""
+    for node in process.labeled_nodes():
+        tuple_contents = _find_tuple_literal(node.text)
+        if tuple_contents is not None:
+            raise TupleDataError(
+                f"Tuple data ({tuple_contents}) at {{{node.label}}} ({node.text}) is not allowed; "
+                "tuples are not supported in bindings or function arguments."
+            )
+
+
+def _reject_complex_input_patterns(process: IntermediateProcess) -> None:
+    """Require each input to bind exactly one typed variable."""
+    for node in process.labeled_nodes():
+        if not node.text.startswith("in("):
+            continue
+        arguments = split_top_level_commas(extract_balanced_parens(node.text, node.text.index("(")))
+        if len(arguments) != 2 or not (
+            _TYPED_VARIABLE_RE.fullmatch(arguments[1])
+            or _SECONDS_PATTERN_RE.fullmatch(arguments[1])
+        ):
+            raise ComplexInputPatternError(
+                f"Input pattern at {{{node.label}}} ({node.text}) is not allowed; "
+                "an input must bind exactly one typed variable or use seconds(n)."
+            )
+
+
+def _find_tuple_literal(text: str) -> str | None:
+    """Return the contents of the first tuple literal found in text, or None if there is none.
+
+    A "(...)" is treated as a tuple literal (rather than a function/table/event call's argument
+    list) when the character directly preceding it is not an identifier character.
+    """
+    index = 0
+    while True:
+        paren_index = text.find("(", index)
+        if paren_index == -1:
+            return None
+        preceding = text[paren_index - 1] if paren_index > 0 else ""
+        if preceding.isalnum() or preceding == "_":
+            index = paren_index + 1
+            continue
+        contents = extract_balanced_parens(text, paren_index)
+        if len(split_top_level_commas(contents)) > 1:
+            return contents
+        index = paren_index + 1
 
 
 def collect_channel_names(process: IntermediateProcess) -> list[str]:
@@ -86,11 +163,22 @@ def collect_value_function_arities(process: IntermediateProcess) -> dict[str, in
     for node in process.labeled_nodes():
         for match in _FUNCTION_CALL_RE.finditer(node.text):
             name = match.group(1)
+            if name == "seconds" and _seconds_input(node.text) is not None:
+                continue
             if name in _PROCESS_KEYWORDS or _is_statement_head(node.text, match):
                 continue
             arguments = extract_balanced_parens(node.text, match.end() - 1)
             functions[name] = max(functions.get(name, 0), len(split_top_level_commas(arguments)))
     return functions
+
+
+def collect_event_names(process: IntermediateProcess) -> list[str]:
+    """Return event names in first-seen order."""
+    names: list[str] = []
+    for node in process.labeled_nodes():
+        if (match := _EVENT_RE.match(node.text)) and match.group(1) not in names:
+            names.append(match.group(1))
+    return names
 
 
 def _is_statement_head(text: str, match: re.Match[str]) -> bool:
@@ -142,6 +230,25 @@ def _value_function_lines(functions: dict[str, int]) -> list[str]:
     return lines
 
 
+def _table_getter_lines(getters: dict[tuple[str, tuple[str, ...]], int]) -> list[str]:
+    """Render table lookup helpers keyed by the named struct fields."""
+    lines: list[str] = []
+    for (table, fields), result_index in getters.items():
+        suffix = "_".join(fields)
+        parameters = ", ".join(f"int value{index}" for index in range(1, len(fields) + 1))
+        lines.append(f"int {table}_get_by_{suffix}({parameters}) {{")
+        lines.append("  int index;")
+        lines.append(f"  for (index = 0; index < {table}_size; index++) {{")
+        conditions = " && ".join(
+            f"{table}[index].{field} == value{index}" for index, field in enumerate(fields, start=1)
+        )
+        lines.append(f"    if ({conditions}) return {table}[index].{_table_field_names(result_index + 1)[result_index]};")
+        lines.append("  }")
+        lines.append("  return -1;")
+        lines.append("}")
+    return lines
+
+
 def extract_global_free_names(source: str) -> list[str]:
     """Return names declared by source-level ProVerif ``free`` declarations, in order."""
     names: list[str] = []
@@ -171,14 +278,19 @@ def render_channel_skeleton(
 
     Raises DynamicChannelError if a channel used for communication is not a global name, and
     UnsupportedProcessStructureError (from compareverif.proverif.process_structure) if the
-    process is not a linear prefix followed by a single top-level parallel composition.
+    process is not a linear prefix followed by a single top-level parallel composition, and
+    TupleDataError if any statement uses tuple data in a binding or as a function argument.
     """
+    _reject_tuple_data(process)
+    _reject_complex_input_patterns(process)
     channels = collect_channel_names(process)
+    events = collect_event_names(process)
     tables = collect_table_arities(process)
     value_functions = collect_value_function_arities(process)
     decomposition = decompose_process(process)
     prefix_names = [name for node in decomposition.prefix for name in declared_names_of(node.text)]
     inserted_tables = collect_inserted_tables(decomposition.prefix)
+    getters = _collect_table_getters(process, tables)
     free_prefix_names = [name for name in (global_free_names or []) if name not in prefix_names]
 
     nta = ET.Element("nta")
@@ -188,12 +300,20 @@ def render_channel_skeleton(
     for channel in channels:
         declaration_lines.append(f"chan {channel};")
         declaration_lines.append(f"int {channel}_p;")
+    if events:
+        declaration_lines.append("\n// Events emitted by the ProVerif process.")
+        for event in events:
+            declaration_lines.append(f"broadcast chan {event};")
+            declaration_lines.append(f"int {event}_p;")
     if tables:
         declaration_lines.append("\n// Tables extracted from the ProVerif process.")
         declaration_lines.extend(_table_declaration_lines(tables))
     if inserted_tables:
         declaration_lines.append("\n// Insert functions for tables written by the process prefix.")
         declaration_lines.extend(_table_insert_function_lines(inserted_tables))
+    if getters:
+        declaration_lines.append("\n// Table lookup functions used by get statements.")
+        declaration_lines.extend(_table_getter_lines(getters))
     declaration_lines.append("\n// Names declared in the process prefix.")
     declaration_lines.extend(f"int {name};" for name in prefix_names)
     declaration_lines.append("\n// Fresh entity identifiers and free names used by the process prefix.")
@@ -216,12 +336,10 @@ def render_channel_skeleton(
     for index, component in enumerate(decomposition.components, start=1):
         name = f"Component{index}"
         component_names.append(name)
-        _add_two_state_template(
+        _add_component_template(
             nta,
             name=name,
-            synchronisation=f"{_FORK_CHANNEL}?",
-            comment=_pretty_statement(component),
-            local_names=collect_declared_names([component]),
+            component=component,
         )
 
     system = ET.SubElement(nta, "system")
@@ -272,6 +390,7 @@ def _add_prefix_template(nta: ET.Element, prefix: list[ProcessSyntaxNode]) -> No
             label_x=30,
             label_y=55,
         )
+        _order_template_children(template)
         return
 
     for index, node in enumerate(prefix):
@@ -285,6 +404,7 @@ def _add_prefix_template(nta: ET.Element, prefix: list[ProcessSyntaxNode]) -> No
             label_x=30,
             label_y=index * 160 + 40,
         )
+    _order_template_children(template)
 
 
 def _prefix_assignment(node: ProcessSyntaxNode) -> str | None:
@@ -305,6 +425,7 @@ def _add_transition(
     source: str,
     target: str,
     *,
+    guard: str | None = None,
     assignment: str | None = None,
     synchronisation: str | None = None,
     comment: str,
@@ -315,6 +436,9 @@ def _add_transition(
     transition = ET.SubElement(template, "transition")
     ET.SubElement(transition, "source", {"ref": source})
     ET.SubElement(transition, "target", {"ref": target})
+    if guard:
+        ET.SubElement(transition, "label", {"kind": "guard", "x": str(label_x), "y": str(label_y)}).text = guard
+        label_y += 25
     if assignment:
         ET.SubElement(transition, "label", {"kind": "assignment", "x": str(label_x), "y": str(label_y)}).text = assignment
     if synchronisation:
@@ -322,38 +446,301 @@ def _add_transition(
     ET.SubElement(transition, "label", {"kind": "comments", "x": str(label_x), "y": str(label_y + 50)}).text = comment
 
 
-def _add_two_state_template(
-    nta: ET.Element,
-    *,
-    name: str,
-    synchronisation: str,
-    comment: str,
-    local_names: list[str] | None = None,
-) -> None:
-    """Add a template with just a "before"/"after" location pair joined by a fork transition."""
+def _statement_effect(text: str) -> tuple[str | None, str | None]:
+    """Return synchronization and update labels for a non-branching statement."""
+    if text.startswith("out("):
+        args = split_top_level_commas(extract_balanced_parens(text, text.index("(")))
+        return (f"{args[0]}!", f"{args[0]}_p = {args[1]}" if len(args) > 1 else None)
+    if text.startswith("in("):
+        args = split_top_level_commas(extract_balanced_parens(text, text.index("(")))
+        name = args[1].split(":", 1)[0].strip() if len(args) > 1 else ""
+        return (f"{args[0]}?", f"{name} = {args[0]}_p" if name else None)
+    if (event := _EVENT_RE.match(text)):
+        payload = event.group(2)
+        return (f"{event.group(1)}!", f"{event.group(1)}_p = {payload}" if payload else None)
+    if (match := _LET_SINGLE_RE.match(text)):
+        return (None, f"{match.group(1)} = {match.group(2)}")
+    return (None, _prefix_assignment(ProcessSyntaxNode(label=None, text=text, indent=0)))
+
+
+def _collect_table_getters(process: IntermediateProcess, tables: dict[str, int]) -> dict[tuple[str, tuple[str, ...]], int]:
+    """Return each lookup shape and its selected result column index."""
+    getters: dict[tuple[str, tuple[str, ...]], int] = {}
+    for node in process.labeled_nodes():
+        if not node.text.startswith("get "):
+            continue
+        table, fields, _, result_index = _get_parts(node.text)
+        if table in tables:
+            getters[(table, tuple(fields))] = result_index
+    return getters
+
+
+def _get_translation(text: str) -> tuple[str, str]:
+    """Return getter invocation and destination variable for a get statement."""
+    table, fields, values, result_index = _get_parts(text)
+    getter = f"{table}_get_by_{'_'.join(fields)}({', '.join(values)})"
+    variables = _get_variables(text)
+    return getter, variables[result_index]
+
+
+def _get_parts(text: str) -> tuple[str, list[str], list[str], int]:
+    match = _GET_RE.match(text)
+    if not match:
+        raise ValueError(f"Cannot translate get statement: {text}")
+    table = match.group(1)
+    arguments = split_top_level_commas(extract_balanced_parens(text, match.end() - 1))
+    variables = [argument.split(":", 1)[0].strip() for argument in arguments]
+    condition = text.split("suchthat", 1)[1].rsplit(" in", 1)[0] if "suchthat" in text else ""
+    field_names = _table_field_names(len(arguments))
+    keyed: list[tuple[str, str]] = []
+    for equality in _top_level_equalities(condition):
+        left, right = _split_top_level_equality(equality)
+        if left in variables:
+            keyed.append((field_names[variables.index(left)], right))
+        elif right in variables:
+            keyed.append((field_names[variables.index(right)], left))
+    result_index = next((index for index in range(len(arguments)) if field_names[index] not in [field for field, _ in keyed]), 0)
+    return table, [field for field, _ in keyed], [value for _, value in keyed], result_index
+
+
+def _get_variables(text: str) -> list[str]:
+    match = _GET_RE.match(text)
+    return [argument.split(":", 1)[0].strip() for argument in split_top_level_commas(extract_balanced_parens(text, match.end() - 1))] if match else []
+
+
+def _top_level_equalities(condition: str) -> list[str]:
+    """Return equality clauses after removing only grouping parentheses."""
+    normalized = _strip_grouping_parentheses(condition)
+    return [_strip_grouping_parentheses(part) for part in normalized.split("&&")]
+
+
+def _strip_grouping_parentheses(text: str) -> str:
+    """Remove enclosing parentheses only when they wrap the full text."""
+    stripped = text.strip()
+    while stripped.startswith("(") and extract_balanced_parens(stripped, 0) == stripped[1:-1]:
+        stripped = stripped[1:-1].strip()
+    return stripped
+
+
+def _split_top_level_equality(equality: str) -> tuple[str, str]:
+    """Split one equality without losing nested terms on either side."""
+    depth = 0
+    for index, character in enumerate(equality):
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+        elif character == "=" and depth == 0:
+            return equality[:index].strip(), equality[index + 1 :].strip()
+    raise ValueError(f"Cannot translate get condition equality: {equality}")
+
+
+def _uppaal_condition(condition: str) -> str:
+    """Translate ProVerif equality syntax to UPPAAL's equality operator."""
+    return re.sub(r"(?<![=!<>])=(?!=)", "==", condition)
+
+
+def _seconds_input(text: str) -> str | None:
+    """Return the delay for an ``in(channel, seconds(delay))`` statement."""
+    if not text.startswith("in("):
+        return None
+    arguments = split_top_level_commas(extract_balanced_parens(text, text.index("(")))
+    if len(arguments) != 2:
+        return None
+    match = _SECONDS_PATTERN_RE.fullmatch(arguments[1])
+    return match.group(1) if match else None
+
+
+def _has_seconds_input(component: ProcessSyntaxNode) -> bool:
+    """Whether a component subtree contains a timed input pattern."""
+    return any(_seconds_input(node.text) is not None for node in _walk_nodes(component))
+
+
+def _walk_nodes(node: ProcessSyntaxNode):
+    yield node
+    for child in node.children:
+        yield from _walk_nodes(child)
+
+
+def _add_component_template(nta: ET.Element, *, name: str, component: ProcessSyntaxNode) -> None:
+    """Add a component automaton beginning after the prefix broadcast."""
+    _reject_nested_replication(component)
     template = ET.SubElement(nta, "template")
     ET.SubElement(template, "name").text = name
-    if local_names:
-        declaration_text = "// Locally declared names.\n" + "\n".join(f"int {n};" for n in local_names)
-    else:
+    local_names = collect_declared_names([component])
+    declaration_lines = ["// Locally declared names."]
+    declaration_lines.extend(f"int {local_name};" for local_name in local_names)
+    if _has_seconds_input(component):
+        declaration_lines.append("clock seconds_clock;")
+    if len(declaration_lines) == 1:
         declaration_text = "// No locally declared names."
+    else:
+        declaration_text = "\n".join(declaration_lines)
     ET.SubElement(template, "declaration").text = declaration_text + "\n"
 
-    before_id, after_id = f"{name}_before", f"{name}_after"
+    before_id, entry_id, after_id = f"{name}_before", f"{name}_entry", f"{name}_after"
     before = ET.SubElement(template, "location", {"id": before_id, "x": "0", "y": "0"})
     ET.SubElement(before, "name", {"x": "20", "y": "-24"}).text = "before"
-    after = ET.SubElement(template, "location", {"id": after_id, "x": "0", "y": "160"})
-    ET.SubElement(after, "name", {"x": "20", "y": "136"}).text = "after"
+    entry = ET.SubElement(template, "location", {"id": entry_id, "x": "0", "y": "160"})
+    ET.SubElement(entry, "name", {"x": "20", "y": "136"}).text = "entry"
+    after = ET.SubElement(template, "location", {"id": after_id, "x": "0", "y": "320"})
+    ET.SubElement(after, "name", {"x": "20", "y": "296"}).text = "after"
     ET.SubElement(template, "init", {"ref": before_id})
 
     _add_transition(
         template,
         before_id,
-        after_id,
-        synchronisation=synchronisation,
-        comment=comment,
+        entry_id,
+        synchronisation=f"{_FORK_CHANNEL}?",
+        comment="Wait for prefix completion.",
         label_x=30,
         label_y=55,
     )
+    builder = _ComponentBuilder(template, name)
+    builder.compile_node(component, entry_id, after_id)
+    _order_template_children(template)
+
+
+def _order_template_children(template: ET.Element) -> None:
+    """Order template children according to the UPPAAL XML schema."""
+    order = {"name": 0, "parameter": 1, "declaration": 2, "location": 3, "init": 4, "transition": 5}
+    children = list(template)
+    template[:] = [
+        child
+        for _, child in sorted(
+            enumerate(children), key=lambda item: (order.get(item[1].tag, 99), item[0])
+        )
+    ]
+
+
+class _ComponentBuilder:
+    """Emit a small vertical UPPAAL control-flow graph from syntax-tree nodes."""
+
+    def __init__(self, template: ET.Element, name: str):
+        self.template = template
+        self.name = name
+        self.location_count = 2
+
+    def location(self, title: str, *, urgent: bool = False, invariant: str | None = None) -> str:
+        location_id = f"{self.name}_node_{self.location_count}"
+        y = self.location_count * 160
+        location = ET.SubElement(self.template, "location", {"id": location_id, "x": "0", "y": str(y)})
+        ET.SubElement(location, "name", {"x": "20", "y": str(y - 24)}).text = title
+        if invariant:
+            ET.SubElement(location, "label", {"kind": "invariant", "x": "20", "y": str(y + 20)}).text = invariant
+        if urgent:
+            ET.SubElement(location, "urgent")
+        self.location_count += 1
+        return location_id
+
+    def compile_node(
+        self,
+        node: ProcessSyntaxNode,
+        source: str,
+        target: str,
+        *,
+        guard: str | None = None,
+    ) -> None:
+        if node.label is None:
+            self.compile_children(node.children, source, target, guard=guard)
+            return
+        if node.text == "!":
+            replication = self.location("replication", urgent=True)
+            self.transition(source, replication, guard=guard, comment="replication")
+            self.compile_children(node.children, replication, target)
+            return
+        if node.text.startswith("if "):
+            condition = _uppaal_condition(node.text[len("if ") :].removesuffix(" then").strip())
+            then_branch = next((child for child in node.children if child.text == "then"), None)
+            else_branch = next((child for child in node.children if child.text == "else"), None)
+            if then_branch:
+                self.compile_children(then_branch.children, source, target, guard=condition)
+            elif (else_index := next((index for index, child in enumerate(node.children) if child.text.startswith("else ")), None)) is not None:
+                self.compile_children(node.children[:else_index], source, target, guard=condition)
+                alternative = node.children[else_index]
+                alternative.text = alternative.text.removeprefix("else ")
+                self.compile_children([alternative, *node.children[else_index + 1 :]], source, target, guard=f"!({condition})")
+                return
+            if else_branch:
+                self.compile_children(else_branch.children, source, target, guard=f"!({condition})")
+            elif then_branch:
+                self.transition(source, target, guard=f"!({condition})", comment="if condition failed")
+            return
+        if node.text.startswith("get "):
+            self.compile_get(node, source, target, guard)
+            return
+        if seconds := _seconds_input(node.text):
+            self.compile_seconds_input(node, source, target, seconds, guard)
+            return
+
+        next_location = self.location(f"step_{node.label}") if node.children else target
+        synchronisation, assignment = _statement_effect(node.text)
+        self.transition(source, next_location, guard=guard, assignment=assignment, synchronisation=synchronisation, comment=_pretty_statement(node))
+        if node.children:
+            self.compile_children(node.children, next_location, target)
+
+    def compile_seconds_input(
+        self,
+        node: ProcessSyntaxNode,
+        source: str,
+        target: str,
+        seconds: str,
+        guard: str | None,
+    ) -> None:
+        channel = split_top_level_commas(extract_balanced_parens(node.text, node.text.index("(")))[0]
+        wait_location = self.location(f"step_{node.label}", invariant=f"seconds_clock <= {seconds}")
+        next_location = self.location(f"step_{node.label}_after") if node.children else target
+        self.transition(
+            source,
+            wait_location,
+            guard=guard,
+            assignment="seconds_clock = 0",
+            synchronisation=f"{channel}?",
+            comment=_pretty_statement(node),
+        )
+        self.transition(
+            wait_location,
+            next_location,
+            guard=f"seconds_clock == {seconds}",
+            comment=f"Wait {seconds} seconds.",
+        )
+        if node.children:
+            self.compile_children(node.children, next_location, target)
+
+    def compile_children(self, children: list[ProcessSyntaxNode], source: str, target: str, *, guard: str | None = None) -> None:
+        if not children:
+            self.transition(source, target, guard=guard, comment="continue")
+            return
+        self.compile_node(children[0], source, target, guard=guard)
+
+    def compile_get(self, node: ProcessSyntaxNode, source: str, target: str, guard: str | None) -> None:
+        getter, result_name = _get_translation(node.text)
+        success_guard = f"{getter} != -1"
+        if guard:
+            success_guard = f"({guard}) && ({success_guard})"
+        next_location = self.location(f"step_{node.label}") if node.children else target
+        self.transition(source, next_location, guard=success_guard, assignment=f"{result_name} = {getter}", comment=_pretty_statement(node))
+        normal_children = [child for child in node.children if child.text != "else"]
+        self.compile_children(normal_children, next_location, target)
+        else_branch = next((child for child in node.children if child.text == "else"), None)
+        failure_target = self.location("get_failed") if else_branch is None else None
+        failure_guard = f"{getter} == -1"
+        if guard:
+            failure_guard = f"({guard}) && ({failure_guard})"
+        if else_branch:
+            self.compile_children(else_branch.children, source, target, guard=failure_guard)
+        else:
+            self.transition(source, failure_target, guard=failure_guard, comment="get failed")
+
+    def transition(self, source: str, target: str, *, guard: str | None = None, assignment: str | None = None, synchronisation: str | None = None, comment: str) -> None:
+        _add_transition(self.template, source, target, guard=guard, assignment=assignment, synchronisation=synchronisation, comment=comment, label_x=30, label_y=self.location_count * 160 - 100)
+
+
+def _reject_nested_replication(node: ProcessSyntaxNode, inside_replication: bool = False) -> None:
+    replicated = node.text == "!"
+    if replicated and inside_replication:
+        raise NestedReplicationError("Nested replication is not supported by the UPPAAL translation.")
+    for child in node.children:
+        _reject_nested_replication(child, inside_replication or replicated)
 
 

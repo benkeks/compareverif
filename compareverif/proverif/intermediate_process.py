@@ -114,6 +114,9 @@ def _build_indentation_tree(source_lines: list[str]) -> list[ProcessSyntaxNode]:
             text=text,
             indent=indent,
         )
+        if else_branch:
+            while stack and stack[-1].indent >= indent:
+                stack.pop()
         while stack and (
             stack[-1].indent > indent
             or (

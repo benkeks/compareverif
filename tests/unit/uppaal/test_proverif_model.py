@@ -7,7 +7,10 @@ import pytest
 from compareverif.proverif.intermediate_process import extract_let_drifted_process
 from compareverif.proverif.process_structure import UnsupportedProcessStructureError
 from compareverif.uppaal import (
+    ComplexInputPatternError,
     DynamicChannelError,
+    NestedReplicationError,
+    TupleDataError,
     collect_channel_names,
     collect_table_arities,
     extract_global_free_names,
@@ -81,16 +84,41 @@ def test_render_channel_skeleton_builds_prefix_and_component_automata(tmp_path):
     template_names = [template.findtext("name") for template in root.findall("template")]
     assert template_names == ["Prefix", "Component1", "Component2"]
 
+    prefix_locations = root.findall(".//template[name='Prefix']/location")
+    assert [location.get("id") for location in prefix_locations] == ["Prefix_before", "Prefix_after"]
     for name in template_names:
         locations = root.findall(f".//template[name='{name}']/location")
-        assert [location.get("id") for location in locations] == [f"{name}_before", f"{name}_after"]
+        assert locations[0].get("id") == f"{name}_before"
+        assert any(location.get("id") == f"{name}_after" for location in locations)
+        child_tags = [child.tag for child in root.find(f".//template[name='{name}']")]
+        assert child_tags == sorted(
+            child_tags,
+            key={"name": 0, "declaration": 1, "location": 2, "init": 3, "transition": 4}.get,
+        )
         transition = root.find(f".//template[name='{name}']/transition")
         synchronisation = transition.find("label[@kind='synchronisation']").text
         assert synchronisation == ("_fork!" if name == "Prefix" else "_fork?")
 
     # `ct` (from `in(server_link, ct: bitstring)`) is local to Component1, not global or in Component2.
     assert "int ct;" in root.findtext(".//template[name='Component1']/declaration")
-    assert "No locally declared names." in root.findtext(".//template[name='Component2']/declaration")
+    component_two_declaration = root.findtext(".//template[name='Component2']/declaration")
+    assert "clock seconds_clock;" in component_two_declaration
+    assert "int delay;" not in component_two_declaration
+    assert "int seconds(int value1)" not in document
+    component_two_labels = [
+        (label.get("kind"), label.text)
+        for label in root.findall(".//template[name='Component2']//label")
+    ]
+    assert ("synchronisation", "tick?") in component_two_labels
+    assert ("assignment", "seconds_clock = 0") in component_two_labels
+    assert ("invariant", "seconds_clock <= 3") in component_two_labels
+    assert ("guard", "seconds_clock == 3") in component_two_labels
+    replication = root.find(".//template[name='Component1']/location[name='replication']")
+    assert replication is not None
+    assert replication.find("urgent") is not None
+    location_names = [location.findtext("name") for location in root.findall(".//template/location")]
+    assert "step_3" in location_names
+    assert all("{" not in name and "}" not in name for name in location_names if name)
 
     system_text = root.findtext("system")
     assert "system Prefix, Component1, Component2;" in system_text
@@ -210,5 +238,152 @@ Translating the process into Horn clauses...
 
     with pytest.raises(UnsupportedProcessStructureError):
         render_channel_skeleton(tmp_path / "model.xml", process)
+
+
+def test_component_translation_handles_process_constructs(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+{1}new key: bitstring;
+(
+    {2}!
+    {3}in(c, x: bitstring);
+    {4}let value: bitstring = x in
+    {5}out(c, value)
+) | (
+    {6}get tb(first_value: bitstring,second_value: bitstring,third_value: bitstring) suchthat ((first_value = key) && (third_value = value)) in
+        {7}event accepted(second_value)
+    else
+        {8}if key = value then
+            {9}out(c, key);
+        else
+            {10}event rejected(value)
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process)
+
+    root = ET.parse(output_file).getroot()
+    declarations = root.findtext("declaration")
+    labels = [
+        (label.get("kind"), label.text)
+        for label in root.findall(".//template[name='Component1']//label")
+        + root.findall(".//template[name='Component2']//label")
+    ]
+    assert "broadcast chan accepted;" in declarations
+    assert "int accepted_p;" in declarations
+    assert "int tb_get_by_first_third(int value1, int value2) {" in declarations
+    assert "int suchthat(" not in declarations
+    assert ("synchronisation", "c?") in labels
+    assert ("assignment", "x = c_p") in labels
+    assert ("assignment", "value = x") in labels
+    assert ("synchronisation", "c!") in labels
+    assert ("assignment", "c_p = value") in labels
+    assert ("guard", "tb_get_by_first_third(key, value) != -1") in labels
+    assert ("assignment", "second_value = tb_get_by_first_third(key, value)") in labels
+    assert ("synchronisation", "accepted!") in labels
+    assert ("guard", "key == value") in labels
+    assert ("guard", "!(key == value)") in labels
+
+
+def test_get_translation_preserves_nested_condition_terms(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+{1}new singularized_pw: bitstring;
+(
+    {2}get passwd(uid: uid,hashedpw: bitstring,salt: bitstring) suchthat ((uid = u) && (hashedpw = hashed(singularized_pw,salt))) in
+        {3}out(c, salt)
+) | (
+    {4}event done
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process)
+
+    labels = [
+        (label.get("kind"), label.text)
+        for label in ET.parse(output_file)
+        .getroot()
+        .findall(".//template[name='Component1']//label")
+    ]
+    getter = "passwd_get_by_first_second(u, hashed(singularized_pw,salt))"
+    assert ("guard", f"{getter} != -1") in labels
+    assert ("assignment", f"salt = {getter}") in labels
+
+
+def test_tuple_let_binding_is_rejected(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+{1}new key: bitstring;
+(
+    {2}let (left: bitstring,right: bitstring) = pair(key,key) in
+    {3}out(c, left)
+) | (
+    {4}event done
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+
+    with pytest.raises(TupleDataError, match="Tuple data"):
+        render_channel_skeleton(tmp_path / "model.xml", process)
+
+
+def test_tuple_function_argument_is_rejected(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+{1}new key: bitstring;
+(
+    {2}out(c, hashed((key,key)))
+) | (
+    {3}event done
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+
+    with pytest.raises(TupleDataError, match="Tuple data"):
+        render_channel_skeleton(tmp_path / "model.xml", process)
+
+
+@pytest.mark.parametrize("pattern", ["hashed(value)", "first: bitstring, second: bitstring"])
+def test_complex_input_pattern_is_rejected(tmp_path, pattern):
+    output = f"""--  Process 1 (that is, process 0, with let moved downwards):
+{{1}}new key: bitstring;
+(
+    {{2}}in(c, {pattern})
+) | (
+    {{3}}event done
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+
+    with pytest.raises(ComplexInputPatternError, match="exactly one typed variable"):
+        render_channel_skeleton(tmp_path / "model.xml", process)
+
+
+def test_nested_replication_is_rejected(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+{0}new key: bitstring;
+(
+    {1}!
+        {2}!
+            {3}event loop
+) | (
+    {4}event done
+)
+
+Translating the process into Horn clauses...
+"""
+
+    with pytest.raises(NestedReplicationError):
+        render_channel_skeleton(tmp_path / "model.xml", extract_let_drifted_process(output))
 
 

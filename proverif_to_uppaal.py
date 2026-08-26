@@ -14,7 +14,14 @@ from compareverif.proverif.libraries import (
     extract_declared_libraries_from_file,
 )
 from compareverif.proverif.process_structure import UnsupportedProcessStructureError
-from compareverif.uppaal import DynamicChannelError, extract_global_free_names, render_channel_skeleton
+from compareverif.uppaal import (
+    ComplexInputPatternError,
+    DynamicChannelError,
+    NestedReplicationError,
+    TupleDataError,
+    extract_global_free_names,
+    render_channel_skeleton,
+)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -74,7 +81,13 @@ def main() -> int:
                 process,
                 global_free_names=extract_global_free_names(scenario_file.read_text()),
             )
-        except (DynamicChannelError, UnsupportedProcessStructureError) as error:
+        except (
+            ComplexInputPatternError,
+            DynamicChannelError,
+            NestedReplicationError,
+            TupleDataError,
+            UnsupportedProcessStructureError,
+        ) as error:
             print(f"Cannot translate to a static UPPAAL model: {error}", file=sys.stderr)
             return 1
 
