@@ -5,6 +5,7 @@ from .proverif_model import (
     DynamicChannelError,
     collect_channel_names,
     collect_table_arities,
+    extract_global_free_names,
     render_channel_skeleton,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "DynamicChannelError",
     "collect_channel_names",
     "collect_table_arities",
+    "extract_global_free_names",
     "render_channel_skeleton",
 ]
