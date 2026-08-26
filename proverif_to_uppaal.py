@@ -12,14 +12,19 @@ from compareverif.proverif.intermediate_process import extract_let_drifted_proce
 from compareverif.proverif.libraries import (
     append_library_arguments,
     extract_declared_libraries_from_file,
+    read_declared_library_sources,
 )
 from compareverif.proverif.process_structure import UnsupportedProcessStructureError
 from compareverif.uppaal import (
     ComplexInputPatternError,
+    ConstructorTagOverflowError,
     DynamicChannelError,
     NestedReplicationError,
     TupleDataError,
+    UnsupportedConstructorArityError,
+    UnsupportedSelectorRuleError,
     extract_global_free_names,
+    extract_proverif_functions,
     render_channel_skeleton,
 )
 
@@ -76,16 +81,23 @@ def main() -> int:
 
     if args.uppaal_out:
         try:
+            source = scenario_file.read_text()
             render_channel_skeleton(
                 args.uppaal_out,
                 process,
-                global_free_names=extract_global_free_names(scenario_file.read_text()),
+                global_free_names=extract_global_free_names(source),
+                proverif_functions=extract_proverif_functions(
+                    "\n".join([*read_declared_library_sources(scenario_file), source])
+                ),
             )
         except (
             ComplexInputPatternError,
+            ConstructorTagOverflowError,
             DynamicChannelError,
             NestedReplicationError,
             TupleDataError,
+            UnsupportedConstructorArityError,
+            UnsupportedSelectorRuleError,
             UnsupportedProcessStructureError,
         ) as error:
             print(f"Cannot translate to a static UPPAAL model: {error}", file=sys.stderr)

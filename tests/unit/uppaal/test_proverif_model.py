@@ -5,6 +5,7 @@ from xml.etree import ElementTree as ET
 import pytest
 
 from compareverif.proverif.intermediate_process import extract_let_drifted_process
+from compareverif.proverif.libraries import read_declared_library_sources
 from compareverif.proverif.process_structure import UnsupportedProcessStructureError
 from compareverif.uppaal import (
     ComplexInputPatternError,
@@ -14,6 +15,7 @@ from compareverif.uppaal import (
     collect_channel_names,
     collect_table_arities,
     extract_global_free_names,
+    extract_proverif_functions,
     render_channel_skeleton,
 )
 
@@ -63,9 +65,12 @@ def test_render_channel_skeleton_declares_channel_and_payload_variable(tmp_path)
     root = ET.parse(output_file).getroot()
     assert "<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN'" in document
     assert root.tag == "nta"
+    assert root.findtext("declaration").startswith(
+        "typedef int [-1, (1 << 31) - 1] data;"
+    )
     for channel in channels:
         assert f"chan {channel};" in document
-        assert f"int {channel}_p;" in document
+        assert f"data {channel}_p;" in document
 
 
 def test_render_channel_skeleton_builds_prefix_and_component_automata(tmp_path):
@@ -78,7 +83,7 @@ def test_render_channel_skeleton_builds_prefix_and_component_automata(tmp_path):
     root = ET.parse(output_file).getroot()
 
     # `new key` in the prefix becomes a global variable, and the fork channel is declared globally.
-    assert "int key;" in document
+    assert "data key;" in document
     assert "broadcast chan _fork;" in document
 
     template_names = [template.findtext("name") for template in root.findall("template")]
@@ -100,11 +105,11 @@ def test_render_channel_skeleton_builds_prefix_and_component_automata(tmp_path):
         assert synchronisation == ("_fork!" if name == "Prefix" else "_fork?")
 
     # `ct` (from `in(server_link, ct: bitstring)`) is local to Component1, not global or in Component2.
-    assert "int ct;" in root.findtext(".//template[name='Component1']/declaration")
+    assert "data ct;" in root.findtext(".//template[name='Component1']/declaration")
     component_two_declaration = root.findtext(".//template[name='Component2']/declaration")
     assert "clock seconds_clock;" in component_two_declaration
-    assert "int delay;" not in component_two_declaration
-    assert "int seconds(int value1)" not in document
+    assert "data delay;" not in component_two_declaration
+    assert "data seconds(data value1)" not in document
     component_two_labels = [
         (label.get("kind"), label.text)
         for label in root.findall(".//template[name='Component2']//label")
@@ -145,6 +150,106 @@ free salt1: bitstring [ private ].
     assert extract_global_free_names(source) == ["user1", "pw1", "singularization1", "salt1"]
 
 
+def test_extract_proverif_functions_separates_constructors_and_selectors():
+    source = """fun pair(bitstring, bitstring): bitstring.
+fun select(bitstring): bitstring.
+fun nonce(): bitstring.
+fun seconds(nat): bitstring.
+reduc forall value: bitstring; select(value) = value.
+reduc forall first: bitstring, second: bitstring; nested(select(first), second) = first.
+(* reduc forall value: bitstring; ignored(value) = value. *)
+"""
+
+    functions = extract_proverif_functions(source)
+
+    assert functions.constructors == ["pair", "nonce"]
+    assert functions.selectors == ["select", "nested"]
+    assert functions.arities == {
+        "pair": 2,
+        "select": 1,
+        "nonce": 0,
+        "seconds": 1,
+        "nested": 2,
+    }
+
+
+def test_render_channel_skeleton_lists_source_function_kinds(tmp_path):
+    process = extract_let_drifted_process(TABLE_PROVERIF_OUTPUT)
+    output_file = tmp_path / "model.xml"
+    functions = extract_proverif_functions(
+        """fun pair(bitstring, bitstring): bitstring.
+fun unary(bitstring): bitstring.
+fun select(bitstring): bitstring.
+fun nonce(): bitstring.
+reduc forall value: bitstring; select(value) = value.
+"""
+    )
+
+    render_channel_skeleton(output_file, process, proverif_functions=functions)
+
+    declarations = ET.parse(output_file).getroot().findtext("declaration")
+    assert "// ProVerif constructors." in declarations
+    assert "const int PAIR = 1;" in declarations
+    assert "const int UNARY = 2;" in declarations
+    assert "const int NONCE = 3;" in declarations
+    assert "data BUILD_PAIR(int datatype_id, data first, data second) {" in declarations
+    assert "return datatype_id | (first_width << 4) | (first << 8) | (second << (8 + (first_width * 4)));" in declarations
+    assert "data pair(data value1, data value2) { return BUILD_PAIR(PAIR, value1, value2); }" in declarations
+    assert "data unary(data value1) { return UNARY + (value1 << 4); }" in declarations
+    assert "data nonce() { return NONCE; }" in declarations
+    assert "// ProVerif selectors defined by reduc rules." in declarations
+    assert "data select(data value1) { if (true) return value1; return -1; }" in declarations
+    assert "const int SELECT" not in declarations
+
+
+def test_render_channel_skeleton_generates_packed_selectors(tmp_path):
+    process = extract_let_drifted_process(TABLE_PROVERIF_OUTPUT)
+    output_file = tmp_path / "model.xml"
+    functions = extract_proverif_functions(
+        """fun wrap(bitstring): bitstring.
+fun pair(bitstring, bitstring): bitstring.
+reduc forall value: bitstring; unwrap(wrap(value)) = value.
+reduc forall first: bitstring, second: bitstring; take_first(pair(first, second)) = first.
+reduc forall first: bitstring, second: bitstring; match_second(pair(first, second), second) = first.
+"""
+    )
+
+    render_channel_skeleton(output_file, process, proverif_functions=functions)
+
+    declarations = ET.parse(output_file).getroot().findtext("declaration")
+    assert "int TYPE_TAG(data value) { return value & 15; }" in declarations
+    assert "data UNWRAP(data value) { return value >> 4; }" in declarations
+    assert "data PAIR_FIRST(data value) {" in declarations
+    assert "data PAIR_SECOND(data value) {" in declarations
+    assert "data unwrap(data value1) { if (TYPE_TAG(value1) == WRAP) return UNWRAP(value1); return -1; }" in declarations
+    assert "data take_first(data value1) { if (TYPE_TAG(value1) == PAIR) return PAIR_FIRST(value1); return -1; }" in declarations
+    assert "data match_second(data value1, data value2) { if (TYPE_TAG(value1) == PAIR && value2 == PAIR_SECOND(value1)) return PAIR_FIRST(value1); return -1; }" in declarations
+
+
+def test_library_functions_are_merged_into_constructor_and_selector_definitions(tmp_path):
+    library = tmp_path / "primitives.pvl"
+    library.write_text(
+        """fun encrypt(bitstring): bitstring.
+reduc forall value: bitstring; decrypt(encrypt(value)) = value.
+"""
+    )
+    scenario = tmp_path / "scenario.pv"
+    scenario.write_text(
+        """(* -lib primitives.pvl *)
+fun local(bitstring): bitstring.
+fun seconds(nat): bitstring.
+"""
+    )
+
+    functions = extract_proverif_functions(
+        "\n".join([*read_declared_library_sources(scenario), scenario.read_text()])
+    )
+
+    assert functions.constructors == ["encrypt", "local"]
+    assert functions.selectors == ["decrypt"]
+    assert functions.arities == {"encrypt": 1, "decrypt": 1, "local": 1, "seconds": 1}
+
+
 def test_dynamically_bound_channel_raises_error_pointing_to_use_and_declaration():
     output = """--  Process 1 (that is, process 0, with let moved downwards):
 {12}new answer_channel: channel;
@@ -170,10 +275,10 @@ def test_render_channel_skeleton_declares_table_struct_arrays(tmp_path):
 
     document = output_file.read_text()
     assert "const int SINGULARIZATIONS_CAPACITY = 3;" in document
-    assert "struct { int first, second; } singularizations[SINGULARIZATIONS_CAPACITY];" in document
+    assert "struct { data first, second; } singularizations[SINGULARIZATIONS_CAPACITY];" in document
     assert "int singularizations_size = 0;" in document
     assert "const int PASSWD_CAPACITY = 3;" in document
-    assert "struct { int first, second, third; } passwd[PASSWD_CAPACITY];" in document
+    assert "struct { data first, second, third; } passwd[PASSWD_CAPACITY];" in document
     assert "int passwd_size = 0;" in document
 
 
@@ -194,19 +299,19 @@ def test_prefix_new_and_insert_steps_generate_fresh_ids_and_table_updates(tmp_pa
         transition.findtext("label[@kind='assignment']") for transition in prefix_transitions
     ]
 
-    assert "int user1 = 1;" in declarations
-    assert "int pw1 = 2;" in declarations
-    assert "int singularization1 = 3;" in declarations
-    assert "int salt1 = 4;" in declarations
+    assert "data user1 = 1;" in declarations
+    assert "data pw1 = 2;" in declarations
+    assert "data singularization1 = 3;" in declarations
+    assert "data salt1 = 4;" in declarations
     assert "int entity_counter = 4;" in declarations
-    assert "int NEW() { entity_counter++; return entity_counter; }" in declarations
-    assert "int singularized(int value1, int value2) { return NEW(); }" in declarations
-    assert "int hashed(int value1, int value2) { return NEW(); }" in declarations
+    assert "data NEW() { entity_counter++; return entity_counter; }" in declarations
+    assert "data singularized(data value1, data value2) { return NEW(); }" in declarations
+    assert "data hashed(data value1, data value2) { return NEW(); }" in declarations
 
-    assert "void singularizations_insert(int value1, int value2) {" in declarations
+    assert "void singularizations_insert(data value1, data value2) {" in declarations
     assert "singularizations[singularizations_size].first = value1;" in declarations
     assert "singularizations_size++;" in declarations
-    assert "void passwd_insert(int value1, int value2, int value3) {" in declarations
+    assert "void passwd_insert(data value1, data value2, data value3) {" in declarations
     assert "passwd[passwd_size].third = value3;" in declarations
 
     assert assignments == [
@@ -273,8 +378,8 @@ Translating the process into Horn clauses...
         + root.findall(".//template[name='Component2']//label")
     ]
     assert "broadcast chan accepted;" in declarations
-    assert "int accepted_p;" in declarations
-    assert "int tb_get_by_first_third(int value1, int value2) {" in declarations
+    assert "data accepted_p;" in declarations
+    assert "data tb_get_by_first_third(data value1, data value2) {" in declarations
     assert "int suchthat(" not in declarations
     assert ("synchronisation", "c?") in labels
     assert ("assignment", "x = c_p") in labels

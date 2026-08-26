@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -22,9 +23,15 @@ _INSERT_STATEMENT_RE = re.compile(r"^insert\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _FUNCTION_CALL_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 _FREE_DECLARATION_RE = re.compile(r"^\s*free\s+([^:]+)\s*:", re.MULTILINE)
+_FUNCTION_DECLARATION_RE = re.compile(
+    r"^\s*fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", re.MULTILINE
+)
+_REDUCTION_RE = re.compile(r"\breduc\b")
+_COMMENT_RE = re.compile(r"\(\*.*?\*\)", re.DOTALL)
 _TABLE_ROW_CAPACITY = 3
 _TABLE_FIELD_NAMES = ["first", "second", "third", "fourth", "fifth", "sixth"]
 _FORK_CHANNEL = "_fork"
+_DATA_TYPE_DECLARATION = "typedef int [-1, (1 << 31) - 1] data;"
 _PROCESS_KEYWORDS = {
     "in",
     "out",
@@ -58,6 +65,45 @@ class TupleDataError(ValueError):
 
 class ComplexInputPatternError(ValueError):
     """Raised when an input statement does not bind one typed variable."""
+
+
+class UnsupportedConstructorArityError(ValueError):
+    """Raised when constructor packing cannot represent a declared arity."""
+
+
+class ConstructorTagOverflowError(ValueError):
+    """Raised when more than fifteen constructors require four-bit tags."""
+
+
+class UnsupportedSelectorRuleError(ValueError):
+    """Raised when a reduction rule cannot be translated to a packed selector."""
+
+
+@dataclass(frozen=True)
+class Term:
+    """A variable or function application from a ProVerif reduction rule."""
+
+    name: str
+    arguments: list["Term"]
+
+
+@dataclass(frozen=True)
+class ReductionRule:
+    """One parsed ``selector(pattern) = result`` ProVerif reduction rule."""
+
+    selector: str
+    arguments: list[Term]
+    result: Term
+
+
+@dataclass(frozen=True)
+class ProVerifFunctions:
+    """Source-declared constructors and selectors in declaration order."""
+
+    constructors: list[str]
+    selectors: list[str]
+    arities: dict[str, int]
+    rules: dict[str, ReductionRule]
 
 
 def _reject_tuple_data(process: IntermediateProcess) -> None:
@@ -201,7 +247,7 @@ def _table_declaration_lines(tables: dict[str, int]) -> list[str]:
         fields = ", ".join(_table_field_names(arity))
         capacity_name = f"{table.upper()}_CAPACITY"
         lines.append(f"const int {capacity_name} = {_TABLE_ROW_CAPACITY};")
-        lines.append(f"struct {{ int {fields}; }} {table}[{capacity_name}];")
+        lines.append(f"struct {{ data {fields}; }} {table}[{capacity_name}];")
         lines.append(f"int {table}_size = 0;")
     return lines
 
@@ -210,7 +256,7 @@ def _table_insert_function_lines(tables: dict[str, int]) -> list[str]:
     """Render bounded table insertion functions for tables written in the prefix."""
     lines: list[str] = []
     for table, arity in tables.items():
-        parameters = ", ".join(f"int value{index}" for index in range(1, arity + 1))
+        parameters = ", ".join(f"data value{index}" for index in range(1, arity + 1))
         lines.append(f"void {table}_insert({parameters}) {{")
         lines.append(f"  if ({table}_size < {table.upper()}_CAPACITY) {{")
         for index, field in enumerate(_table_field_names(arity), start=1):
@@ -225,8 +271,8 @@ def _value_function_lines(functions: dict[str, int]) -> list[str]:
     """Render uninterpreted ProVerif constructors as fresh-ID UPPAAL functions."""
     lines: list[str] = []
     for name, arity in functions.items():
-        parameters = ", ".join(f"int value{index}" for index in range(1, arity + 1))
-        lines.append(f"int {name}({parameters}) {{ return NEW(); }}")
+        parameters = ", ".join(f"data value{index}" for index in range(1, arity + 1))
+        lines.append(f"data {name}({parameters}) {{ return NEW(); }}")
     return lines
 
 
@@ -235,8 +281,8 @@ def _table_getter_lines(getters: dict[tuple[str, tuple[str, ...]], int]) -> list
     lines: list[str] = []
     for (table, fields), result_index in getters.items():
         suffix = "_".join(fields)
-        parameters = ", ".join(f"int value{index}" for index in range(1, len(fields) + 1))
-        lines.append(f"int {table}_get_by_{suffix}({parameters}) {{")
+        parameters = ", ".join(f"data value{index}" for index in range(1, len(fields) + 1))
+        lines.append(f"data {table}_get_by_{suffix}({parameters}) {{")
         lines.append("  int index;")
         lines.append(f"  for (index = 0; index < {table}_size; index++) {{")
         conditions = " && ".join(
@@ -261,11 +307,208 @@ def extract_global_free_names(source: str) -> list[str]:
     return names
 
 
+def extract_proverif_functions(source: str) -> ProVerifFunctions:
+    """Classify declared functions as constructors or reduc-rule selectors."""
+    uncommented_source = _COMMENT_RE.sub("", source)
+    rules = _extract_reduction_rules(uncommented_source)
+    selector_matches = [(rule.selector, rule.arguments) for rule in rules]
+    selectors = _ordered_unique([name for name, _ in selector_matches])
+    selector_set = set(selectors)
+    declared_matches = _FUNCTION_DECLARATION_RE.findall(uncommented_source)
+    declared = _ordered_unique([name for name, _ in declared_matches])
+    arities = {
+        name: len(split_top_level_commas(arguments))
+        for name, arguments in declared_matches
+    }
+    arities.update({rule.selector: len(rule.arguments) for rule in rules})
+    return ProVerifFunctions(
+        constructors=[name for name in declared if name not in selector_set and name != "seconds"],
+        selectors=[name for name in selectors if name != "seconds"],
+        arities=arities,
+        rules={rule.selector: rule for rule in rules if rule.selector != "seconds"},
+    )
+
+
+def _ordered_unique(names: list[str]) -> list[str]:
+    return list(dict.fromkeys(names))
+
+
+def _extract_reduction_rules(source: str) -> list[ReductionRule]:
+    """Return parsed selector reduction rules from uncommented ProVerif source."""
+    rules: list[ReductionRule] = []
+    for reduction in _REDUCTION_RE.finditer(source):
+        semicolon = source.find(";", reduction.end())
+        period = source.find(".", semicolon + 1)
+        if semicolon == -1 or period == -1:
+            continue
+        equation = source[semicolon + 1 : period].strip()
+        equality = _find_top_level_equality(equation)
+        if equality is None:
+            continue
+        left, right = equality
+        selector = _parse_term(left)
+        if not selector.arguments:
+            continue
+        rules.append(
+            ReductionRule(selector.name, selector.arguments, _parse_term(right))
+        )
+    return rules
+
+
+def _find_top_level_equality(text: str) -> tuple[str, str] | None:
+    depth = 0
+    for index, character in enumerate(text):
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            depth -= 1
+        elif character == "=" and depth == 0:
+            return text[:index].strip(), text[index + 1 :].strip()
+    return None
+
+
+def _parse_term(text: str) -> Term:
+    """Parse a simple ProVerif variable or nested function application."""
+    stripped = text.strip()
+    match = _FUNCTION_CALL_RE.match(stripped)
+    if match is None or extract_balanced_parens(stripped, match.end() - 1) != stripped[match.end() : -1]:
+        return Term(stripped, [])
+    arguments = extract_balanced_parens(stripped, match.end() - 1)
+    return Term(match.group(1), [_parse_term(argument) for argument in split_top_level_commas(arguments)])
+
+
+def _function_declaration_lines(functions: ProVerifFunctions) -> list[str]:
+    """Render source-declared ProVerif functions and constructor identities."""
+    if len(functions.constructors) > 15:
+        raise ConstructorTagOverflowError(
+            "Constructor bit packing supports at most fifteen datatype IDs."
+        )
+    lines = ["// ProVerif constructors."]
+    if any(functions.arities[name] == 2 for name in functions.constructors):
+        lines.extend(_pair_packing_function_lines())
+    for index, name in enumerate(functions.constructors, start=1):
+        lines.append(f"const int {name.upper()} = {index};")
+        lines.append(_constructor_function(name, functions.arities[name]))
+    lines.append("// ProVerif selectors defined by reduc rules.")
+    if functions.selectors:
+        lines.extend(_selector_packing_function_lines())
+    constructor_tags = {name: index for index, name in enumerate(functions.constructors, start=1)}
+    lines.extend(
+        _selector_function(name, functions.rules[name], constructor_tags)
+        for name in functions.selectors
+    )
+    return lines
+
+
+def _pair_packing_function_lines() -> list[str]:
+    """Render the shared binary-constructor bit packing helper."""
+    return [
+        "data BUILD_PAIR(int datatype_id, data first, data second) {",
+        "  int first_width = 1;",
+        "  while ((first >> (first_width * 4)) > 0) first_width++;",
+        "  return datatype_id | (first_width << 4) | (first << 8) | "
+        "(second << (8 + (first_width * 4)));",
+        "}",
+    ]
+
+
+def _selector_packing_function_lines() -> list[str]:
+    """Render helpers used to inspect packed constructor values."""
+    return [
+        "int TYPE_TAG(data value) { return value & 15; }",
+        "data UNWRAP(data value) { return value >> 4; }",
+        "int PAIR_FIRST_WIDTH(data value) { return (value >> 4) & 15; }",
+        "data PAIR_FIRST(data value) {",
+        "  return (value >> 8) & ((1 << (PAIR_FIRST_WIDTH(value) * 4)) - 1);",
+        "}",
+        "data PAIR_SECOND(data value) {",
+        "  return value >> (8 + (PAIR_FIRST_WIDTH(value) * 4));",
+        "}",
+    ]
+
+
+def _constructor_function(name: str, arity: int) -> str:
+    """Render a constructor using its low four bits as a datatype ID."""
+    parameters = ", ".join(f"data value{index}" for index in range(1, arity + 1))
+    datatype_id = name.upper()
+    if arity == 0:
+        return f"data {name}() {{ return {datatype_id}; }}"
+    if arity == 1:
+        return f"data {name}({parameters}) {{ return {datatype_id} + (value1 << 4); }}"
+    if arity == 2:
+        return f"data {name}({parameters}) {{ return BUILD_PAIR({datatype_id}, value1, value2); }}"
+    raise UnsupportedConstructorArityError(
+        f"Constructor {name!r} has arity {arity}; bit packing supports at most two arguments."
+    )
+
+
+def _selector_function(
+    name: str,
+    rule: ReductionRule,
+    constructor_tags: dict[str, int],
+) -> str:
+    """Render a selector that checks its packed reduction pattern."""
+    parameters = ", ".join(f"data value{index}" for index in range(1, len(rule.arguments) + 1))
+    bindings: dict[str, str] = {}
+    conditions: list[str] = []
+    for index, pattern in enumerate(rule.arguments, start=1):
+        _match_selector_term(pattern, f"value{index}", bindings, conditions, constructor_tags)
+    result = _render_selector_result(rule.result, bindings)
+    condition = " && ".join(conditions) if conditions else "true"
+    return f"data {name}({parameters}) {{ if ({condition}) return {result}; return -1; }}"
+
+
+def _match_selector_term(
+    term: Term,
+    value: str,
+    bindings: dict[str, str],
+    conditions: list[str],
+    constructor_tags: dict[str, int],
+) -> None:
+    if not term.arguments:
+        previous = bindings.get(term.name)
+        if previous is None:
+            bindings[term.name] = value
+        else:
+            conditions.append(f"{value} == {previous}")
+        return
+    if term.name not in constructor_tags:
+        raise UnsupportedSelectorRuleError(
+            f"Selector pattern uses unknown constructor {term.name!r}."
+        )
+    conditions.append(f"TYPE_TAG({value}) == {term.name.upper()}")
+    if len(term.arguments) == 1:
+        _match_selector_term(term.arguments[0], f"UNWRAP({value})", bindings, conditions, constructor_tags)
+    elif len(term.arguments) == 2:
+        _match_selector_term(term.arguments[0], f"PAIR_FIRST({value})", bindings, conditions, constructor_tags)
+        _match_selector_term(term.arguments[1], f"PAIR_SECOND({value})", bindings, conditions, constructor_tags)
+    else:
+        raise UnsupportedSelectorRuleError(
+            f"Selector pattern constructor {term.name!r} has unsupported arity {len(term.arguments)}."
+        )
+
+
+def _render_selector_result(term: Term, bindings: dict[str, str]) -> str:
+    if not term.arguments:
+        if term.name not in bindings:
+            raise UnsupportedSelectorRuleError(
+                f"Selector result references unbound variable {term.name!r}."
+            )
+        return bindings[term.name]
+    return f"{term.name}({', '.join(_render_selector_result(argument, bindings) for argument in term.arguments)})"
+
+
+def _function_stub(name: str, arity: int) -> str:
+    parameters = ", ".join(f"data value{index}" for index in range(1, arity + 1))
+    return f"data {name}({parameters}) {{ return NEW(); }}"
+
+
 def render_channel_skeleton(
     output_file: Path,
     process: IntermediateProcess,
     *,
     global_free_names: list[str] | None = None,
+    proverif_functions: ProVerifFunctions | None = None,
 ) -> list[str]:
     """Write a static UPPAAL model with one automaton for the process's linear prefix and one
     for each top-level parallel component, synchronized by a global `_fork` broadcast that the
@@ -286,7 +529,7 @@ def render_channel_skeleton(
     channels = collect_channel_names(process)
     events = collect_event_names(process)
     tables = collect_table_arities(process)
-    value_functions = collect_value_function_arities(process)
+    value_functions = {} if proverif_functions is not None else collect_value_function_arities(process)
     decomposition = decompose_process(process)
     prefix_names = [name for node in decomposition.prefix for name in declared_names_of(node.text)]
     inserted_tables = collect_inserted_tables(decomposition.prefix)
@@ -296,15 +539,15 @@ def render_channel_skeleton(
     nta = ET.Element("nta")
 
     declaration = ET.SubElement(nta, "declaration")
-    declaration_lines = ["// Channels extracted from the ProVerif process."]
+    declaration_lines = [_DATA_TYPE_DECLARATION, "\n// Channels extracted from the ProVerif process."]
     for channel in channels:
         declaration_lines.append(f"chan {channel};")
-        declaration_lines.append(f"int {channel}_p;")
+        declaration_lines.append(f"data {channel}_p;")
     if events:
         declaration_lines.append("\n// Events emitted by the ProVerif process.")
         for event in events:
             declaration_lines.append(f"broadcast chan {event};")
-            declaration_lines.append(f"int {event}_p;")
+            declaration_lines.append(f"data {event}_p;")
     if tables:
         declaration_lines.append("\n// Tables extracted from the ProVerif process.")
         declaration_lines.extend(_table_declaration_lines(tables))
@@ -315,11 +558,14 @@ def render_channel_skeleton(
         declaration_lines.append("\n// Table lookup functions used by get statements.")
         declaration_lines.extend(_table_getter_lines(getters))
     declaration_lines.append("\n// Names declared in the process prefix.")
-    declaration_lines.extend(f"int {name};" for name in prefix_names)
+    declaration_lines.extend(f"data {name};" for name in prefix_names)
     declaration_lines.append("\n// Fresh entity identifiers and free names used by the process prefix.")
-    declaration_lines.extend(f"int {name} = {i};" for i, name in enumerate(free_prefix_names, start=1))
+    declaration_lines.extend(f"data {name} = {i};" for i, name in enumerate(free_prefix_names, start=1))
     declaration_lines.append(f"int entity_counter = {len(free_prefix_names)};")
-    declaration_lines.append("int NEW() { entity_counter++; return entity_counter; }")
+    declaration_lines.append("data NEW() { entity_counter++; return entity_counter; }")
+    if proverif_functions is not None:
+        declaration_lines.append("\n// Functions declared by the ProVerif source.")
+        declaration_lines.extend(_function_declaration_lines(proverif_functions))
     if value_functions:
         declaration_lines.append("\n// ProVerif value constructors represented as fresh entity identifiers.")
         declaration_lines.extend(_value_function_lines(value_functions))
@@ -569,7 +815,7 @@ def _add_component_template(nta: ET.Element, *, name: str, component: ProcessSyn
     ET.SubElement(template, "name").text = name
     local_names = collect_declared_names([component])
     declaration_lines = ["// Locally declared names."]
-    declaration_lines.extend(f"int {local_name};" for local_name in local_names)
+    declaration_lines.extend(f"data {local_name};" for local_name in local_names)
     if _has_seconds_input(component):
         declaration_lines.append("clock seconds_clock;")
     if len(declaration_lines) == 1:
