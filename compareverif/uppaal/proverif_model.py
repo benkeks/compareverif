@@ -6,28 +6,46 @@ import re
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from compareverif.proverif.intermediate_process import IntermediateProcess
+from compareverif.proverif.identifier_analysis import (
+    collect_declared_names,
+    declared_names_of,
+    resolve_channel_usages,
+)
+from compareverif.proverif.intermediate_process import IntermediateProcess, ProcessSyntaxNode
+from compareverif.proverif.process_structure import decompose_process
+from compareverif.proverif.syntax_utils import extract_balanced_parens, split_top_level_commas
 
 from .document import write_document
 
-_CHANNEL_STATEMENT_RE = re.compile(r"^(?:in|out)\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,")
 _TABLE_STATEMENT_RE = re.compile(r"^(?:insert|get)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 _TABLE_ROW_CAPACITY = 3
 _TABLE_FIELD_NAMES = ["first", "second", "third", "fourth", "fifth", "sixth"]
+_FORK_CHANNEL = "_fork"
+
+
+class DynamicChannelError(ValueError):
+    """Raised when a channel used in in(...)/out(...) is not a static, global name."""
 
 
 def collect_channel_names(process: IntermediateProcess) -> list[str]:
-    """Return channel names used by in(...)/out(...) statements, in first-seen order."""
+    """Return channel names used by in(...)/out(...) statements, in first-seen order.
+
+    Raises DynamicChannelError if a channel resolves to a local declaration (e.g. a
+    `new`-restricted name or a variable bound by `let`/`in`/`get`), since the static
+    translation requires all channels to be global names.
+    """
     channels: list[str] = []
     seen: set[str] = set()
-    for node in process.labeled_nodes():
-        match = _CHANNEL_STATEMENT_RE.match(node.text)
-        if not match:
-            continue
-        channel = match.group(1)
-        if channel not in seen:
-            seen.add(channel)
-            channels.append(channel)
+    for usage in resolve_channel_usages(process):
+        if usage.declaration is not None:
+            raise DynamicChannelError(
+                f"Channel {usage.name!r} used at {{{usage.node.label}}} is dynamically bound "
+                f"by {{{usage.declaration.node.label}}} ({usage.declaration.node.text}); "
+                "static translation requires global channel names."
+            )
+        if usage.name not in seen:
+            seen.add(usage.name)
+            channels.append(usage.name)
     return channels
 
 
@@ -39,42 +57,10 @@ def collect_table_arities(process: IntermediateProcess) -> dict[str, int]:
         if not match:
             continue
         table = match.group(1)
-        arguments = _extract_balanced_parens(node.text, match.end() - 1)
-        arity = len(_split_top_level_commas(arguments))
+        arguments = extract_balanced_parens(node.text, match.end() - 1)
+        arity = len(split_top_level_commas(arguments))
         arities[table] = max(arity, arities.get(table, 0))
     return arities
-
-
-def _extract_balanced_parens(text: str, open_index: int) -> str:
-    """Return the contents between the "(" at open_index and its matching ")"."""
-    depth = 0
-    for index in range(open_index, len(text)):
-        if text[index] == "(":
-            depth += 1
-        elif text[index] == ")":
-            depth -= 1
-            if depth == 0:
-                return text[open_index + 1 : index]
-    return text[open_index + 1 :]
-
-
-def _split_top_level_commas(text: str) -> list[str]:
-    """Split text on commas that are not nested inside parentheses."""
-    parts: list[str] = []
-    current: list[str] = []
-    depth = 0
-    for char in text:
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-        if char == "," and depth == 0:
-            parts.append("".join(current))
-            current = []
-        else:
-            current.append(char)
-    parts.append("".join(current))
-    return [part.strip() for part in parts if part.strip()]
 
 
 def _table_field_names(arity: int) -> list[str]:
@@ -97,15 +83,23 @@ def _table_declaration_lines(tables: dict[str, int]) -> list[str]:
 
 
 def render_channel_skeleton(output_file: Path, process: IntermediateProcess) -> list[str]:
-    """Write a blank UPPAAL model declaring one channel and payload variable per ProVerif channel,
-    plus a fixed-capacity struct array and size counter for each table used by insert/get.
+    """Write a static UPPAAL model with one automaton for the process's linear prefix and one
+    for each top-level parallel component, synchronized by a global `_fork` broadcast that the
+    prefix emits once it is done. Each automaton has only two locations for now (`before`/`after`
+    the fork); sub-process behavior is added in later translation steps.
 
-    Replicated subprocesses are ignored here (this only inspects channel/table usages), and
-    payloads are represented by a single global variable per channel rather than actual
-    process locations/transitions, which are added in later translation steps.
+    Names declared in the prefix become global variables; names declared within a component are
+    declared locally in that component's automaton. Also declares channels/payload variables for
+    in(...)/out(...) usages and fixed-capacity struct arrays for tables used by insert/get.
+
+    Raises DynamicChannelError if a channel used for communication is not a global name, and
+    UnsupportedProcessStructureError (from compareverif.proverif.process_structure) if the
+    process is not a linear prefix followed by a single top-level parallel composition.
     """
     channels = collect_channel_names(process)
     tables = collect_table_arities(process)
+    decomposition = decompose_process(process)
+    prefix_names = [name for node in decomposition.prefix for name in declared_names_of(node.text)]
 
     nta = ET.Element("nta")
 
@@ -117,22 +111,81 @@ def render_channel_skeleton(output_file: Path, process: IntermediateProcess) -> 
     if tables:
         declaration_lines.append("\n// Tables extracted from the ProVerif process.")
         declaration_lines.extend(_table_declaration_lines(tables))
+    declaration_lines.append("\n// Names declared in the process prefix.")
+    declaration_lines.extend(f"int {name};" for name in prefix_names)
+    declaration_lines.append("\n// Signals that the prefix has finished, to the parallel components.")
+    declaration_lines.append(f"broadcast chan {_FORK_CHANNEL};")
     declaration.text = "\n".join(declaration_lines) + "\n"
 
-    template = ET.SubElement(nta, "template")
-    ET.SubElement(template, "name").text = "AttackProgress"
-    location = ET.SubElement(template, "location", {"id": "attack_progress", "x": "0", "y": "0"})
-    ET.SubElement(location, "name", {"x": "0", "y": "-34"}).text = "AttackProgress"
-    ET.SubElement(template, "init", {"ref": "attack_progress"})
+    _add_two_state_template(
+        nta,
+        name="Prefix",
+        synchronisation=f"{_FORK_CHANNEL}!",
+        comment="; ".join(_pretty_statement(node) for node in decomposition.prefix),
+    )
+
+    component_names = []
+    for index, component in enumerate(decomposition.components, start=1):
+        name = f"Component{index}"
+        component_names.append(name)
+        _add_two_state_template(
+            nta,
+            name=name,
+            synchronisation=f"{_FORK_CHANNEL}?",
+            comment=_pretty_statement(component),
+            local_names=collect_declared_names([component]),
+        )
 
     system = ET.SubElement(nta, "system")
-    system.text = "Process = AttackProgress();\nsystem Process;\n"
+    system.text = "system " + ", ".join(["Prefix", *component_names]) + ";\n"
 
     queries = ET.SubElement(nta, "queries")
     query = ET.SubElement(queries, "query")
     ET.SubElement(query, "formula").text = "A[] true"
-    ET.SubElement(query, "comment").text = "Blank model skeleton with ProVerif channels and tables."
+    ET.SubElement(query, "comment").text = (
+        "Blank per-process skeleton: prefix and parallel components synchronized via "
+        f"{_FORK_CHANNEL}."
+    )
 
     write_document(output_file, nta)
     return channels
+
+
+def _pretty_statement(node: ProcessSyntaxNode) -> str:
+    """Return a short label for a statement, spelling out replication for readability."""
+    return "replication" if node.text == "!" else node.text
+
+
+def _add_two_state_template(
+    nta: ET.Element,
+    *,
+    name: str,
+    synchronisation: str,
+    comment: str,
+    local_names: list[str] | None = None,
+) -> None:
+    """Add a template with just a "before"/"after" location pair joined by a fork transition."""
+    template = ET.SubElement(nta, "template")
+    ET.SubElement(template, "name").text = name
+    if local_names:
+        declaration_text = "// Locally declared names.\n" + "\n".join(f"int {n};" for n in local_names)
+    else:
+        declaration_text = "// No locally declared names."
+    ET.SubElement(template, "declaration").text = declaration_text + "\n"
+
+    before_id, after_id = f"{name}_before", f"{name}_after"
+    before = ET.SubElement(template, "location", {"id": before_id, "x": "0", "y": "0"})
+    ET.SubElement(before, "name", {"x": "0", "y": "-34"}).text = "before"
+    after = ET.SubElement(template, "location", {"id": after_id, "x": "200", "y": "0"})
+    ET.SubElement(after, "name", {"x": "200", "y": "-34"}).text = "after"
+    ET.SubElement(template, "init", {"ref": before_id})
+
+    transition = ET.SubElement(template, "transition")
+    ET.SubElement(transition, "source", {"ref": before_id})
+    ET.SubElement(transition, "target", {"ref": after_id})
+    ET.SubElement(transition, "label", {"kind": "synchronisation", "x": "60", "y": "-20"}).text = (
+        synchronisation
+    )
+    ET.SubElement(transition, "label", {"kind": "comments", "x": "60", "y": "10"}).text = comment
+
 

@@ -13,7 +13,8 @@ from compareverif.proverif.libraries import (
     append_library_arguments,
     extract_declared_libraries_from_file,
 )
-from compareverif.uppaal import render_channel_skeleton
+from compareverif.proverif.process_structure import UnsupportedProcessStructureError
+from compareverif.uppaal import DynamicChannelError, render_channel_skeleton
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -67,7 +68,11 @@ def main() -> int:
     print(process.render_tree())
 
     if args.uppaal_out:
-        render_channel_skeleton(args.uppaal_out, process)
+        try:
+            render_channel_skeleton(args.uppaal_out, process)
+        except (DynamicChannelError, UnsupportedProcessStructureError) as error:
+            print(f"Cannot translate to a static UPPAAL model: {error}", file=sys.stderr)
+            return 1
 
     return 0
 
