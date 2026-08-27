@@ -17,6 +17,7 @@ from compareverif.uppaal import (
     TupleDataError,
     UnsupportedGetConditionError,
     collect_channel_names,
+    collect_leak_channels,
     collect_table_arities,
     contains_replication,
     extract_global_free_names,
@@ -59,6 +60,27 @@ def test_collect_channel_names_deduplicates_and_preserves_first_seen_order():
     process = extract_let_drifted_process(PROVERIF_OUTPUT)
 
     assert collect_channel_names(process) == ["server_link", "tick", "loop"]
+
+
+def test_leak_output_uses_broadcast_channel(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}out(leak, secret)
+) | (
+    {2}out(c, value)
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+    output_file = tmp_path / "model.xml"
+
+    assert collect_leak_channels(process) == {"leak"}
+    render_channel_skeleton(output_file, process)
+    declarations = ET.parse(output_file).getroot().findtext("declaration")
+    assert "broadcast chan leak;" in declarations
+    assert "chan c;" in declarations
+    assert "broadcast chan c;" not in declarations
 
 
 def test_render_channel_skeleton_declares_channel_and_payload_variable(tmp_path):

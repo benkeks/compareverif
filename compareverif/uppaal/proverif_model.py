@@ -301,6 +301,18 @@ def collect_timing_channels(process: IntermediateProcess) -> set[str]:
     return channels
 
 
+def collect_leak_channels(process: IntermediateProcess) -> set[str]:
+    """Return channels used by ``out(leak, value)`` statements."""
+    channels: set[str] = set()
+    for node in process.labeled_nodes():
+        if not node.text.startswith("out("):
+            continue
+        arguments = split_top_level_commas(extract_balanced_parens(node.text, node.text.index("(")))
+        if arguments and arguments[0] == "leak":
+            channels.add("leak")
+    return channels
+
+
 def contains_replication(process: IntermediateProcess) -> bool:
     """Return whether the process contains a replication node."""
     return any(node.text == "!" for node in process.labeled_nodes())
@@ -611,6 +623,7 @@ def render_channel_skeleton(
     channels = collect_channel_names(process)
     events = collect_event_names(process)
     timing_channels = collect_timing_channels(process)
+    leak_channels = collect_leak_channels(process)
     tables = collect_table_arities(process)
     value_functions = {} if proverif_functions is not None else collect_value_function_arities(process)
     function_metadata = proverif_functions or ProVerifFunctions(
@@ -648,7 +661,9 @@ def render_channel_skeleton(
     declaration_lines = [_DATA_TYPE_DECLARATION, "\n// Channels extracted from the ProVerif process."]
     for channel in channels:
         declaration_lines.append(
-            f"broadcast chan {channel};" if channel in timing_channels else f"chan {channel};"
+            f"broadcast chan {channel};"
+            if channel in timing_channels or channel in leak_channels
+            else f"chan {channel};"
         )
         declaration_lines.append(f"data {channel}_p;")
     if events:
@@ -1091,7 +1106,7 @@ class _ComponentBuilder:
             self.compile_children(node.children, source, target, guard=guard, x=x)
             return
         if node.text == "!":
-            replication = self.location("replication", urgent=True, x=-260)
+            replication = self.location("replication", x=-260)
             self.loop_targets.add(replication)
             self.transition(source, replication, guard=guard, comment="replication")
             loop_target = replication if target == f"{self.name}_replication" else target
