@@ -39,12 +39,12 @@ if condition then proc else proc
 ```
 
 - `new x: type` is translated as a fresh data identifier assignment.
-- `insert table(value1, value2)` is translated as a call to the generated bounded.
-- `!proc` is translated as a loop. The subprocess terminal transitions return to the replication location. Nested replication is rejected.
+- `insert table(value1, value2)` is translated as a function that inserts a fresh value into a small table.
+- `!proc` is translated as a loop (instead of arbitrary width replication). The subprocess terminal transitions return to the replication location. Nested replication is rejected.
 - `in(channel, x: type)` waits for a binary `channel?` synchronization and copies the channel payload into `x`.
 - `out(channel, value)` writes `value` to the channel payload and emits `channel!`.
 - A scalar `let` becomes an assignment from the value expression to the bound variable.
-- `get` supports matching on the some table field and binding every remaining table field. It generates getters named, for example, `table_get_second_by_first`. Conditions that match fields beyond the key, or otherwise contain matching logic not supported by this form, are rejected. A failed lookup follows a `get_failed` path; in a replicated process it loops back to the replication location.
+- `get` supports matching on some table field and binding every remaining table field. It generates getters named, for example, `table_get_second_by_first`. Conditions that match fields beyond the key, or otherwise contain matching logic not supported by this form, are rejected. A failed lookup follows a `get_failed` path; in a replicated process it loops back to the replication location.
 - `if` creates guarded true and false transitions. Branch outcomes are laid out side by side.
 - `event name(value)` is translated as a broadcast output on `name!`, with a global payload variable.
 
