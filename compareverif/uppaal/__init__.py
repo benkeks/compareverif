@@ -3,6 +3,8 @@
 from .attack_tree_generator import AttackTreeUppaalGenerator
 from .proverif_model import (
     ComplexInputPatternError,
+    ConstructorWidthWarning,
+    ProVerifFunctions,
     ConstructorTagOverflowError,
     DynamicChannelError,
     NestedReplicationError,
@@ -11,6 +13,8 @@ from .proverif_model import (
     UnsupportedSelectorRuleError,
     collect_channel_names,
     collect_table_arities,
+    analyze_constructor_widths,
+    contains_replication,
     extract_global_free_names,
     extract_proverif_functions,
     render_channel_skeleton,
@@ -19,6 +23,8 @@ from .proverif_model import (
 __all__ = [
     "AttackTreeUppaalGenerator",
     "ComplexInputPatternError",
+    "ConstructorWidthWarning",
+    "ProVerifFunctions",
     "ConstructorTagOverflowError",
     "DynamicChannelError",
     "NestedReplicationError",
@@ -27,6 +33,8 @@ __all__ = [
     "UnsupportedSelectorRuleError",
     "collect_channel_names",
     "collect_table_arities",
+    "analyze_constructor_widths",
+    "contains_replication",
     "extract_global_free_names",
     "extract_proverif_functions",
     "render_channel_skeleton",

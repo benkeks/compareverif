@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -14,7 +15,11 @@ from compareverif.proverif.identifier_analysis import (
 )
 from compareverif.proverif.intermediate_process import IntermediateProcess, ProcessSyntaxNode
 from compareverif.proverif.process_structure import decompose_process
-from compareverif.proverif.syntax_utils import extract_balanced_parens, split_top_level_commas
+from compareverif.proverif.syntax_utils import (
+    extract_balanced_parens,
+    find_matching_paren,
+    split_top_level_commas,
+)
 
 from .document import write_document
 
@@ -75,6 +80,10 @@ class ConstructorTagOverflowError(ValueError):
     """Raised when more than fifteen constructors require four-bit tags."""
 
 
+class ConstructorWidthWarning(UserWarning):
+    """Warn when a constructor term needs more than seven packed components."""
+
+
 class UnsupportedSelectorRuleError(ValueError):
     """Raised when a reduction rule cannot be translated to a packed selector."""
 
@@ -94,6 +103,52 @@ class ReductionRule:
     selector: str
     arguments: list[Term]
     result: Term
+
+
+def analyze_constructor_widths(
+    process: IntermediateProcess,
+    functions: ProVerifFunctions,
+) -> list[tuple[int | None, int, str]]:
+    """Return packed component widths for constructor terms appearing in the process."""
+    widths: list[tuple[int | None, int, str]] = []
+    constructors = set(functions.constructors)
+    for node in process.labeled_nodes():
+        for match in _FUNCTION_CALL_RE.finditer(node.text):
+            if match.start() and node.text[match.start() - 1].isalnum():
+                continue
+            if match.group(1) in _PROCESS_KEYWORDS or _is_statement_head(node.text, match):
+                continue
+            close_index = find_matching_paren(node.text, match.end() - 1)
+            term_text = node.text[match.start() : close_index + 1]
+            term = _parse_term(term_text)
+            if term.name != match.group(1) or not _term_contains_constructor(term, constructors):
+                continue
+            width = _constructor_term_width(term, constructors)
+            if width is not None:
+                widths.append((node.label, width, term_text.strip()))
+    return widths
+
+
+def _term_contains_constructor(term: Term, constructors: set[str]) -> bool:
+    return term.name in constructors or any(
+        _term_contains_constructor(argument, constructors) for argument in term.arguments
+    )
+
+
+def _constructor_term_width(term: Term, constructors: set[str]) -> int | None:
+    if not term.arguments:
+        return 1
+    argument_widths = [
+        _constructor_term_width(argument, constructors) or 1 for argument in term.arguments
+    ]
+    if term.name not in constructors:
+        return max(argument_widths)
+    if len(term.arguments) > 2:
+        raise UnsupportedConstructorArityError(
+            f"Constructor {term.name!r} has arity {len(term.arguments)}; "
+            "bit packing supports at most two arguments."
+        )
+    return (1 if len(term.arguments) == 1 else 2) + sum(argument_widths)
 
 
 @dataclass(frozen=True)
@@ -225,6 +280,21 @@ def collect_event_names(process: IntermediateProcess) -> list[str]:
         if (match := _EVENT_RE.match(node.text)) and match.group(1) not in names:
             names.append(match.group(1))
     return names
+
+
+def collect_timing_channels(process: IntermediateProcess) -> set[str]:
+    """Return channels used by seconds input annotations."""
+    channels: set[str] = set()
+    for node in process.labeled_nodes():
+        if _seconds_input(node.text) is not None:
+            arguments = extract_balanced_parens(node.text, node.text.index("("))
+            channels.add(split_top_level_commas(arguments)[0])
+    return channels
+
+
+def contains_replication(process: IntermediateProcess) -> bool:
+    """Return whether the process contains a replication node."""
+    return any(node.text == "!" for node in process.labeled_nodes())
 
 
 def _is_statement_head(text: str, match: re.Match[str]) -> bool:
@@ -393,10 +463,11 @@ def _function_declaration_lines(functions: ProVerifFunctions) -> list[str]:
     if functions.selectors:
         lines.extend(_selector_packing_function_lines())
     constructor_tags = {name: index for index, name in enumerate(functions.constructors, start=1)}
-    lines.extend(
-        _selector_function(name, functions.rules[name], constructor_tags)
-        for name in functions.selectors
-    )
+    for name in functions.selectors:
+        if name in functions.rules:
+            lines.append(_selector_function(name, functions.rules[name], constructor_tags))
+        else:
+            lines.append(_function_stub(name, functions.arities[name]))
     return lines
 
 
@@ -528,8 +599,20 @@ def render_channel_skeleton(
     _reject_complex_input_patterns(process)
     channels = collect_channel_names(process)
     events = collect_event_names(process)
+    timing_channels = collect_timing_channels(process)
     tables = collect_table_arities(process)
     value_functions = {} if proverif_functions is not None else collect_value_function_arities(process)
+    function_metadata = proverif_functions or ProVerifFunctions(
+        constructors=list(value_functions), selectors=[], arities=value_functions, rules={}
+    )
+    for label, width, term in analyze_constructor_widths(process, function_metadata):
+        if width > 7:
+            warnings.warn(
+                f"Constructor term {term!r} at {{{label}}} requires {width} packed "
+                "components, exceeding the 7-component data limit. This will lead to undefined behavior in the UPPAAL model.",
+                ConstructorWidthWarning,
+                stacklevel=2,
+            )
     decomposition = decompose_process(process)
     prefix_names = [name for node in decomposition.prefix for name in declared_names_of(node.text)]
     inserted_tables = collect_inserted_tables(decomposition.prefix)
@@ -541,7 +624,9 @@ def render_channel_skeleton(
     declaration = ET.SubElement(nta, "declaration")
     declaration_lines = [_DATA_TYPE_DECLARATION, "\n// Channels extracted from the ProVerif process."]
     for channel in channels:
-        declaration_lines.append(f"chan {channel};")
+        declaration_lines.append(
+            f"broadcast chan {channel};" if channel in timing_channels else f"chan {channel};"
+        )
         declaration_lines.append(f"data {channel}_p;")
     if events:
         declaration_lines.append("\n// Events emitted by the ProVerif process.")
@@ -614,42 +699,36 @@ def _add_prefix_template(nta: ET.Element, prefix: list[ProcessSyntaxNode]) -> No
     ET.SubElement(template, "name").text = "Prefix"
     ET.SubElement(template, "declaration").text = "// No locally declared names.\n"
 
-    location_ids = [
-        "Prefix_before",
-        *(f"Prefix_step_{index}" for index in range(1, len(prefix))),
-        "Prefix_after",
-    ]
+    location_ids = [*(f"Prefix_step_{index}" for index in range(1, len(prefix) + 1)), "Prefix_terminated", "Prefix_forked"]
     for index, location_id in enumerate(location_ids):
         location_y = index * 160
         location = ET.SubElement(template, "location", {"id": location_id, "x": "0", "y": str(location_y)})
-        name = "before" if index == 0 else "after" if index == len(location_ids) - 1 else f"step_{index}"
+        name = "terminated" if location_id == "Prefix_terminated" else "forked" if location_id == "Prefix_forked" else f"step_{index}"
         ET.SubElement(location, "name", {"x": "20", "y": str(location_y - 24)}).text = name
-    ET.SubElement(template, "init", {"ref": "Prefix_before"})
+    ET.SubElement(template, "init", {"ref": location_ids[0]})
 
     if not prefix:
-        _add_transition(
-            template,
-            location_ids[0],
-            location_ids[-1],
-            synchronisation=f"{_FORK_CHANNEL}!",
-            comment="Prefix complete.",
-            label_x=30,
-            label_y=55,
-        )
-        _order_template_children(template)
-        return
+        location_ids = ["Prefix_terminated", "Prefix_forked"]
 
     for index, node in enumerate(prefix):
         _add_transition(
             template,
             location_ids[index],
-            location_ids[index + 1],
+            location_ids[index + 1] if index + 1 < len(prefix) else "Prefix_terminated",
             assignment=_prefix_assignment(node),
-            synchronisation=f"{_FORK_CHANNEL}!" if index == len(prefix) - 1 else None,
             comment=_pretty_statement(node),
             label_x=30,
             label_y=index * 160 + 40,
         )
+    _add_transition(
+        template,
+        "Prefix_terminated",
+        "Prefix_forked",
+        synchronisation=f"{_FORK_CHANNEL}!",
+        comment="Prefix complete.",
+        label_x=30,
+        label_y=len(prefix) * 160 + 40,
+    )
     _order_template_children(template)
 
 
@@ -824,13 +903,16 @@ def _add_component_template(nta: ET.Element, *, name: str, component: ProcessSyn
         declaration_text = "\n".join(declaration_lines)
     ET.SubElement(template, "declaration").text = declaration_text + "\n"
 
-    before_id, entry_id, after_id = f"{name}_before", f"{name}_entry", f"{name}_after"
+    before_id, entry_id = f"{name}_before", f"{name}_entry"
+    terminates = component.text != "!"
+    terminal_id = f"{name}_terminated" if terminates else f"{name}_replication"
     before = ET.SubElement(template, "location", {"id": before_id, "x": "0", "y": "0"})
     ET.SubElement(before, "name", {"x": "20", "y": "-24"}).text = "before"
     entry = ET.SubElement(template, "location", {"id": entry_id, "x": "0", "y": "160"})
     ET.SubElement(entry, "name", {"x": "20", "y": "136"}).text = "entry"
-    after = ET.SubElement(template, "location", {"id": after_id, "x": "0", "y": "320"})
-    ET.SubElement(after, "name", {"x": "20", "y": "296"}).text = "after"
+    if terminates:
+        terminated = ET.SubElement(template, "location", {"id": terminal_id, "x": "0", "y": "320"})
+        ET.SubElement(terminated, "name", {"x": "20", "y": "296"}).text = "terminated"
     ET.SubElement(template, "init", {"ref": before_id})
 
     _add_transition(
@@ -843,7 +925,7 @@ def _add_component_template(nta: ET.Element, *, name: str, component: ProcessSyn
         label_y=55,
     )
     builder = _ComponentBuilder(template, name)
-    builder.compile_node(component, entry_id, after_id)
+    builder.compile_node(component, entry_id, terminal_id)
     _order_template_children(template)
 
 
@@ -866,17 +948,30 @@ class _ComponentBuilder:
         self.template = template
         self.name = name
         self.location_count = 2
+        self.location_y = {
+            f"{name}_before": 0,
+            f"{name}_entry": 160,
+            f"{name}_terminated": 320,
+        }
+        self.location_x = {
+            f"{name}_before": 0,
+            f"{name}_entry": 0,
+            f"{name}_terminated": 0,
+        }
+        self.loop_targets: set[str] = set()
 
-    def location(self, title: str, *, urgent: bool = False, invariant: str | None = None) -> str:
+    def location(self, title: str, *, urgent: bool = False, invariant: str | None = None, x: int = 0) -> str:
         location_id = f"{self.name}_node_{self.location_count}"
         y = self.location_count * 160
-        location = ET.SubElement(self.template, "location", {"id": location_id, "x": "0", "y": str(y)})
-        ET.SubElement(location, "name", {"x": "20", "y": str(y - 24)}).text = title
+        location = ET.SubElement(self.template, "location", {"id": location_id, "x": str(x), "y": str(y)})
+        ET.SubElement(location, "name", {"x": str(x + 20), "y": str(y - 24)}).text = title
         if invariant:
             ET.SubElement(location, "label", {"kind": "invariant", "x": "20", "y": str(y + 20)}).text = invariant
         if urgent:
             ET.SubElement(location, "urgent")
         self.location_count += 1
+        self.location_y[location_id] = y
+        self.location_x[location_id] = x
         return location_id
 
     def compile_node(
@@ -886,44 +981,49 @@ class _ComponentBuilder:
         target: str,
         *,
         guard: str | None = None,
+        x: int = 0,
     ) -> None:
         if node.label is None:
-            self.compile_children(node.children, source, target, guard=guard)
+            self.compile_children(node.children, source, target, guard=guard, x=x)
             return
         if node.text == "!":
-            replication = self.location("replication", urgent=True)
+            replication = self.location("replication", urgent=True, x=-260)
+            self.loop_targets.add(replication)
             self.transition(source, replication, guard=guard, comment="replication")
-            self.compile_children(node.children, replication, target)
+            loop_target = replication if target == f"{self.name}_replication" else target
+            self.compile_children(node.children, replication, loop_target, x=x)
             return
         if node.text.startswith("if "):
             condition = _uppaal_condition(node.text[len("if ") :].removesuffix(" then").strip())
             then_branch = next((child for child in node.children if child.text == "then"), None)
             else_branch = next((child for child in node.children if child.text == "else"), None)
             if then_branch:
-                self.compile_children(then_branch.children, source, target, guard=condition)
+                self.compile_children(then_branch.children, source, target, guard=condition, x=-260)
             elif (else_index := next((index for index, child in enumerate(node.children) if child.text.startswith("else ")), None)) is not None:
-                self.compile_children(node.children[:else_index], source, target, guard=condition)
+                self.compile_children(node.children[:else_index], source, target, guard=condition, x=-260)
                 alternative = node.children[else_index]
                 alternative.text = alternative.text.removeprefix("else ")
-                self.compile_children([alternative, *node.children[else_index + 1 :]], source, target, guard=f"!({condition})")
+                self.compile_children([alternative, *node.children[else_index + 1 :]], source, target, guard=f"!({condition})", x=260)
                 return
             if else_branch:
-                self.compile_children(else_branch.children, source, target, guard=f"!({condition})")
+                self.compile_children(else_branch.children, source, target, guard=f"!({condition})", x=260)
             elif then_branch:
                 self.transition(source, target, guard=f"!({condition})", comment="if condition failed")
             return
         if node.text.startswith("get "):
-            self.compile_get(node, source, target, guard)
+            self.compile_get(node, source, target, guard, x=x)
             return
         if seconds := _seconds_input(node.text):
-            self.compile_seconds_input(node, source, target, seconds, guard)
+            self.compile_seconds_input(node, source, target, seconds, guard, x=x)
             return
 
-        next_location = self.location(f"step_{node.label}") if node.children else target
+        next_location = self.location(f"step_{node.label}", x=x)
         synchronisation, assignment = _statement_effect(node.text)
         self.transition(source, next_location, guard=guard, assignment=assignment, synchronisation=synchronisation, comment=_pretty_statement(node))
         if node.children:
-            self.compile_children(node.children, next_location, target)
+            self.compile_children(node.children, next_location, target, x=x)
+        else:
+            self.transition(next_location, target, comment="continue")
 
     def compile_seconds_input(
         self,
@@ -932,17 +1032,18 @@ class _ComponentBuilder:
         target: str,
         seconds: str,
         guard: str | None,
+        x: int = 0,
     ) -> None:
         channel = split_top_level_commas(extract_balanced_parens(node.text, node.text.index("(")))[0]
-        wait_location = self.location(f"step_{node.label}", invariant=f"seconds_clock <= {seconds}")
-        next_location = self.location(f"step_{node.label}_after") if node.children else target
+        wait_location = self.location(f"step_{node.label}", invariant=f"seconds_clock <= {seconds}", x=x)
+        next_location = self.location(f"step_{node.label}_after", x=x) if node.children else target
         self.transition(
             source,
             wait_location,
             guard=guard,
             assignment="seconds_clock = 0",
-            synchronisation=f"{channel}?",
-            comment=_pretty_statement(node),
+            synchronisation=f"{channel}!",
+            comment="Start timed transition.",
         )
         self.transition(
             wait_location,
@@ -951,35 +1052,51 @@ class _ComponentBuilder:
             comment=f"Wait {seconds} seconds.",
         )
         if node.children:
-            self.compile_children(node.children, next_location, target)
+            self.compile_children(node.children, next_location, target, x=x)
 
-    def compile_children(self, children: list[ProcessSyntaxNode], source: str, target: str, *, guard: str | None = None) -> None:
+    def compile_children(self, children: list[ProcessSyntaxNode], source: str, target: str, *, guard: str | None = None, x: int = 0) -> None:
         if not children:
             self.transition(source, target, guard=guard, comment="continue")
             return
-        self.compile_node(children[0], source, target, guard=guard)
+        self.compile_node(children[0], source, target, guard=guard, x=x)
 
-    def compile_get(self, node: ProcessSyntaxNode, source: str, target: str, guard: str | None) -> None:
+    def compile_get(self, node: ProcessSyntaxNode, source: str, target: str, guard: str | None, *, x: int = 0) -> None:
         getter, result_name = _get_translation(node.text)
         success_guard = f"{getter} != -1"
         if guard:
             success_guard = f"({guard}) && ({success_guard})"
-        next_location = self.location(f"step_{node.label}") if node.children else target
+        next_location = self.location(f"step_{node.label}", x=x)
         self.transition(source, next_location, guard=success_guard, assignment=f"{result_name} = {getter}", comment=_pretty_statement(node))
         normal_children = [child for child in node.children if child.text != "else"]
         self.compile_children(normal_children, next_location, target)
         else_branch = next((child for child in node.children if child.text == "else"), None)
-        failure_target = self.location("get_failed") if else_branch is None else None
+        failure_target = self.location("get_failed", x=x) if else_branch is None else None
         failure_guard = f"{getter} == -1"
         if guard:
             failure_guard = f"({guard}) && ({failure_guard})"
         if else_branch:
-            self.compile_children(else_branch.children, source, target, guard=failure_guard)
+            self.compile_children(else_branch.children, source, target, guard=failure_guard, x=-x if x else 260)
         else:
             self.transition(source, failure_target, guard=failure_guard, comment="get failed")
+            if target in self.loop_targets:
+                self.transition(failure_target, target, comment="retry after get failure")
 
     def transition(self, source: str, target: str, *, guard: str | None = None, assignment: str | None = None, synchronisation: str | None = None, comment: str) -> None:
-        _add_transition(self.template, source, target, guard=guard, assignment=assignment, synchronisation=synchronisation, comment=comment, label_x=30, label_y=self.location_count * 160 - 100)
+        source_y = self.location_y[source]
+        target_y = self.location_y[target]
+        source_x = self.location_x[source]
+        target_x = self.location_x[target]
+        _add_transition(
+            self.template,
+            source,
+            target,
+            guard=guard,
+            assignment=assignment,
+            synchronisation=synchronisation,
+            comment=comment,
+            label_x=(source_x + target_x) // 2 + (20 if target_x >= source_x else -80),
+            label_y=(source_y + target_y) // 2,
+        )
 
 
 def _reject_nested_replication(node: ProcessSyntaxNode, inside_replication: bool = False) -> None:

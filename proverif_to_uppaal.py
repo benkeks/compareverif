@@ -23,6 +23,7 @@ from compareverif.uppaal import (
     TupleDataError,
     UnsupportedConstructorArityError,
     UnsupportedSelectorRuleError,
+    contains_replication,
     extract_global_free_names,
     extract_proverif_functions,
     render_channel_skeleton,
@@ -78,6 +79,9 @@ def main() -> int:
         return 1
 
     print(process.render_tree())
+
+    if contains_replication(process):
+        print("Warning: replications will be translated to loops.", file=sys.stderr)
 
     if args.uppaal_out:
         try:
