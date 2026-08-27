@@ -72,6 +72,10 @@ class ComplexInputPatternError(ValueError):
     """Raised when an input statement does not bind one typed variable."""
 
 
+class UnsupportedGetConditionError(ValueError):
+    """Raised when a get condition is not a simple key match."""
+
+
 class UnsupportedConstructorArityError(ValueError):
     """Raised when constructor packing cannot represent a declared arity."""
 
@@ -346,22 +350,24 @@ def _value_function_lines(functions: dict[str, int]) -> list[str]:
     return lines
 
 
-def _table_getter_lines(getters: dict[tuple[str, tuple[str, ...]], int]) -> list[str]:
+def _table_getter_lines(getters: dict[tuple[str, tuple[str, ...]], set[int]]) -> list[str]:
     """Render table lookup helpers keyed by the named struct fields."""
     lines: list[str] = []
-    for (table, fields), result_index in getters.items():
-        suffix = "_".join(fields)
-        parameters = ", ".join(f"data value{index}" for index in range(1, len(fields) + 1))
-        lines.append(f"data {table}_get_by_{suffix}({parameters}) {{")
-        lines.append("  int index;")
-        lines.append(f"  for (index = 0; index < {table}_size; index++) {{")
-        conditions = " && ".join(
-            f"{table}[index].{field} == value{index}" for index, field in enumerate(fields, start=1)
-        )
-        lines.append(f"    if ({conditions}) return {table}[index].{_table_field_names(result_index + 1)[result_index]};")
-        lines.append("  }")
-        lines.append("  return -1;")
-        lines.append("}")
+    for (table, fields), result_indexes in getters.items():
+        for result_index in result_indexes:
+            suffix = f"{_table_field_names(result_index + 1)[result_index]}_by_{'_'.join(fields)}"
+            parameters = ", ".join(f"data value{index}" for index in range(1, len(fields) + 1))
+            lines.append(f"data {table}_get_{suffix}({parameters}) {{")
+            lines.append("  int index;")
+            lines.append(f"  for (index = 0; index < {table}_size; index++) {{")
+            conditions = " && ".join(
+                f"{table}[index].{field} == value{index}"
+                for index, field in enumerate(fields, start=1)
+            )
+            lines.append(f"    if ({conditions}) return {table}[index].{_table_field_names(result_index + 1)[result_index]};")
+            lines.append("  }")
+            lines.append("  return -1;")
+            lines.append("}")
     return lines
 
 
@@ -756,7 +762,7 @@ def _add_transition(
     comment: str,
     label_x: int = 60,
     label_y: int = -50,
-) -> None:
+) -> ET.Element:
     """Add one transition and its optional update/synchronization labels."""
     transition = ET.SubElement(template, "transition")
     ET.SubElement(transition, "source", {"ref": source})
@@ -769,6 +775,7 @@ def _add_transition(
     if synchronisation:
         ET.SubElement(transition, "label", {"kind": "synchronisation", "x": str(label_x), "y": str(label_y + 25)}).text = synchronisation
     ET.SubElement(transition, "label", {"kind": "comments", "x": str(label_x), "y": str(label_y + 50)}).text = comment
+    return transition
 
 
 def _statement_effect(text: str) -> tuple[str | None, str | None]:
@@ -788,27 +795,32 @@ def _statement_effect(text: str) -> tuple[str | None, str | None]:
     return (None, _prefix_assignment(ProcessSyntaxNode(label=None, text=text, indent=0)))
 
 
-def _collect_table_getters(process: IntermediateProcess, tables: dict[str, int]) -> dict[tuple[str, tuple[str, ...]], int]:
+def _collect_table_getters(process: IntermediateProcess, tables: dict[str, int]) -> dict[tuple[str, tuple[str, ...]], set[int]]:
     """Return each lookup shape and its selected result column index."""
-    getters: dict[tuple[str, tuple[str, ...]], int] = {}
+    getters: dict[tuple[str, tuple[str, ...]], set[int]] = {}
     for node in process.labeled_nodes():
         if not node.text.startswith("get "):
             continue
-        table, fields, _, result_index = _get_parts(node.text)
+        table, fields, _, result_indexes = _get_parts(node.text)
         if table in tables:
-            getters[(table, tuple(fields))] = result_index
+            getters.setdefault((table, tuple(fields)), set()).update(result_indexes)
     return getters
 
 
-def _get_translation(text: str) -> tuple[str, str]:
-    """Return getter invocation and destination variable for a get statement."""
-    table, fields, values, result_index = _get_parts(text)
-    getter = f"{table}_get_by_{'_'.join(fields)}({', '.join(values)})"
+def _get_translation(text: str) -> list[tuple[str, str]]:
+    """Return getter invocations and destination variables for a get statement."""
+    table, fields, values, result_indexes = _get_parts(text)
     variables = _get_variables(text)
-    return getter, variables[result_index]
+    return [
+        (
+            f"{table}_get_{_table_field_names(index + 1)[index]}_by_{'_'.join(fields)}({', '.join(values)})",
+            variables[index],
+        )
+        for index in result_indexes
+    ]
 
 
-def _get_parts(text: str) -> tuple[str, list[str], list[str], int]:
+def _get_parts(text: str) -> tuple[str, list[str], list[str], list[int]]:
     match = _GET_RE.match(text)
     if not match:
         raise ValueError(f"Cannot translate get statement: {text}")
@@ -818,14 +830,28 @@ def _get_parts(text: str) -> tuple[str, list[str], list[str], int]:
     condition = text.split("suchthat", 1)[1].rsplit(" in", 1)[0] if "suchthat" in text else ""
     field_names = _table_field_names(len(arguments))
     keyed: list[tuple[str, str]] = []
-    for equality in _top_level_equalities(condition):
+    equalities = _top_level_equalities(condition)
+    for equality in equalities:
         left, right = _split_top_level_equality(equality)
-        if left in variables:
+        if left == variables[0]:
             keyed.append((field_names[variables.index(left)], right))
-        elif right in variables:
+        elif right == variables[0]:
             keyed.append((field_names[variables.index(right)], left))
-    result_index = next((index for index in range(len(arguments)) if field_names[index] not in [field for field, _ in keyed]), 0)
-    return table, [field for field, _ in keyed], [value for _, value in keyed], result_index
+        else:
+            raise UnsupportedGetConditionError(
+                f"Get condition {equality!r} in ({text}) matches beyond the first key."
+            )
+    if len(keyed) != len(equalities):
+        raise UnsupportedGetConditionError(
+            f"Get condition in ({text}) contains matching logic beyond key matching."
+        )
+    keyed_fields = [field for field, _ in keyed]
+    result_indexes = [index for index in range(len(arguments)) if field_names[index] not in keyed_fields]
+    return table, keyed_fields, [value for _, value in keyed], result_indexes
+
+
+def _is_data_term(term: str) -> bool:
+    return bool(_IDENT_RE.fullmatch(term)) or "(" in term
 
 
 def _get_variables(text: str) -> list[str]:
@@ -926,6 +952,7 @@ def _add_component_template(nta: ET.Element, *, name: str, component: ProcessSyn
     )
     builder = _ComponentBuilder(template, name)
     builder.compile_node(component, entry_id, terminal_id)
+    builder.finalize_layout(terminal_id if terminates else None)
     _order_template_children(template)
 
 
@@ -959,6 +986,10 @@ class _ComponentBuilder:
             f"{name}_terminated": 0,
         }
         self.loop_targets: set[str] = set()
+        self.location_elements = {
+            location.get("id"): location for location in template.findall("location")
+        }
+        self.transition_elements: list[tuple[ET.Element, str, str]] = []
 
     def location(self, title: str, *, urgent: bool = False, invariant: str | None = None, x: int = 0) -> str:
         location_id = f"{self.name}_node_{self.location_count}"
@@ -972,7 +1003,61 @@ class _ComponentBuilder:
         self.location_count += 1
         self.location_y[location_id] = y
         self.location_x[location_id] = x
+        self.location_elements[location_id] = location
         return location_id
+
+    def finalize_layout(self, terminal_id: str | None) -> None:
+        """Place terminal states below the process and failed lookups to their right."""
+        terminal_candidates = {
+            location_id
+            for location_id, location in self.location_elements.items()
+            if location.findtext("name") == "get_failed"
+        }
+        process_y = [
+            y
+            for location_id, y in self.location_y.items()
+            if location_id not in terminal_candidates and location_id != terminal_id
+        ]
+        bottom_y = max(process_y, default=0) + 160
+        if terminal_id is not None:
+            self._move_location(terminal_id, 0, bottom_y)
+            failed_x, failed_y = 260, bottom_y
+        else:
+            failed_x, failed_y = 260, bottom_y
+        for location_id in terminal_candidates:
+            self._move_location(location_id, failed_x, failed_y)
+        for transition, source, target in self.transition_elements:
+            source_x, source_y = self.location_x[source], self.location_y[source]
+            target_x, target_y = self.location_x[target], self.location_y[target]
+            self._position_transition_labels(
+                transition,
+                (source_x + target_x) // 2 + (20 if target_x >= source_x else -80),
+                (source_y + target_y) // 2,
+            )
+
+    def _move_location(self, location_id: str, x: int, y: int) -> None:
+        location = self.location_elements[location_id]
+        location.set("x", str(x))
+        location.set("y", str(y))
+        name = location.find("name")
+        if name is not None:
+            name.set("x", str(x + 20))
+            name.set("y", str(y - 24))
+        for label in location.findall("label"):
+            label.set("x", str(x + 20))
+            label.set("y", str(y + 20))
+        self.location_x[location_id] = x
+        self.location_y[location_id] = y
+
+    @staticmethod
+    def _position_transition_labels(transition: ET.Element, x: int, y: int) -> None:
+        current_y = y
+        for kind in ("guard", "assignment", "synchronisation", "comments"):
+            label = transition.find(f"label[@kind='{kind}']")
+            if label is not None:
+                label.set("x", str(x))
+                label.set("y", str(current_y))
+                current_y += 25 if kind != "comments" else 50
 
     def compile_node(
         self,
@@ -1061,17 +1146,19 @@ class _ComponentBuilder:
         self.compile_node(children[0], source, target, guard=guard, x=x)
 
     def compile_get(self, node: ProcessSyntaxNode, source: str, target: str, guard: str | None, *, x: int = 0) -> None:
-        getter, result_name = _get_translation(node.text)
-        success_guard = f"{getter} != -1"
+        translations = _get_translation(node.text)
+        getters = [getter for getter, _ in translations]
+        success_guard = " && ".join(f"{getter} != -1" for getter in getters)
         if guard:
             success_guard = f"({guard}) && ({success_guard})"
         next_location = self.location(f"step_{node.label}", x=x)
-        self.transition(source, next_location, guard=success_guard, assignment=f"{result_name} = {getter}", comment=_pretty_statement(node))
+        assignment = ", ".join(f"{result_name} = {getter}" for getter, result_name in translations)
+        self.transition(source, next_location, guard=success_guard, assignment=assignment, comment=_pretty_statement(node))
         normal_children = [child for child in node.children if child.text != "else"]
         self.compile_children(normal_children, next_location, target)
         else_branch = next((child for child in node.children if child.text == "else"), None)
         failure_target = self.location("get_failed", x=x) if else_branch is None else None
-        failure_guard = f"{getter} == -1"
+        failure_guard = " || ".join(f"{getter} == -1" for getter in getters)
         if guard:
             failure_guard = f"({guard}) && ({failure_guard})"
         if else_branch:
@@ -1086,7 +1173,7 @@ class _ComponentBuilder:
         target_y = self.location_y[target]
         source_x = self.location_x[source]
         target_x = self.location_x[target]
-        _add_transition(
+        transition = _add_transition(
             self.template,
             source,
             target,
@@ -1097,6 +1184,7 @@ class _ComponentBuilder:
             label_x=(source_x + target_x) // 2 + (20 if target_x >= source_x else -80),
             label_y=(source_y + target_y) // 2,
         )
+        self.transition_elements.append((transition, source, target))
 
 
 def _reject_nested_replication(node: ProcessSyntaxNode, inside_replication: bool = False) -> None:

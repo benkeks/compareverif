@@ -22,6 +22,7 @@ from compareverif.uppaal import (
     NestedReplicationError,
     TupleDataError,
     UnsupportedConstructorArityError,
+    UnsupportedGetConditionError,
     UnsupportedSelectorRuleError,
     contains_replication,
     extract_global_free_names,
@@ -101,6 +102,7 @@ def main() -> int:
             NestedReplicationError,
             TupleDataError,
             UnsupportedConstructorArityError,
+            UnsupportedGetConditionError,
             UnsupportedSelectorRuleError,
             UnsupportedProcessStructureError,
         ) as error:

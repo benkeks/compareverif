@@ -30,23 +30,31 @@ def decompose_process(process: IntermediateProcess) -> ProcessDecomposition:
     """Split a process into its linear prefix and top-level parallel components."""
     if len(process.nodes) != 1:
         raise UnsupportedProcessStructureError(
-            f"expected a single top-level process statement, found {len(process.nodes)}"
+            "expected process format (step; step; (proc1 | proc2)), with the prefix or "
+            "parallel part optionally omitted"
         )
 
     prefix: list[ProcessSyntaxNode] = []
     node = process.nodes[0]
+    if _is_parallel(node):
+        return ProcessDecomposition(prefix=[], components=node.children)
     while True:
         if node.label is None:
             raise UnsupportedProcessStructureError(
-                f"unexpected {node.text!r} branching before a top-level parallel composition"
+                f"unexpected {node.text!r}; expected process format "
+                "(step; step; (proc1 | proc2)), with the prefix or parallel part optionally omitted"
             )
         if len(node.children) == 1 and _is_parallel(node.children[0]):
             prefix.append(node)
             return ProcessDecomposition(prefix=prefix, components=node.children[0].children)
+        if not node.children:
+            prefix.append(node)
+            return ProcessDecomposition(prefix=prefix, components=[])
         if len(node.children) != 1:
             raise UnsupportedProcessStructureError(
                 f"statement at {{{node.label}}} has {len(node.children)} continuations; "
-                "expected a linear prefix ending in one top-level parallel composition"
+                "expected process format (step; step; (proc1 | proc2)), with the prefix or "
+                "parallel part optionally omitted"
             )
         prefix.append(node)
         node = node.children[0]

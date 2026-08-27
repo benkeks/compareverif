@@ -38,10 +38,34 @@ def test_decomposes_linear_prefix_and_parallel_components():
 
 
 def test_raises_when_no_top_level_parallel_composition():
+    process = _process("{1}new key: bitstring;\n{2}if a = b then\n    {3}out(c, key)\nelse\n    {4}event no")
+
+    with pytest.raises(UnsupportedProcessStructureError, match="process format"):
+        decompose_process(process)
+
+
+def test_decomposes_prefix_only_process():
     process = _process("{1}new key: bitstring;\n{2}out(c, key)")
 
-    with pytest.raises(UnsupportedProcessStructureError, match="linear prefix"):
-        decompose_process(process)
+    decomposition = decompose_process(process)
+
+    assert [node.label for node in decomposition.prefix] == [1, 2]
+    assert decomposition.components == []
+
+
+def test_decomposes_parallel_only_process():
+    process = _process(
+        "(\n"
+        "    {1}out(c, key)\n"
+        ") | (\n"
+        "    {2}event done\n"
+        ")"
+    )
+
+    decomposition = decompose_process(process)
+
+    assert decomposition.prefix == []
+    assert [node.label for node in decomposition.components] == [1, 2]
 
 
 def test_raises_when_prefix_branches_before_parallel():

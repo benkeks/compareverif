@@ -143,6 +143,10 @@ def _build_indentation_tree(source_lines: list[str]) -> list[ProcessSyntaxNode]:
 
     _wrap_branch_continuations(roots)
     _insert_parallel_nodes(roots)
+    if len(roots) > 1 and any("|" in line for line in source_lines):
+        roots = [
+            ProcessSyntaxNode(label=None, text="parallel", indent=0, children=roots)
+        ]
     return roots
 
 

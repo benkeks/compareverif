@@ -13,6 +13,7 @@ from compareverif.uppaal import (
     DynamicChannelError,
     NestedReplicationError,
     TupleDataError,
+    UnsupportedGetConditionError,
     collect_channel_names,
     collect_table_arities,
     contains_replication,
@@ -42,7 +43,7 @@ TABLE_PROVERIF_OUTPUT = """--  Process 1 (that is, process 0, with let moved dow
 {1}insert singularizations(user1,singularization1);
 {2}insert passwd(user1,hashed(singularized(pw1,singularization1),salt1),salt1);
 (
-    {3}get passwd(uid1: uid,hashedpw: bitstring,salt: bitstring) suchthat ((uid1 = u) && (hashedpw = hashed(pw1,salt))) in
+    {3}get passwd(uid1: uid,hashedpw: bitstring,salt: bitstring) suchthat uid1 = u in
         {4}out(c, uid1)
 ) | (
     {5}event done
@@ -410,8 +411,10 @@ def test_prefix_new_and_insert_steps_generate_fresh_ids_and_table_updates(tmp_pa
 
 def test_render_channel_skeleton_rejects_process_without_top_level_parallel(tmp_path):
     output = """--  Process 1 (that is, process 0, with let moved downwards):
-{1}new key: bitstring;
-{2}out(c, key)
+{1}if key = value then
+    {2}out(c, key)
+else
+    {3}event done
 
 Translating the process into Horn clauses...
 """
@@ -430,7 +433,7 @@ def test_component_translation_handles_process_constructs(tmp_path):
     {4}let value: bitstring = x in
     {5}out(c, value)
 ) | (
-    {6}get tb(first_value: bitstring,second_value: bitstring,third_value: bitstring) suchthat ((first_value = key) && (third_value = value)) in
+    {6}get tb(first_value: bitstring,second_value: bitstring,third_value: bitstring) suchthat first_value = key in
         {7}event accepted(second_value)
     else
         {8}if key = value then
@@ -455,15 +458,16 @@ Translating the process into Horn clauses...
     ]
     assert "broadcast chan accepted;" in declarations
     assert "data accepted_p;" in declarations
-    assert "data tb_get_by_first_third(data value1, data value2) {" in declarations
+    assert "data tb_get_second_by_first(data value1) {" in declarations
+    assert "data tb_get_third_by_first(data value1) {" in declarations
     assert "int suchthat(" not in declarations
     assert ("synchronisation", "c?") in labels
     assert ("assignment", "x = c_p") in labels
     assert ("assignment", "value = x") in labels
     assert ("synchronisation", "c!") in labels
     assert ("assignment", "c_p = value") in labels
-    assert ("guard", "tb_get_by_first_third(key, value) != -1") in labels
-    assert ("assignment", "second_value = tb_get_by_first_third(key, value)") in labels
+    assert ("guard", "tb_get_second_by_first(key) != -1 && tb_get_third_by_first(key) != -1") in labels
+    assert ("assignment", "second_value = tb_get_second_by_first(key), third_value = tb_get_third_by_first(key)") in labels
     assert ("synchronisation", "accepted!") in labels
     assert ("guard", "key == value") in labels
     assert ("guard", "!(key == value)") in labels
@@ -480,7 +484,7 @@ def test_get_translation_preserves_nested_condition_terms(tmp_path):
     output = """--  Process 1 (that is, process 0, with let moved downwards):
 {1}new singularized_pw: bitstring;
 (
-    {2}get passwd(uid: uid,hashedpw: bitstring,salt: bitstring) suchthat ((uid = u) && (hashedpw = hashed(singularized_pw,salt))) in
+    {2}get passwd(uid: uid,hashedpw: bitstring,salt: bitstring) suchthat uid = u in
         {3}out(c, salt)
 ) | (
     {4}event done
@@ -499,9 +503,27 @@ Translating the process into Horn clauses...
         .getroot()
         .findall(".//template[name='Component1']//label")
     ]
-    getter = "passwd_get_by_first_second(u, hashed(singularized_pw,salt))"
-    assert ("guard", f"{getter} != -1") in labels
-    assert ("assignment", f"salt = {getter}") in labels
+    getter = "passwd_get_second_by_first(u)"
+    assert ("guard", f"{getter} != -1 && passwd_get_third_by_first(u) != -1") in labels
+    assert ("assignment", f"hashedpw = {getter}, salt = passwd_get_third_by_first(u)") in labels
+
+
+def test_get_matching_beyond_first_key_is_rejected(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+{1}new key: bitstring;
+(
+    {2}get passwd(uid: uid,hashedpw: bitstring,salt: bitstring) suchthat uid = key && hashedpw = hashed(pw,salt) in
+        {3}event done
+) | (
+    {4}event other
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+
+    with pytest.raises(UnsupportedGetConditionError, match="beyond the first key"):
+        render_channel_skeleton(tmp_path / "model.xml", process)
 
 
 def test_tuple_let_binding_is_rejected(tmp_path):
@@ -607,5 +629,27 @@ Translating the process into Horn clauses...
         and transition.find("target").get("ref") == replication_id
         for transition in component.findall("transition")
     )
+
+
+def test_get_failed_is_right_of_terminated(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+{1}new key: bitstring;
+(
+    {2}get table(value: bitstring) suchthat value = key in
+        {3}event done
+) | (
+    {4}event other
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+    output_file = tmp_path / "model.xml"
+    render_channel_skeleton(output_file, process)
+    component = ET.parse(output_file).getroot().find(".//template[name='Component1']")
+    terminated = next(location for location in component.findall("location") if location.findtext("name") == "terminated")
+    failed = next(location for location in component.findall("location") if location.findtext("name") == "get_failed")
+    assert terminated.get("y") == failed.get("y")
+    assert int(failed.get("x")) > int(terminated.get("x"))
 
 
