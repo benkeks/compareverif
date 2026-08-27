@@ -18,6 +18,7 @@ from compareverif.proverif.process_structure import UnsupportedProcessStructureE
 from compareverif.uppaal import (
     ComplexInputPatternError,
     ConstructorTagOverflowError,
+    GlobalNameCountWarning,
     DynamicChannelError,
     NestedReplicationError,
     TupleDataError,

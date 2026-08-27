@@ -9,7 +9,9 @@ from compareverif.proverif.libraries import read_declared_library_sources
 from compareverif.proverif.process_structure import UnsupportedProcessStructureError
 from compareverif.uppaal import (
     ComplexInputPatternError,
+    ConstructorTagOverflowError,
     ConstructorWidthWarning,
+    GlobalNameCountWarning,
     DynamicChannelError,
     NestedReplicationError,
     TupleDataError,
@@ -307,6 +309,31 @@ Translating the process into Horn clauses...
         render_channel_skeleton(tmp_path / "model.xml", process, proverif_functions=functions)
 
 
+def test_more_than_fifteen_constructors_are_rejected(tmp_path):
+    process = extract_let_drifted_process(PROVERIF_OUTPUT)
+    names = [f"constructor{index}" for index in range(16)]
+    functions = ProVerifFunctions(
+        constructors=names,
+        selectors=[],
+        arities={name: 0 for name in names},
+        rules={},
+    )
+
+    with pytest.raises(ConstructorTagOverflowError, match="at most fifteen"):
+        render_channel_skeleton(tmp_path / "model.xml", process, proverif_functions=functions)
+
+
+def test_more_than_fifteen_global_names_warn(tmp_path):
+    process = extract_let_drifted_process(PROVERIF_OUTPUT)
+
+    with pytest.warns(GlobalNameCountWarning, match="creates 16 global names"):
+        render_channel_skeleton(
+            tmp_path / "model.xml",
+            process,
+            global_free_names=[f"free_name{index}" for index in range(15)],
+        )
+
+
 def test_neutral_function_uses_the_widest_constructor_argument(tmp_path):
     output = """--  Process 1 (that is, process 0, with let moved downwards):
 {1}new key: bitstring;
@@ -356,6 +383,56 @@ def test_render_channel_skeleton_declares_table_struct_arrays(tmp_path):
     assert "const int PASSWD_CAPACITY = 3;" in document
     assert "struct { data first, second, third; } passwd[PASSWD_CAPACITY];" in document
     assert "int passwd_size = 0;" in document
+
+
+def test_component_insert_generates_shared_insert_helper(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}insert table(value)
+) | (
+    {2}event done
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process)
+
+    root = ET.parse(output_file).getroot()
+    declarations = root.findtext("declaration")
+    labels = [
+        (label.get("kind"), label.text)
+        for label in root.findall(".//template[name='Component1']//label")
+    ]
+    assert "void table_insert(data value1) {" in declarations
+    assert "table[table_size].first = value1;" in declarations
+    assert ("assignment", "table_insert(value)") in labels
+
+
+def test_prefix_communication_uses_statement_effect_translation(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+{1}in(c, value: bitstring);
+{2}out(c, value)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process)
+
+    transitions = ET.parse(output_file).getroot().findall(".//template[name='Prefix']/transition")
+    labels = [
+        (label.get("kind"), label.text)
+        for transition in transitions
+        for label in transition.findall("label")
+    ]
+    assert ("synchronisation", "c?") in labels
+    assert ("assignment", "value = c_p") in labels
+    assert ("synchronisation", "c!") in labels
+    assert ("assignment", "c_p = value") in labels
 
 
 def test_prefix_new_and_insert_steps_generate_fresh_ids_and_table_updates(tmp_path):

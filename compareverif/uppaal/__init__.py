@@ -4,6 +4,7 @@ from .attack_tree_generator import AttackTreeUppaalGenerator
 from .proverif_model import (
     ComplexInputPatternError,
     ConstructorWidthWarning,
+    GlobalNameCountWarning,
     ProVerifFunctions,
     ConstructorTagOverflowError,
     DynamicChannelError,
@@ -25,6 +26,7 @@ __all__ = [
     "AttackTreeUppaalGenerator",
     "ComplexInputPatternError",
     "ConstructorWidthWarning",
+    "GlobalNameCountWarning",
     "ProVerifFunctions",
     "ConstructorTagOverflowError",
     "DynamicChannelError",

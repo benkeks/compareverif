@@ -6,6 +6,7 @@ import re
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterable
 from xml.etree import ElementTree as ET
 
 from compareverif.proverif.identifier_analysis import (
@@ -86,6 +87,10 @@ class ConstructorTagOverflowError(ValueError):
 
 class ConstructorWidthWarning(UserWarning):
     """Warn when a constructor term needs more than seven packed components."""
+
+
+class GlobalNameCountWarning(UserWarning):
+    """Warn when too many global names may exceed the packed data model."""
 
 
 class UnsupportedSelectorRuleError(ValueError):
@@ -250,7 +255,7 @@ def collect_table_arities(process: IntermediateProcess) -> dict[str, int]:
     return arities
 
 
-def collect_inserted_tables(nodes: list[ProcessSyntaxNode]) -> dict[str, int]:
+def collect_inserted_tables(nodes: Iterable[ProcessSyntaxNode]) -> dict[str, int]:
     """Return tables inserted by the given statements, mapped to their inserted arity."""
     tables: dict[str, int] = {}
     for node in nodes:
@@ -611,6 +616,10 @@ def render_channel_skeleton(
     function_metadata = proverif_functions or ProVerifFunctions(
         constructors=list(value_functions), selectors=[], arities=value_functions, rules={}
     )
+    if len(function_metadata.constructors) > 15:
+        raise ConstructorTagOverflowError(
+            "Constructor bit packing supports at most fifteen datatype IDs."
+        )
     for label, width, term in analyze_constructor_widths(process, function_metadata):
         if width > 7:
             warnings.warn(
@@ -621,9 +630,17 @@ def render_channel_skeleton(
             )
     decomposition = decompose_process(process)
     prefix_names = [name for node in decomposition.prefix for name in declared_names_of(node.text)]
-    inserted_tables = collect_inserted_tables(decomposition.prefix)
+    inserted_tables = collect_inserted_tables(process.labeled_nodes())
     getters = _collect_table_getters(process, tables)
     free_prefix_names = [name for name in (global_free_names or []) if name not in prefix_names]
+    global_name_count = len(prefix_names) + len(free_prefix_names)
+    if global_name_count > 15:
+        warnings.warn(
+            f"The translated process creates {global_name_count} global names; "
+            "the packed data model may not work properly with more than 15 names.",
+            GlobalNameCountWarning,
+            stacklevel=2,
+        )
 
     nta = ET.Element("nta")
 
@@ -717,11 +734,13 @@ def _add_prefix_template(nta: ET.Element, prefix: list[ProcessSyntaxNode]) -> No
         location_ids = ["Prefix_terminated", "Prefix_forked"]
 
     for index, node in enumerate(prefix):
+        synchronisation, assignment = _statement_effect(node.text)
         _add_transition(
             template,
             location_ids[index],
             location_ids[index + 1] if index + 1 < len(prefix) else "Prefix_terminated",
-            assignment=_prefix_assignment(node),
+            assignment=assignment,
+            synchronisation=synchronisation,
             comment=_pretty_statement(node),
             label_x=30,
             label_y=index * 160 + 40,
