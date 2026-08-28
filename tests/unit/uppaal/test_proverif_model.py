@@ -204,6 +204,22 @@ free salt1: bitstring [ private ].
     assert extract_global_free_names(source) == ["user1", "pw1", "singularization1", "salt1"]
 
 
+def test_free_channel_name_is_not_declared_as_data(tmp_path):
+    process = extract_let_drifted_process(PROVERIF_OUTPUT)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(
+        output_file,
+        process,
+        global_free_names=["server_link", "secret"],
+    )
+
+    declarations = ET.parse(output_file).getroot().findtext("declaration")
+    assert "chan server_link;" in declarations
+    assert "data server_link;" not in declarations
+    assert "data secret = 1;" in declarations
+
+
 def test_contains_replication_detects_replication_nodes():
     process = extract_let_drifted_process(PROVERIF_OUTPUT)
 

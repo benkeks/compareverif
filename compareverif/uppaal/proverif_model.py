@@ -770,7 +770,11 @@ def render_channel_skeleton(
     prefix_names = [name for node in decomposition.prefix for name in declared_names_of(node.text)]
     inserted_tables = collect_inserted_tables(process.labeled_nodes())
     getters = _collect_table_getters(process, tables)
-    free_prefix_names = [name for name in (global_free_names or []) if name not in prefix_names]
+    free_prefix_names = [
+        name
+        for name in (global_free_names or [])
+        if name not in prefix_names and name not in channels
+    ]
     global_name_count = len(prefix_names) + len(free_prefix_names)
     if global_name_count > 15:
         warnings.warn(
