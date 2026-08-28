@@ -45,6 +45,14 @@ def parse_arguments() -> argparse.Namespace:
         type=Path,
         help="Write a blank UPPAAL model declaring the process's channels to this file",
     )
+    parser.add_argument(
+        "--wide-data",
+        action="store_true",
+        help=(
+            "Model UPPAAL `data` as four native 16-bit ints (64 bits total) instead of one "
+            "bounded int, using DATA_SHL/DATA_SHR/DATA_OR/DATA_AND helpers for packing."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -95,6 +103,7 @@ def main() -> int:
                 proverif_functions=extract_proverif_functions(
                     "\n".join([*read_declared_library_sources(scenario_file), source])
                 ),
+                wide_data=args.wide_data,
             )
         except (
             ComplexInputPatternError,

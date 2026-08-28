@@ -1,5 +1,7 @@
 """Tests for building a blank UPPAAL model from a parsed ProVerif process."""
 
+import warnings
+
 from xml.etree import ElementTree as ET
 
 import pytest
@@ -284,6 +286,103 @@ reduc forall first: bitstring, second: bitstring; match_second(pair(first, secon
     assert "data match_second(data value1, data value2) { if (TYPE_TAG(value1) == PAIR && value2 == PAIR_SECOND(value1)) return PAIR_FIRST(value1); return -1; }" in declarations
 
 
+def test_wide_data_mode_declares_struct_typedef_and_bitwise_helpers(tmp_path):
+    process = extract_let_drifted_process(TABLE_PROVERIF_OUTPUT)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process, wide_data=True)
+
+    declarations = ET.parse(output_file).getroot().findtext("declaration")
+    assert "typedef int [-1, (1 << 31) - 1] data;" not in declarations
+    assert "typedef int data[4];" not in declarations
+    assert "typedef struct {" in declarations
+    assert "  int[0, 65535] b0;" in declarations
+    assert "  int[0, 65535] b16;" in declarations
+    assert "  int[0, 65535] b32;" in declarations
+    assert "  int[0, 65535] b48;" in declarations
+    assert "} data;" in declarations
+    assert "result[" not in declarations
+    assert "value[" not in declarations
+    assert "const data DATA_ZERO = {0, 0, 0, 0};" in declarations
+    assert "const data DATA_NONE = {65535, 65535, 65535, 65535};" in declarations
+    assert "data DATA_FROM_INT(int value) {" in declarations
+    assert "  if (value < 0 || value >= 65535) return DATA_NONE;" in declarations
+    assert "data DATA_SHL(data value, int amount) {" in declarations
+    assert "data DATA_SHR(data value, int amount) {" in declarations
+    assert "data DATA_OR(data a, data b) {" in declarations
+    assert "data DATA_AND(data a, data b) {" in declarations
+
+
+def test_wide_data_mode_uses_helpers_in_constructors_selectors_and_new(tmp_path):
+    process = extract_let_drifted_process(TABLE_PROVERIF_OUTPUT)
+    output_file = tmp_path / "model.xml"
+    functions = extract_proverif_functions(
+        """fun pair(bitstring, bitstring): bitstring.
+fun unary(bitstring): bitstring.
+fun nonce(): bitstring.
+fun select(bitstring): bitstring.
+reduc forall value: bitstring; select(value) = value.
+"""
+    )
+
+    render_channel_skeleton(
+        output_file,
+        process,
+        proverif_functions=functions,
+        global_free_names=["user1", "pw1", "singularization1", "salt1"],
+        wide_data=True,
+    )
+
+    declarations = ET.parse(output_file).getroot().findtext("declaration")
+    assert (
+        "data BUILD_PAIR(int datatype_id, data first, data second) {" in declarations
+    )
+    assert "while (DATA_SHR(first, first_width * 4) != DATA_ZERO) first_width++;" in declarations
+    assert (
+        "return DATA_OR(DATA_OR(DATA_FROM_INT(datatype_id | (first_width << 4)), "
+        "DATA_SHL(first, 8)), DATA_SHL(second, 8 + (first_width * 4)));"
+    ) in declarations
+    assert "data pair(data value1, data value2) { return BUILD_PAIR(PAIR, value1, value2); }" in declarations
+    assert "data unary(data value1) { return DATA_OR(DATA_FROM_INT(UNARY), DATA_SHL(value1, 4)); }" in declarations
+    assert "data nonce() { return DATA_FROM_INT(NONCE); }" in declarations
+    assert "int TYPE_TAG(data value) { return DATA_AND(value, DATA_FROM_INT(15)).b0; }" in declarations
+    assert "data UNWRAP(data value) { return DATA_SHR(value, 4); }" in declarations
+    assert "data PAIR_FIRST(data value) {" in declarations
+    assert "return DATA_AND(DATA_SHR(value, 8), DATA_ONES_MASK(PAIR_FIRST_WIDTH(value) * 4));" in declarations
+    assert "data select(data value1) { if (true) return value1; return DATA_NONE; }" in declarations
+    assert "data NEW() { entity_counter++; return DATA_FROM_INT(entity_counter); }" in declarations
+    assert "data user1 = { 1, 0, 0, 0 };" in declarations
+    assert "data salt1 = { 4, 0, 0, 0 };" in declarations
+
+
+def test_wide_data_mode_uses_data_none_for_table_getters_and_get_guards(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+{1}new key: bitstring;
+(
+    {2}get table(value: bitstring,payload: bitstring) suchthat value = key in
+        {3}out(c, payload)
+) | (
+    {4}event done
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process, wide_data=True)
+
+    root = ET.parse(output_file).getroot()
+    declarations = root.findtext("declaration")
+    assert "  return DATA_NONE;" in declarations
+    labels = [
+        (label.get("kind"), label.text)
+        for label in root.findall(".//template[name='Component1']//label")
+    ]
+    assert ("guard", "table_get_second_by_first(key) != DATA_NONE") in labels
+
+
+
 def test_library_functions_are_merged_into_constructor_and_selector_definitions(tmp_path):
     library = tmp_path / "primitives.pvl"
     library.write_text(
@@ -327,8 +426,18 @@ Translating the process into Horn clauses...
         rules={},
     )
 
-    with pytest.warns(ConstructorWidthWarning, match="requires 10 packed components"):
+    with pytest.warns(ConstructorWidthWarning, match="requires 10 packed components.*Use --wide-data"):
         render_channel_skeleton(tmp_path / "model.xml", process, proverif_functions=functions)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        render_channel_skeleton(
+            tmp_path / "wide-model.xml",
+            process,
+            proverif_functions=functions,
+            wide_data=True,
+        )
+    assert not any(issubclass(warning.category, ConstructorWidthWarning) for warning in caught)
 
 
 def test_more_than_fifteen_constructors_are_rejected(tmp_path):

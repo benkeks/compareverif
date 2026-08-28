@@ -38,6 +38,88 @@ _TABLE_ROW_CAPACITY = 3
 _TABLE_FIELD_NAMES = ["first", "second", "third", "fourth", "fifth", "sixth"]
 _FORK_CHANNEL = "_fork"
 _DATA_TYPE_DECLARATION = "typedef int [-1, (1 << 31) - 1] data;"
+# In --wide-data mode, `data` is four unsigned 16-bit UPPAAL ints instead of one bounded
+# int, modeling 64 bits. DATA_SHL/DATA_SHR/DATA_OR/DATA_AND replace the native <<, >>, |,
+# & operators used by the packing/selector functions below; DATA_FROM_INT converts a plain
+# int (e.g. entity_counter, a constructor tag) into this representation.
+_WIDE_DATA_PREAMBLE_LINES = [
+    "typedef struct {",
+    "  int[0, 65535] b0;",
+    "  int[0, 65535] b16;",
+    "  int[0, 65535] b32;",
+    "  int[0, 65535] b48;",
+    "} data;",
+    "const data DATA_ZERO = {0, 0, 0, 0};",
+    "const data DATA_NONE = {65535, 65535, 65535, 65535};",
+    "data DATA_FROM_INT(int value) {",
+    "  data result = {0, 0, 0, 0};",
+    "  if (value < 0 || value >= 65535) return DATA_NONE;",
+    "  result.b0 = value;",
+    "  return result;",
+    "}",
+    "int DATA_BIT(data value, int bit) {",
+    "  if (bit < 16) return (value.b0 >> bit) & 1;",
+    "  if (bit < 32) return (value.b16 >> (bit - 16)) & 1;",
+    "  if (bit < 48) return (value.b32 >> (bit - 32)) & 1;",
+    "  return (value.b48 >> (bit - 48)) & 1;",
+    "}",
+    "data DATA_SET_BIT(data value, int bit) {",
+    "  if (bit < 16) value.b0 = value.b0 | (1 << bit);",
+    "  else if (bit < 32) value.b16 = value.b16 | (1 << (bit - 16));",
+    "  else if (bit < 48) value.b32 = value.b32 | (1 << (bit - 32));",
+    "  else value.b48 = value.b48 | (1 << (bit - 48));",
+    "  return value;",
+    "}",
+    "data DATA_SHL(data value, int amount) {",
+    "  data result = {0, 0, 0, 0};",
+    "  int bit;",
+    "  for (bit = 0; bit < 64; bit++) {",
+    "    int source_bit = bit - amount;",
+    "    if (source_bit >= 0 && source_bit < 64 && DATA_BIT(value, source_bit)) result = DATA_SET_BIT(result, bit);",
+    "  }",
+    "  return result;",
+    "}",
+    "data DATA_SHR(data value, int amount) {",
+    "  data result = {0, 0, 0, 0};",
+    "  int bit;",
+    "  for (bit = 0; bit < 64; bit++) {",
+    "    int source_bit = bit + amount;",
+    "    if (source_bit < 64 && DATA_BIT(value, source_bit)) result = DATA_SET_BIT(result, bit);",
+    "  }",
+    "  return result;",
+    "}",
+    "data DATA_OR(data a, data b) {",
+    "  data result;",
+    "  result.b0 = a.b0 | b.b0;",
+    "  result.b16 = a.b16 | b.b16;",
+    "  result.b32 = a.b32 | b.b32;",
+    "  result.b48 = a.b48 | b.b48;",
+    "  return result;",
+    "}",
+    "data DATA_AND(data a, data b) {",
+    "  data result;",
+    "  result.b0 = a.b0 & b.b0;",
+    "  result.b16 = a.b16 & b.b16;",
+    "  result.b32 = a.b32 & b.b32;",
+    "  result.b48 = a.b48 & b.b48;",
+    "  return result;",
+    "}",
+    "data DATA_ONES_MASK(int bits) {",
+    "  data result = {0, 0, 0, 0};",
+    "  int bit;",
+    "  for (bit = 0; bit < 64; bit++) {",
+    "    if (bit < bits) result = DATA_SET_BIT(result, bit);",
+    "  }",
+    "  return result;",
+    "}",
+]
+
+
+def _data_declaration_lines(wide_data: bool) -> list[str]:
+    """Return the `data` typedef, plus wide-data bitwise helpers if `wide_data` is set."""
+    if not wide_data:
+        return [_DATA_TYPE_DECLARATION]
+    return list(_WIDE_DATA_PREAMBLE_LINES)
 _PROCESS_KEYWORDS = {
     "in",
     "out",
@@ -367,8 +449,11 @@ def _value_function_lines(functions: dict[str, int]) -> list[str]:
     return lines
 
 
-def _table_getter_lines(getters: dict[tuple[str, tuple[str, ...]], set[int]]) -> list[str]:
+def _table_getter_lines(
+    getters: dict[tuple[str, tuple[str, ...]], set[int]], wide_data: bool = False
+) -> list[str]:
     """Render table lookup helpers keyed by the named struct fields."""
+    not_found = "DATA_NONE" if wide_data else "-1"
     lines: list[str] = []
     for (table, fields), result_indexes in getters.items():
         for result_index in result_indexes:
@@ -383,7 +468,7 @@ def _table_getter_lines(getters: dict[tuple[str, tuple[str, ...]], set[int]]) ->
             )
             lines.append(f"    if ({conditions}) return {table}[index].{_table_field_names(result_index + 1)[result_index]};")
             lines.append("  }")
-            lines.append("  return -1;")
+            lines.append(f"  return {not_found};")
             lines.append("}")
     return lines
 
@@ -470,7 +555,7 @@ def _parse_term(text: str) -> Term:
     return Term(match.group(1), [_parse_term(argument) for argument in split_top_level_commas(arguments)])
 
 
-def _function_declaration_lines(functions: ProVerifFunctions) -> list[str]:
+def _function_declaration_lines(functions: ProVerifFunctions, wide_data: bool = False) -> list[str]:
     """Render source-declared ProVerif functions and constructor identities."""
     if len(functions.constructors) > 15:
         raise ConstructorTagOverflowError(
@@ -478,57 +563,87 @@ def _function_declaration_lines(functions: ProVerifFunctions) -> list[str]:
         )
     lines = ["// ProVerif constructors."]
     if any(functions.arities[name] == 2 for name in functions.constructors):
-        lines.extend(_pair_packing_function_lines())
+        lines.extend(_pair_packing_function_lines(wide_data))
     for index, name in enumerate(functions.constructors, start=1):
         lines.append(f"const int {name.upper()} = {index};")
-        lines.append(_constructor_function(name, functions.arities[name]))
+        lines.append(_constructor_function(name, functions.arities[name], wide_data))
     lines.append("// ProVerif selectors defined by reduc rules.")
     if functions.selectors:
-        lines.extend(_selector_packing_function_lines())
+        lines.extend(_selector_packing_function_lines(wide_data))
     constructor_tags = {name: index for index, name in enumerate(functions.constructors, start=1)}
     for name in functions.selectors:
         if name in functions.rules:
-            lines.append(_selector_function(name, functions.rules[name], constructor_tags))
+            lines.append(_selector_function(name, functions.rules[name], constructor_tags, wide_data))
         else:
             lines.append(_function_stub(name, functions.arities[name]))
     return lines
 
 
-def _pair_packing_function_lines() -> list[str]:
+def _pair_packing_function_lines(wide_data: bool = False) -> list[str]:
     """Render the shared binary-constructor bit packing helper."""
+    if not wide_data:
+        return [
+            "data BUILD_PAIR(int datatype_id, data first, data second) {",
+            "  int first_width = 1;",
+            "  while ((first >> (first_width * 4)) > 0) first_width++;",
+            "  return datatype_id | (first_width << 4) | (first << 8) | "
+            "(second << (8 + (first_width * 4)));",
+            "}",
+        ]
     return [
         "data BUILD_PAIR(int datatype_id, data first, data second) {",
         "  int first_width = 1;",
-        "  while ((first >> (first_width * 4)) > 0) first_width++;",
-        "  return datatype_id | (first_width << 4) | (first << 8) | "
-        "(second << (8 + (first_width * 4)));",
+        "  while (DATA_SHR(first, first_width * 4) != DATA_ZERO) first_width++;",
+        "  return DATA_OR(DATA_OR("
+        "DATA_FROM_INT(datatype_id | (first_width << 4)), "
+        "DATA_SHL(first, 8)), "
+        "DATA_SHL(second, 8 + (first_width * 4)));",
         "}",
     ]
 
 
-def _selector_packing_function_lines() -> list[str]:
+def _selector_packing_function_lines(wide_data: bool = False) -> list[str]:
     """Render helpers used to inspect packed constructor values."""
+    if not wide_data:
+        return [
+            "int TYPE_TAG(data value) { return value & 15; }",
+            "data UNWRAP(data value) { return value >> 4; }",
+            "int PAIR_FIRST_WIDTH(data value) { return (value >> 4) & 15; }",
+            "data PAIR_FIRST(data value) {",
+            "  return (value >> 8) & ((1 << (PAIR_FIRST_WIDTH(value) * 4)) - 1);",
+            "}",
+            "data PAIR_SECOND(data value) {",
+            "  return value >> (8 + (PAIR_FIRST_WIDTH(value) * 4));",
+            "}",
+        ]
     return [
-        "int TYPE_TAG(data value) { return value & 15; }",
-        "data UNWRAP(data value) { return value >> 4; }",
-        "int PAIR_FIRST_WIDTH(data value) { return (value >> 4) & 15; }",
+        "int TYPE_TAG(data value) { return DATA_AND(value, DATA_FROM_INT(15)).b0; }",
+        "data UNWRAP(data value) { return DATA_SHR(value, 4); }",
+        "int PAIR_FIRST_WIDTH(data value) {",
+        "  return DATA_AND(DATA_SHR(value, 4), DATA_FROM_INT(15)).b0;",
+        "}",
         "data PAIR_FIRST(data value) {",
-        "  return (value >> 8) & ((1 << (PAIR_FIRST_WIDTH(value) * 4)) - 1);",
+        "  return DATA_AND(DATA_SHR(value, 8), DATA_ONES_MASK(PAIR_FIRST_WIDTH(value) * 4));",
         "}",
         "data PAIR_SECOND(data value) {",
-        "  return value >> (8 + (PAIR_FIRST_WIDTH(value) * 4));",
+        "  return DATA_SHR(value, 8 + (PAIR_FIRST_WIDTH(value) * 4));",
         "}",
     ]
 
 
-def _constructor_function(name: str, arity: int) -> str:
+def _constructor_function(name: str, arity: int, wide_data: bool = False) -> str:
     """Render a constructor using its low four bits as a datatype ID."""
     parameters = ", ".join(f"data value{index}" for index in range(1, arity + 1))
     datatype_id = name.upper()
     if arity == 0:
-        return f"data {name}() {{ return {datatype_id}; }}"
+        return_expr = f"DATA_FROM_INT({datatype_id})" if wide_data else datatype_id
+        return f"data {name}() {{ return {return_expr}; }}"
     if arity == 1:
-        return f"data {name}({parameters}) {{ return {datatype_id} + (value1 << 4); }}"
+        if wide_data:
+            return_expr = f"DATA_OR(DATA_FROM_INT({datatype_id}), DATA_SHL(value1, 4))"
+        else:
+            return_expr = f"{datatype_id} + (value1 << 4)"
+        return f"data {name}({parameters}) {{ return {return_expr}; }}"
     if arity == 2:
         return f"data {name}({parameters}) {{ return BUILD_PAIR({datatype_id}, value1, value2); }}"
     raise UnsupportedConstructorArityError(
@@ -540,6 +655,7 @@ def _selector_function(
     name: str,
     rule: ReductionRule,
     constructor_tags: dict[str, int],
+    wide_data: bool = False,
 ) -> str:
     """Render a selector that checks its packed reduction pattern."""
     parameters = ", ".join(f"data value{index}" for index in range(1, len(rule.arguments) + 1))
@@ -549,7 +665,8 @@ def _selector_function(
         _match_selector_term(pattern, f"value{index}", bindings, conditions, constructor_tags)
     result = _render_selector_result(rule.result, bindings)
     condition = " && ".join(conditions) if conditions else "true"
-    return f"data {name}({parameters}) {{ if ({condition}) return {result}; return -1; }}"
+    not_found = "DATA_NONE" if wide_data else "-1"
+    return f"data {name}({parameters}) {{ if ({condition}) return {result}; return {not_found}; }}"
 
 
 def _match_selector_term(
@@ -603,6 +720,7 @@ def render_channel_skeleton(
     *,
     global_free_names: list[str] | None = None,
     proverif_functions: ProVerifFunctions | None = None,
+    wide_data: bool = False,
 ) -> list[str]:
     """Write a static UPPAAL model with one automaton for the process's linear prefix and one
     for each top-level parallel component, synchronized by a global `_fork` broadcast that the
@@ -612,6 +730,10 @@ def render_channel_skeleton(
     Names declared in the prefix become global variables; names declared within a component are
     declared locally in that component's automaton. Also declares channels/payload variables for
     in(...)/out(...) usages and fixed-capacity struct arrays for tables used by insert/get.
+
+    If `wide_data` is set, `data` is modeled as four native (16-bit) ints instead of one bounded
+    int, and the packing/selector/NEW functions use DATA_SHL/DATA_SHR/DATA_OR/DATA_AND helpers
+    instead of native shift/bitwise operators.
 
     Raises DynamicChannelError if a channel used for communication is not a global name, and
     UnsupportedProcessStructureError (from compareverif.proverif.process_structure) if the
@@ -633,11 +755,14 @@ def render_channel_skeleton(
         raise ConstructorTagOverflowError(
             "Constructor bit packing supports at most fifteen datatype IDs."
         )
+    component_limit = 15 if wide_data else 7
     for label, width, term in analyze_constructor_widths(process, function_metadata):
-        if width > 7:
+        if width > component_limit:
             warnings.warn(
                 f"Constructor term {term!r} at {{{label}}} requires {width} packed "
-                "components, exceeding the 7-component data limit. This will lead to undefined behavior in the UPPAAL model.",
+                f"components, exceeding the {component_limit}-component data limit. "
+                "This will lead to undefined behavior in the UPPAAL model. "
+                "Use --wide-data to support up to 15 components.",
                 ConstructorWidthWarning,
                 stacklevel=2,
             )
@@ -658,7 +783,10 @@ def render_channel_skeleton(
     nta = ET.Element("nta")
 
     declaration = ET.SubElement(nta, "declaration")
-    declaration_lines = [_DATA_TYPE_DECLARATION, "\n// Channels extracted from the ProVerif process."]
+    declaration_lines = [
+        *_data_declaration_lines(wide_data),
+        "\n// Channels extracted from the ProVerif process.",
+    ]
     for channel in channels:
         declaration_lines.append(
             f"broadcast chan {channel};"
@@ -679,16 +807,20 @@ def render_channel_skeleton(
         declaration_lines.extend(_table_insert_function_lines(inserted_tables))
     if getters:
         declaration_lines.append("\n// Table lookup functions used by get statements.")
-        declaration_lines.extend(_table_getter_lines(getters))
+        declaration_lines.extend(_table_getter_lines(getters, wide_data))
     declaration_lines.append("\n// Names declared in the process prefix.")
     declaration_lines.extend(f"data {name};" for name in prefix_names)
     declaration_lines.append("\n// Fresh entity identifiers and free names used by the process prefix.")
-    declaration_lines.extend(f"data {name} = {i};" for i, name in enumerate(free_prefix_names, start=1))
+    declaration_lines.extend(
+        f"data {name} = {{ {i}, 0, 0, 0 }};" if wide_data else f"data {name} = {i};"
+        for i, name in enumerate(free_prefix_names, start=1)
+    )
     declaration_lines.append(f"int entity_counter = {len(free_prefix_names)};")
-    declaration_lines.append("data NEW() { entity_counter++; return entity_counter; }")
+    new_return = "DATA_FROM_INT(entity_counter)" if wide_data else "entity_counter"
+    declaration_lines.append(f"data NEW() {{ entity_counter++; return {new_return}; }}")
     if proverif_functions is not None:
         declaration_lines.append("\n// Functions declared by the ProVerif source.")
-        declaration_lines.extend(_function_declaration_lines(proverif_functions))
+        declaration_lines.extend(_function_declaration_lines(proverif_functions, wide_data))
     if value_functions:
         declaration_lines.append("\n// ProVerif value constructors represented as fresh entity identifiers.")
         declaration_lines.extend(_value_function_lines(value_functions))
@@ -709,6 +841,7 @@ def render_channel_skeleton(
             nta,
             name=name,
             component=component,
+            wide_data=wide_data,
         )
 
     system = ET.SubElement(nta, "system")
@@ -947,7 +1080,9 @@ def _walk_nodes(node: ProcessSyntaxNode):
         yield from _walk_nodes(child)
 
 
-def _add_component_template(nta: ET.Element, *, name: str, component: ProcessSyntaxNode) -> None:
+def _add_component_template(
+    nta: ET.Element, *, name: str, component: ProcessSyntaxNode, wide_data: bool = False
+) -> None:
     """Add a component automaton beginning after the prefix broadcast."""
     _reject_nested_replication(component)
     template = ET.SubElement(nta, "template")
@@ -984,7 +1119,7 @@ def _add_component_template(nta: ET.Element, *, name: str, component: ProcessSyn
         label_x=30,
         label_y=55,
     )
-    builder = _ComponentBuilder(template, name)
+    builder = _ComponentBuilder(template, name, wide_data=wide_data)
     builder.compile_node(component, entry_id, terminal_id)
     builder.finalize_layout(terminal_id if terminates else None)
     _order_template_children(template)
@@ -1005,9 +1140,10 @@ def _order_template_children(template: ET.Element) -> None:
 class _ComponentBuilder:
     """Emit a small vertical UPPAAL control-flow graph from syntax-tree nodes."""
 
-    def __init__(self, template: ET.Element, name: str):
+    def __init__(self, template: ET.Element, name: str, *, wide_data: bool = False):
         self.template = template
         self.name = name
+        self.not_found = "DATA_NONE" if wide_data else "-1"
         self.location_count = 2
         self.location_y = {
             f"{name}_before": 0,
@@ -1106,7 +1242,7 @@ class _ComponentBuilder:
             self.compile_children(node.children, source, target, guard=guard, x=x)
             return
         if node.text == "!":
-            replication = self.location("replication", x=-260)
+            replication = self.location("replication", urgent=True, x=-260)
             self.loop_targets.add(replication)
             self.transition(source, replication, guard=guard, comment="replication")
             loop_target = replication if target == f"{self.name}_replication" else target
@@ -1182,7 +1318,7 @@ class _ComponentBuilder:
     def compile_get(self, node: ProcessSyntaxNode, source: str, target: str, guard: str | None, *, x: int = 0) -> None:
         translations = _get_translation(node.text)
         getters = [getter for getter, _ in translations]
-        success_guard = " && ".join(f"{getter} != -1" for getter in getters)
+        success_guard = " && ".join(f"{getter} != {self.not_found}" for getter in getters)
         if guard:
             success_guard = f"({guard}) && ({success_guard})"
         next_location = self.location(f"step_{node.label}", x=x)
@@ -1192,7 +1328,7 @@ class _ComponentBuilder:
         self.compile_children(normal_children, next_location, target)
         else_branch = next((child for child in node.children if child.text == "else"), None)
         failure_target = self.location("get_failed", x=x) if else_branch is None else None
-        failure_guard = " || ".join(f"{getter} == -1" for getter in getters)
+        failure_guard = " || ".join(f"{getter} == {self.not_found}" for getter in getters)
         if guard:
             failure_guard = f"({guard}) && ({failure_guard})"
         if else_branch:
