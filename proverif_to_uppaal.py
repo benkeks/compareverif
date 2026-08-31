@@ -71,7 +71,7 @@ def main() -> int:
 
     command = [args.proverif]
     append_library_arguments(command, extract_declared_libraries_from_file(scenario_file))
-    if args.show_attack_processes:
+    if args.show_attack_processes or args.uppaal_out:
         command.extend(["-set", "traceDisplay", "long"])
     command.extend(["-test", scenario_file.name])
     try:
@@ -98,10 +98,8 @@ def main() -> int:
 
     print(process.render_tree())
 
+    attack_processes = extract_attack_processes(result.stdout, scenario_file.read_text())
     if args.show_attack_processes:
-        attack_processes = extract_attack_processes(
-            result.stdout, scenario_file.read_text()
-        )
         for attack_process in attack_processes:
             print(f"\nAttack process for query {attack_process.query_number} ({attack_process.query}):")
             print(attack_process.render())
@@ -119,6 +117,7 @@ def main() -> int:
                 proverif_functions=extract_proverif_functions(
                     "\n".join([*read_declared_library_sources(scenario_file), source])
                 ),
+                attack_processes=attack_processes,
                 wide_data=args.wide_data,
             )
         except (
@@ -134,6 +133,11 @@ def main() -> int:
         ) as error:
             print(f"Cannot translate to a static UPPAAL model: {error}", file=sys.stderr)
             return 1
+    else:
+        print(
+            "Warning: no UPPAAL output was generated; provide --uppaal-out <path> to write a model.",
+            file=sys.stderr,
+        )
 
     return 0
 

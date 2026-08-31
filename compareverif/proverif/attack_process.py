@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 
 from .identifier_analysis import collect_declared_name_types
-from .intermediate_process import extract_let_drifted_process
+from .intermediate_process import ProcessSyntaxNode, extract_let_drifted_process
 from .syntax_utils import split_top_level_commas
 
 
@@ -31,11 +31,16 @@ class AttackProcess:
 
     query: str
     query_number: int
-    statements: tuple[str, ...]
+    nodes: tuple[ProcessSyntaxNode, ...]
 
     def render(self) -> str:
         """Render the process statements in ProVerif syntax."""
         return "\n".join(self.statements)
+
+    @property
+    def statements(self) -> tuple[str, ...]:
+        """Return the pretty-printed statements for callers using the old API."""
+        return tuple(statement for node in self.nodes for statement in _flatten_statements(node))
 
 
 def extract_attack_processes(trace: str, source: str = "") -> list[AttackProcess]:
@@ -116,19 +121,44 @@ def extract_attack_processes(trace: str, source: str = "") -> list[AttackProcess
                 f"new attack_{name}: {_fresh_type(name, trace, function_signatures)};"
                 for name in sorted(fresh_names)
             ]
+            success_event = f"event attack_breaks_query_{query_number}()"
             processes.append(
                 AttackProcess(
                     query=current_query,
                     query_number=query_number,
-                    statements=tuple(
+                    nodes=_build_process_nodes(
                         [*fresh_statements, *statements,
-                        f"if {term} = {goal} then event attack_breaks_query_{query_number}()"]
+                        f"if {term} = {goal} then", success_event]
                     ),
                 )
             )
             current_query = None
 
     return processes
+
+
+def _build_process_nodes(statements: list[str]) -> tuple[ProcessSyntaxNode, ...]:
+    """Build the linear attacker process as a continuation syntax tree."""
+    nodes = [
+        ProcessSyntaxNode(label=index, text=text, indent=0)
+        for index, text in enumerate(statements[:-1], start=1)
+    ]
+    success_event = ProcessSyntaxNode(label=len(statements), text=statements[-1], indent=4)
+    then_branch = ProcessSyntaxNode(label=None, text="then", indent=0, children=[success_event])
+    nodes[-1].children = [then_branch]
+    for node, child in zip(nodes, nodes[1:]):
+        if not node.children:
+            node.children = [child]
+    return tuple(nodes[:1])
+
+
+def _flatten_statements(node: ProcessSyntaxNode) -> list[str]:
+    if node.text.startswith("if "):
+        then_branch = next(child for child in node.children if child.text == "then")
+        return [f"{node.text} {_flatten_statements(then_branch.children[0])[0]}"]
+    if not node.children:
+        return [node.text]
+    return [node.text, *_flatten_statements(node.children[0])]
 
 
 def _logical_lines(lines: list[str]) -> list[str]:

@@ -7,6 +7,7 @@ from xml.etree import ElementTree as ET
 import pytest
 
 from compareverif.proverif.intermediate_process import extract_let_drifted_process
+from compareverif.proverif.attack_process import AttackProcess
 from compareverif.proverif.libraries import read_declared_library_sources
 from compareverif.proverif.process_structure import UnsupportedProcessStructureError
 from compareverif.uppaal import (
@@ -185,6 +186,42 @@ def test_render_channel_skeleton_builds_prefix_and_component_automata(tmp_path):
         for transition in root.findall(".//template[name='Prefix']/transition")
     ]
     assert [assignment for assignment in prefix_assignments if assignment is not None] == ["key = NEW()"]
+
+
+def test_render_channel_skeleton_adds_attack_template_and_success_query(tmp_path):
+    process = extract_let_drifted_process(PROVERIF_OUTPUT)
+    attack = AttackProcess(
+        query="not attacker(secret)",
+        query_number=1,
+        nodes=(
+            extract_let_drifted_process(
+                "--  Process 1 (that is, process 0, with let moved downwards):\n"
+                "{1}in(server_link, attack_message: bitstring);\n"
+                "{2}if attack_message = secret then\n"
+                "    {3}event attack_breaks_query_1()\n"
+                "\nTranslating the process into Horn clauses...\n"
+            ).nodes[0],
+        ),
+    )
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process, attack_processes=[attack])
+
+    root = ET.parse(output_file).getroot()
+    assert "AttackOnQuery1" in [template.findtext("name") for template in root.findall("template")]
+    assert "system Prefix, Component1, Component2, AttackOnQuery1;" in root.findtext("system")
+    assert root.findtext(".//template[name='AttackOnQuery1']/location[name='success']") is not None
+    assert "E<> AttackOnQuery1.success" in [formula.text for formula in root.findall(".//queries/query/formula")]
+    attack_transitions = root.findall(".//template[name='AttackOnQuery1']/transition")
+    assert all(
+        transition.findtext("label[@kind='synchronisation']") != "_fork?"
+        for transition in attack_transitions
+    )
+    assert any(
+        transition.find("target").get("ref") == "AttackOnQuery1_failed"
+        and transition.findtext("label[@kind='guard']") == "!(attack_message == secret)"
+        for transition in attack_transitions
+    )
 
 
 def test_collect_table_arities_counts_top_level_arguments_only():

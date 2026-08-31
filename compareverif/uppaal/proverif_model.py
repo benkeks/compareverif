@@ -15,6 +15,7 @@ from compareverif.proverif.identifier_analysis import (
     resolve_channel_usages,
 )
 from compareverif.proverif.intermediate_process import IntermediateProcess, ProcessSyntaxNode
+from compareverif.proverif.attack_process import AttackProcess
 from compareverif.proverif.process_structure import decompose_process
 from compareverif.proverif.syntax_utils import (
     extract_balanced_parens,
@@ -720,6 +721,7 @@ def render_channel_skeleton(
     *,
     global_free_names: list[str] | None = None,
     proverif_functions: ProVerifFunctions | None = None,
+    attack_processes: list[AttackProcess] | None = None,
     wide_data: bool = False,
 ) -> list[str]:
     """Write a static UPPAAL model with one automaton for the process's linear prefix and one
@@ -740,10 +742,13 @@ def render_channel_skeleton(
     process is not a linear prefix followed by a single top-level parallel composition, and
     TupleDataError if any statement uses tuple data in a binding or as a function argument.
     """
-    _reject_tuple_data(process)
-    _reject_complex_input_patterns(process)
-    channels = collect_channel_names(process)
-    events = collect_event_names(process)
+    attack_processes = attack_processes or []
+    all_process_nodes = [*process.nodes, *(attack.nodes[0] for attack in attack_processes if attack.nodes)]
+    all_process = IntermediateProcess(0, "process and attacks", [], all_process_nodes)
+    _reject_tuple_data(all_process)
+    _reject_complex_input_patterns(all_process)
+    channels = collect_channel_names(all_process)
+    events = collect_event_names(all_process)
     timing_channels = collect_timing_channels(process)
     leak_channels = collect_leak_channels(process)
     tables = collect_table_arities(process)
@@ -848,16 +853,26 @@ def render_channel_skeleton(
             wide_data=wide_data,
         )
 
+    attack_names = []
+    for attack_process in attack_processes:
+        if not attack_process.nodes:
+            continue
+        name = f"AttackOnQuery{attack_process.query_number}"
+        attack_names.append(name)
+        _add_attack_template(nta, name=name, attack_process=attack_process, wide_data=wide_data)
+
     system = ET.SubElement(nta, "system")
-    system.text = "system " + ", ".join(["Prefix", *component_names]) + ";\n"
+    system.text = "system " + ", ".join(["Prefix", *component_names, *attack_names]) + ";\n"
 
     queries = ET.SubElement(nta, "queries")
-    query = ET.SubElement(queries, "query")
-    ET.SubElement(query, "formula").text = "A[] true"
-    ET.SubElement(query, "comment").text = (
-        "Blank per-process skeleton: prefix and parallel components synchronized via "
-        f"{_FORK_CHANNEL}."
-    )
+    for attack_process in attack_processes:
+        attack_name = f"AttackOnQuery{attack_process.query_number}"
+        query = ET.SubElement(queries, "query")
+        ET.SubElement(query, "formula").text = f"E<> {attack_name}.success"
+        ET.SubElement(query, "comment").text = (
+            f"Replay ProVerif attack trace for query {attack_process.query_number}: "
+            f"{attack_process.query}"
+        )
 
     write_document(output_file, nta)
     return channels
@@ -1129,6 +1144,36 @@ def _add_component_template(
     _order_template_children(template)
 
 
+def _add_attack_template(
+    nta: ET.Element, *, name: str, attack_process: AttackProcess, wide_data: bool = False
+) -> None:
+    """Add an attacker process automaton that succeeds only when its final test holds."""
+    component = attack_process.nodes[0]
+    template = ET.SubElement(nta, "template")
+    ET.SubElement(template, "name").text = name
+    local_names = collect_declared_names([component])
+    declaration_lines = ["// Locally declared attacker names."]
+    declaration_lines.extend(f"data {local_name};" for local_name in local_names)
+    ET.SubElement(template, "declaration").text = "\n".join(declaration_lines) + "\n"
+
+    entry_id = f"{name}_entry"
+    success_id, failed_id = f"{name}_success", f"{name}_failed"
+    for location_id, title, y in (
+        (entry_id, "entry", 0),
+        (success_id, "success", 160),
+        (failed_id, "failed", 160),
+    ):
+        location = ET.SubElement(
+            template, "location", {"id": location_id, "x": "0" if title != "failed" else "260", "y": str(y)}
+        )
+        ET.SubElement(location, "name", {"x": "20" if title != "failed" else "280", "y": str(y - 24)}).text = title
+    ET.SubElement(template, "init", {"ref": entry_id})
+    builder = _ComponentBuilder(template, name, wide_data=wide_data, condition_failure_target=failed_id)
+    builder.compile_node(component, entry_id, success_id)
+    builder.finalize_layout(success_id)
+    _order_template_children(template)
+
+
 def _order_template_children(template: ET.Element) -> None:
     """Order template children according to the UPPAAL XML schema."""
     order = {"name": 0, "parameter": 1, "declaration": 2, "location": 3, "init": 4, "transition": 5}
@@ -1144,24 +1189,30 @@ def _order_template_children(template: ET.Element) -> None:
 class _ComponentBuilder:
     """Emit a small vertical UPPAAL control-flow graph from syntax-tree nodes."""
 
-    def __init__(self, template: ET.Element, name: str, *, wide_data: bool = False):
+    def __init__(
+        self,
+        template: ET.Element,
+        name: str,
+        *,
+        wide_data: bool = False,
+        condition_failure_target: str | None = None,
+    ):
         self.template = template
         self.name = name
         self.not_found = "DATA_NONE" if wide_data else "-1"
         self.location_count = 2
-        self.location_y = {
-            f"{name}_before": 0,
-            f"{name}_entry": 160,
-            f"{name}_terminated": 320,
-        }
-        self.location_x = {
-            f"{name}_before": 0,
-            f"{name}_entry": 0,
-            f"{name}_terminated": 0,
-        }
         self.loop_targets: set[str] = set()
+        self.condition_failure_target = condition_failure_target
         self.location_elements = {
             location.get("id"): location for location in template.findall("location")
+        }
+        self.location_y = {
+            location_id: int(location.get("y", "0"))
+            for location_id, location in self.location_elements.items()
+        }
+        self.location_x = {
+            location_id: int(location.get("x", "0"))
+            for location_id, location in self.location_elements.items()
         }
         self.transition_elements: list[tuple[ET.Element, str, str]] = []
 
@@ -1267,7 +1318,12 @@ class _ComponentBuilder:
             if else_branch:
                 self.compile_children(else_branch.children, source, target, guard=f"!({condition})", x=260)
             elif then_branch:
-                self.transition(source, target, guard=f"!({condition})", comment="if condition failed")
+                self.transition(
+                    source,
+                    self.condition_failure_target or target,
+                    guard=f"!({condition})",
+                    comment="if condition failed",
+                )
             return
         if node.text.startswith("get "):
             self.compile_get(node, source, target, guard, x=x)
