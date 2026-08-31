@@ -1,7 +1,9 @@
 """Tests for linking identifiers to their local declaration/definition sites."""
 
 from compareverif.proverif.identifier_analysis import (
+    collect_declared_name_types,
     collect_declared_names,
+    declared_name_types_of,
     declared_names_of,
     resolve_channel_usages,
     resolve_identifiers,
@@ -101,6 +103,19 @@ def test_declared_names_of_covers_new_let_in_and_get():
         == ["uid1", "salt"]
     )
     assert declared_names_of("out(c, x)") == []
+
+
+def test_declared_name_types_cover_typed_process_bindings():
+    assert declared_name_types_of("new key: skey;") == {"key": "skey"}
+    assert declared_name_types_of("let (u: uid,pw: bitstring) = pair in") == {
+        "u": "uid",
+        "pw": "bitstring",
+    }
+    process = _process("{1}new key: skey;\n{2}in(c, received: bitstring)")
+    assert collect_declared_name_types(process.nodes) == {
+        "key": "skey",
+        "received": "bitstring",
+    }
 
 
 def test_collect_declared_names_walks_whole_subtree():

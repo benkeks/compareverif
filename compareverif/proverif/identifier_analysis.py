@@ -19,7 +19,7 @@ from .syntax_utils import find_matching_paren, split_top_level_commas
 
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 _IDENT_RE = re.compile(_IDENT)
-_TYPED_NAME_RE = re.compile(rf"({_IDENT})\s*:\s*{_IDENT}")
+_TYPED_NAME_RE = re.compile(rf"({_IDENT})\s*:\s*({_IDENT})")
 _TYPED_NAME_FULL_RE = re.compile(rf"^({_IDENT})\s*:\s*{_IDENT}$")
 _NEW_RE = re.compile(rf"^new\s+({_IDENT})\s*:\s*{_IDENT}")
 _KEYWORDS = {
@@ -72,6 +72,14 @@ def declared_names_of(text: str) -> list[str]:
     return declared_names
 
 
+def declared_name_types_of(text: str) -> dict[str, str]:
+    """Return the types of names declared by one typed process statement."""
+    return {
+        match.group(1): match.group(2)
+        for match in _TYPED_NAME_RE.finditer(text)
+    }
+
+
 def collect_declared_names(nodes: Iterable[ProcessSyntaxNode]) -> list[str]:
     """Return every name declared anywhere within the given nodes' subtrees, in source order."""
     names: list[str] = []
@@ -80,11 +88,28 @@ def collect_declared_names(nodes: Iterable[ProcessSyntaxNode]) -> list[str]:
     return names
 
 
+def collect_declared_name_types(nodes: Iterable[ProcessSyntaxNode]) -> dict[str, str]:
+    """Return declared process names mapped to their types in source order."""
+    name_types: dict[str, str] = {}
+    for node in nodes:
+        _collect_declared_name_types(node, name_types)
+    return name_types
+
+
 def _collect_declared_names(node: ProcessSyntaxNode, names: list[str]) -> None:
     if node.label is not None:
         names.extend(declared_names_of(node.text))
     for child in node.children:
         _collect_declared_names(child, names)
+
+
+def _collect_declared_name_types(
+    node: ProcessSyntaxNode, name_types: dict[str, str]
+) -> None:
+    if node.label is not None:
+        name_types.update(declared_name_types_of(node.text))
+    for child in node.children:
+        _collect_declared_name_types(child, name_types)
 
 
 def _resolve_node(

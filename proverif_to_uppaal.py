@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from compareverif.proverif.intermediate_process import extract_let_drifted_process
+from compareverif.proverif.attack_process import extract_attack_processes
 from compareverif.proverif.libraries import (
     append_library_arguments,
     extract_declared_libraries_from_file,
@@ -53,6 +54,11 @@ def parse_arguments() -> argparse.Namespace:
             "bounded int, using DATA_SHL/DATA_SHR/DATA_OR/DATA_AND helpers for packing."
         ),
     )
+    parser.add_argument(
+        "--show-attack-processes",
+        action="store_true",
+        help="Print attacker processes reconstructed from successful ProVerif attack traces",
+    )
     return parser.parse_args()
 
 
@@ -65,6 +71,8 @@ def main() -> int:
 
     command = [args.proverif]
     append_library_arguments(command, extract_declared_libraries_from_file(scenario_file))
+    if args.show_attack_processes:
+        command.extend(["-set", "traceDisplay", "long"])
     command.extend(["-test", scenario_file.name])
     try:
         result = subprocess.run(
@@ -89,6 +97,14 @@ def main() -> int:
         return 1
 
     print(process.render_tree())
+
+    if args.show_attack_processes:
+        attack_processes = extract_attack_processes(
+            result.stdout, scenario_file.read_text()
+        )
+        for attack_process in attack_processes:
+            print(f"\nAttack process for query {attack_process.query_number} ({attack_process.query}):")
+            print(attack_process.render())
 
     if contains_replication(process):
         print("Warning: replications will be translated to loops.", file=sys.stderr)
