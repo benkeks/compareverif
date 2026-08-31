@@ -167,7 +167,6 @@ def test_render_channel_skeleton_builds_prefix_and_component_automata(tmp_path):
     assert ("guard", "seconds_clock == 3") in component_two_labels
     replication = root.find(".//template[name='Component1']/location[name='replication']")
     assert replication is not None
-    assert replication.find("urgent") is not None
     replication_id = replication.get("id")
     component_one_transitions = root.findall(".//template[name='Component1']/transition")
     assert any(

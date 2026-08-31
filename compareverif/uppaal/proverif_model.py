@@ -1246,7 +1246,7 @@ class _ComponentBuilder:
             self.compile_children(node.children, source, target, guard=guard, x=x)
             return
         if node.text == "!":
-            replication = self.location("replication", urgent=True, x=-260)
+            replication = self.location("replication", x=-260)
             self.loop_targets.add(replication)
             self.transition(source, replication, guard=guard, comment="replication")
             loop_target = replication if target == f"{self.name}_replication" else target
