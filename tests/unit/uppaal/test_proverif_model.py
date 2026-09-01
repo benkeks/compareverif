@@ -16,6 +16,7 @@ from compareverif.uppaal import (
     ConstructorWidthWarning,
     GeneratedNameCollisionWarning,
     GlobalNameCountWarning,
+    InvalidUppaalPragmaError,
     DynamicChannelError,
     NestedReplicationError,
     TupleDataError,
@@ -321,6 +322,7 @@ time_channels:
   - timer
 additional_queries:
   - A[] true
+data_width: 64
 additional_queriess:
   - E&lt;&gt; true
 *)
@@ -332,6 +334,13 @@ additional_queriess:
     assert pragmas.non_blocking_channels == ["c"]
     assert pragmas.time_channels == ["timer"]
     assert pragmas.additional_queries == ["A[] true"]
+    assert pragmas.data_width == 64
+
+
+@pytest.mark.parametrize("data_width", [31, 63, 65])
+def test_uppaal_pragma_rejects_unsupported_data_width(data_width):
+    with pytest.raises(InvalidUppaalPragmaError, match="data_width must be 64"):
+        parse_uppaal_pragmas(f"(* UPPAAL\ndata_width: {data_width}\n*)")
 
 
 def test_additional_queries_are_written_verbatim(tmp_path):

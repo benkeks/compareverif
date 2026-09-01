@@ -1,3 +1,7 @@
+(* UPPAAL
+data_width: 64
+*)
+
 type key.
 fun senc(bitstring, key): bitstring.
 

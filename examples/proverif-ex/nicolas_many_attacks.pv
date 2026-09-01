@@ -1,6 +1,7 @@
 (*set verboseRules = true.
 set traceDisplay = long.
 *)
+
 free c:channel.
 
 fun hash(bitstring,bitstring):bitstring.

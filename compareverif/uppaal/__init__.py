@@ -1,7 +1,12 @@
 """UPPAAL timed automata generation."""
 
 from .attack_tree_generator import AttackTreeUppaalGenerator
-from .pragmas import UnknownUppaalPragmaWarning, UppaalPragmas, parse_uppaal_pragmas
+from .pragmas import (
+    InvalidUppaalPragmaError,
+    UnknownUppaalPragmaWarning,
+    UppaalPragmas,
+    parse_uppaal_pragmas,
+)
 from .proverif_model import (
     ComplexInputPatternError,
     ConstructorWidthWarning,
@@ -29,6 +34,7 @@ from .proverif_model import (
 
 __all__ = [
     "AttackTreeUppaalGenerator",
+    "InvalidUppaalPragmaError",
     "UnknownUppaalPragmaWarning",
     "UppaalPragmas",
     "parse_uppaal_pragmas",

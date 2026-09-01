@@ -21,6 +21,7 @@ from compareverif.uppaal import (
     ConstructorTagOverflowError,
     GlobalNameCountWarning,
     DynamicChannelError,
+    InvalidUppaalPragmaError,
     NestedReplicationError,
     ReservedTranslationNameError,
     TupleDataError,
@@ -132,7 +133,7 @@ def main() -> int:
                 non_blocking_channels=pragmas.non_blocking_channels,
                 time_channels=pragmas.time_channels,
                 additional_queries=pragmas.additional_queries,
-                wide_data=args.wide_data,
+                wide_data=args.wide_data or pragmas.data_width == 64,
             )
         except (
             ComplexInputPatternError,
@@ -143,6 +144,7 @@ def main() -> int:
             UnsupportedConstructorArityError,
             UnsupportedGetConditionError,
             UnsupportedSelectorRuleError,
+            InvalidUppaalPragmaError,
             ReservedTranslationNameError,
             UnsupportedProcessStructureError,
         ) as error:
