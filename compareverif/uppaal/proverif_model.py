@@ -770,6 +770,7 @@ def render_channel_skeleton(
     input_source: str | None = None,
     non_blocking_channels: Iterable[str] = ("leak",),
     time_channels: Iterable[str] = ("tick",),
+    additional_queries: Iterable[str] = (),
     wide_data: bool = False,
 ) -> list[str]:
     """Write a static UPPAAL model with one automaton for the process's linear prefix and one
@@ -943,6 +944,10 @@ def render_channel_skeleton(
             f"Replay ProVerif attack trace for query {attack_process.query_number}: "
             f"{attack_process.query}"
         )
+    for additional_query in additional_queries:
+        query = ET.SubElement(queries, "query")
+        ET.SubElement(query, "formula").text = additional_query
+        ET.SubElement(query, "comment").text = ""
 
     write_document(output_file, nta)
     return channels

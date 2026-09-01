@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import yaml
 
 _UPPAAL_PRAGMA_RE = re.compile(r"\(\*\s*UPPAAL\s*\n(?P<content>.*?)\*\)", re.DOTALL)
-_SUPPORTED_FIELDS = {"non_blocking_channels", "time_channels"}
+_SUPPORTED_FIELDS = {"additional_queries", "non_blocking_channels", "time_channels"}
 
 
 class UnknownUppaalPragmaWarning(UserWarning):
@@ -22,6 +22,7 @@ class UppaalPragmas:
 
     non_blocking_channels: list[str]
     time_channels: list[str]
+    additional_queries: list[str]
 
 
 def parse_uppaal_pragmas(source: str) -> UppaalPragmas:
@@ -29,6 +30,7 @@ def parse_uppaal_pragmas(source: str) -> UppaalPragmas:
     values: dict[str, list[str]] = {
         "non_blocking_channels": ["leak"],
         "time_channels": ["tick"],
+        "additional_queries": [],
     }
     for match in _UPPAAL_PRAGMA_RE.finditer(source):
         parsed = yaml.safe_load(match.group("content")) or {}
@@ -42,8 +44,8 @@ def parse_uppaal_pragmas(source: str) -> UppaalPragmas:
                 stacklevel=2,
             )
         for field in _SUPPORTED_FIELDS & parsed.keys():
-            channels = parsed[field]
-            if not isinstance(channels, list) or not all(isinstance(channel, str) for channel in channels):
-                raise ValueError(f"UPPAAL pragma field {field!r} must be a list of channel names")
-            values[field] = channels
+            values_list = parsed[field]
+            if not isinstance(values_list, list) or not all(isinstance(value, str) for value in values_list):
+                raise ValueError(f"UPPAAL pragma field {field!r} must be a list of strings")
+            values[field] = values_list
     return UppaalPragmas(**values)

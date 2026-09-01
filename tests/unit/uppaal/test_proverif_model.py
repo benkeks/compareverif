@@ -269,14 +269,33 @@ time_channels:
   - timer
 additional_queries:
   - A[] true
+additional_queriess:
+  - E&lt;&gt; true
 *)
 """
 
-    with pytest.warns(UnknownUppaalPragmaWarning, match="additional_queries"):
+    with pytest.warns(UnknownUppaalPragmaWarning, match="additional_queriess"):
         pragmas = parse_uppaal_pragmas(source)
 
     assert pragmas.non_blocking_channels == ["c"]
     assert pragmas.time_channels == ["timer"]
+    assert pragmas.additional_queries == ["A[] true"]
+
+
+def test_additional_queries_are_written_verbatim(tmp_path):
+    process = extract_let_drifted_process(PROVERIF_OUTPUT)
+
+    render_channel_skeleton(
+        tmp_path / "model.xml",
+        process,
+        additional_queries=["A[] true", "E<> Component1.terminated"],
+    )
+
+    formulas = [
+        formula.text
+        for formula in ET.parse(tmp_path / "model.xml").getroot().findall(".//queries/query/formula")
+    ]
+    assert formulas == ["A[] true", "E<> Component1.terminated"]
 
 
 def test_configured_non_blocking_and_time_channels_override_defaults(tmp_path):

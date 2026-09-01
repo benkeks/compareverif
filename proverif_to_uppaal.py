@@ -125,6 +125,7 @@ def main() -> int:
                 input_source=declaration_source,
                 non_blocking_channels=pragmas.non_blocking_channels,
                 time_channels=pragmas.time_channels,
+                additional_queries=pragmas.additional_queries,
                 wide_data=args.wide_data,
             )
         except (

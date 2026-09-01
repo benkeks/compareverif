@@ -82,10 +82,12 @@ non_blocking_channels:
 	- leak
 time_channels:
 	- tick
+additional_queries:
+	- A[] true
 *)
 ```
 
-`non_blocking_channels` declares channels as UPPAAL broadcast channels. It defaults to `leak`. `time_channels` selects which channels may use `in(channel, seconds(n))` timing annotations. It defaults to `tick`. Unknown pragma fields are ignored with a warning.
+`non_blocking_channels` declares channels as UPPAAL broadcast channels. It defaults to `leak`. `time_channels` selects which channels may use `in(channel, seconds(n))` timing annotations. It defaults to `tick`. `additional_queries` adds each listed query verbatim to the generated UPPAAL query list. Unknown pragma fields are ignored with a warning.
 
 ## Timing Annotations
 

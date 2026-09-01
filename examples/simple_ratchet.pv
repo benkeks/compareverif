@@ -16,7 +16,7 @@ non_blocking_channels:
 time_channels:
   - tick
 additional_queries:
-  - A<> true
+  - A[] true
 *)
 
 (* one-way key derivation functions (no inverse given -> models a hash/KDF) *)
