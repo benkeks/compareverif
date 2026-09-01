@@ -13,15 +13,15 @@
 
 
 (* one-way key derivation functions (no inverse given -> models a hash/KDF) *)
-fun MK(bitstring): bitstring. (* chain key -> message key *)
-fun CK(bitstring): bitstring. (* chain key -> next chain key *)
+fun mk(bitstring): bitstring. (* chain key -> message key *)
+fun ck(bitstring): bitstring. (* chain key -> next chain key *)
 
 (* symmetric encryption *)
 fun senc(bitstring, bitstring): bitstring.
 reduc forall m: bitstring, k: bitstring;
     sdec(senc(m, k), k) = m.
 (*** KDF break [4 time]
-reduc forall x: bitstring; invCK(CK(x)) = x.
+reduc forall x: bitstring; invCK(ck(x)) = x.
 ***)
 free c: channel.
 
@@ -39,27 +39,27 @@ free mb2: bitstring [ private ].
 
 (* Alice's sending chain, 4 messages *)
 let alice(ck0: bitstring) =
-    out(c, senc(ma1, MK(ck0)));
-    let ck1 = CK(ck0) in
+    out(c, senc(ma1, mk(ck0)));
+    let ck1 = ck(ck0) in
 
-    out(c, senc(ma2, MK(ck1)));
-    let ck2 = CK(ck1) in
+    out(c, senc(ma2, mk(ck1)));
+    let ck2 = ck(ck1) in
 
-    out(c, senc(ma3, MK(ck2)));
+    out(c, senc(ma3, mk(ck2)));
     (*** Alice chain key leak after message 2 [1 leak]
     out(c, ck2);
     ***)
-    let ck3 = CK(ck2) in
-    out(c, senc(ma4, MK(ck3)))
+    let ck3 = ck(ck2) in
+    out(c, senc(ma4, mk(ck3)))
     .
 
 
 (* Bob's sending chain, 2 messages *)
 let bob(ck0: bitstring) =
-    out(c, senc(mb1, MK(ck0)));
-    let ck1 = CK(ck0) in
+    out(c, senc(mb1, mk(ck0)));
+    let ck1 = ck(ck0) in
 
-    out(c, senc(mb2, MK(ck1))).
+    out(c, senc(mb2, mk(ck1))).
 
 (* secrecy of ma1*)
 query attacker(ma1).

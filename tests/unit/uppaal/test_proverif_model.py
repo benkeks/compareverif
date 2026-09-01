@@ -14,6 +14,7 @@ from compareverif.uppaal import (
     ComplexInputPatternError,
     ConstructorTagOverflowError,
     ConstructorWidthWarning,
+    GeneratedNameCollisionWarning,
     GlobalNameCountWarning,
     DynamicChannelError,
     NestedReplicationError,
@@ -26,8 +27,10 @@ from compareverif.uppaal import (
     extract_global_free_names,
     extract_proverif_functions,
     ProVerifFunctions,
+    ReservedTranslationNameError,
     analyze_constructor_widths,
     render_channel_skeleton,
+    reject_reserved_global_names,
 )
 
 
@@ -238,6 +241,22 @@ free salt1: bitstring [ private ].
 """
 
     assert extract_global_free_names(source) == ["user1", "pw1", "singularization1", "salt1"]
+
+
+def test_all_caps_global_names_are_reserved_for_translation():
+    with pytest.raises(ReservedTranslationNameError, match="ALL_CAPS names are reserved"):
+        reject_reserved_global_names("fun MK(bitstring): bitstring.\nfree SECRET: bitstring.")
+
+
+def test_warns_when_generated_channel_payload_name_appears_in_source(tmp_path):
+    process = extract_let_drifted_process(PROVERIF_OUTPUT)
+
+    with pytest.warns(GeneratedNameCollisionWarning, match="server_link_p"):
+        render_channel_skeleton(
+            tmp_path / "model.xml",
+            process,
+            input_source="free server_link_p: bitstring [private].",
+        )
 
 
 def test_free_channel_name_is_not_declared_as_data(tmp_path):

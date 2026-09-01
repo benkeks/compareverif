@@ -22,6 +22,7 @@ from compareverif.uppaal import (
     GlobalNameCountWarning,
     DynamicChannelError,
     NestedReplicationError,
+    ReservedTranslationNameError,
     TupleDataError,
     UnsupportedConstructorArityError,
     UnsupportedGetConditionError,
@@ -30,6 +31,7 @@ from compareverif.uppaal import (
     extract_global_free_names,
     extract_proverif_functions,
     render_channel_skeleton,
+    reject_reserved_global_names,
 )
 
 
@@ -110,14 +112,15 @@ def main() -> int:
     if args.uppaal_out:
         try:
             source = scenario_file.read_text()
+            declaration_source = "\n".join([*read_declared_library_sources(scenario_file), source])
+            reject_reserved_global_names(declaration_source)
             render_channel_skeleton(
                 args.uppaal_out,
                 process,
                 global_free_names=extract_global_free_names(source),
-                proverif_functions=extract_proverif_functions(
-                    "\n".join([*read_declared_library_sources(scenario_file), source])
-                ),
+                proverif_functions=extract_proverif_functions(declaration_source),
                 attack_processes=attack_processes,
+                input_source=declaration_source,
                 wide_data=args.wide_data,
             )
         except (
@@ -129,6 +132,7 @@ def main() -> int:
             UnsupportedConstructorArityError,
             UnsupportedGetConditionError,
             UnsupportedSelectorRuleError,
+            ReservedTranslationNameError,
             UnsupportedProcessStructureError,
         ) as error:
             print(f"Cannot translate to a static UPPAAL model: {error}", file=sys.stderr)

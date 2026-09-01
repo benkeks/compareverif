@@ -60,6 +60,8 @@ typedef int [-1, (1 << 31) - 1] data;
 
 Channel payloads, event payloads, table fields, free names, process bindings, and function arguments/results use `data`. Operational values such as table sizes, array indexes, capacities, constructor tags, and clocks remain `int` or `clock`.
 
+If bigger data is needed the switch `--wide-data` can be used to generate a 63-bit `data` type using UPPAAL structs to pack four 16-bit ints.
+
 ### Constructors and Selectors
 
 Functions declared with `fun` are classified as constructors unless their name appears on the left-hand side of a `reduc` rule. Reduction-rule functions are selectors. Declarations from locally resolvable `-lib` files are included.

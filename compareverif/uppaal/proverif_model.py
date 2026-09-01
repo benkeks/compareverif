@@ -33,6 +33,9 @@ _FREE_DECLARATION_RE = re.compile(r"^\s*free\s+([^:]+)\s*:", re.MULTILINE)
 _FUNCTION_DECLARATION_RE = re.compile(
     r"^\s*fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", re.MULTILINE
 )
+_GLOBAL_IDENTIFIER_RE = re.compile(
+    r"^\s*(?:fun|table|event|channel|let)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE
+)
 _REDUCTION_RE = re.compile(r"\breduc\b")
 _COMMENT_RE = re.compile(r"\(\*.*?\*\)", re.DOTALL)
 _TABLE_ROW_CAPACITY = 3
@@ -178,6 +181,14 @@ class GlobalNameCountWarning(UserWarning):
 
 class UnsupportedSelectorRuleError(ValueError):
     """Raised when a reduction rule cannot be translated to a packed selector."""
+
+
+class ReservedTranslationNameError(ValueError):
+    """Raised when a source declaration uses an ALL_CAPS translation-reserved name."""
+
+
+class GeneratedNameCollisionWarning(UserWarning):
+    """Warn when generated UPPAAL identifiers occur in the ProVerif input."""
 
 
 @dataclass(frozen=True)
@@ -486,6 +497,34 @@ def extract_global_free_names(source: str) -> list[str]:
     return names
 
 
+def reject_reserved_global_names(source: str) -> None:
+    """Reject ALL_CAPS source declarations because translation-generated names use that form."""
+    uncommented_source = _COMMENT_RE.sub("", source)
+    names = [
+        name
+        for declaration in _FREE_DECLARATION_RE.finditer(uncommented_source)
+        for name in _IDENT_RE.findall(declaration.group(1))
+    ]
+    names.extend(match.group(1) for match in _GLOBAL_IDENTIFIER_RE.finditer(uncommented_source))
+    reserved = sorted({name for name in names if name.upper() == name})
+    if reserved:
+        raise ReservedTranslationNameError(
+            f"ALL_CAPS names are reserved for the UPPAAL translation: {', '.join(reserved)}."
+        )
+
+
+def _warn_generated_name_collisions(source: str, generated_names: set[str]) -> None:
+    input_names = set(_IDENT_RE.findall(_COMMENT_RE.sub("", source)))
+    collisions = sorted(generated_names & input_names)
+    if collisions:
+        warnings.warn(
+            "The UPPAAL translation generates names already present in the ProVerif input: "
+            f"{', '.join(collisions)}.",
+            GeneratedNameCollisionWarning,
+            stacklevel=3,
+        )
+
+
 def extract_proverif_functions(source: str) -> ProVerifFunctions:
     """Classify declared functions as constructors or reduc-rule selectors."""
     uncommented_source = _COMMENT_RE.sub("", source)
@@ -722,6 +761,7 @@ def render_channel_skeleton(
     global_free_names: list[str] | None = None,
     proverif_functions: ProVerifFunctions | None = None,
     attack_processes: list[AttackProcess] | None = None,
+    input_source: str | None = None,
     wide_data: bool = False,
 ) -> list[str]:
     """Write a static UPPAAL model with one automaton for the process's linear prefix and one
@@ -775,6 +815,26 @@ def render_channel_skeleton(
     prefix_names = [name for node in decomposition.prefix for name in declared_names_of(node.text)]
     inserted_tables = collect_inserted_tables(process.labeled_nodes())
     getters = _collect_table_getters(process, tables)
+    if input_source is not None:
+        generated_names = {
+            "data",
+            "entity_counter",
+            "NEW",
+            _FORK_CHANNEL,
+            "Prefix",
+            *(f"Component{index}" for index, _ in enumerate(decomposition.components, start=1)),
+            *(f"{channel}_p" for channel in channels),
+            *(f"{event}_p" for event in events),
+        }
+        for table in tables:
+            generated_names.update({f"{table}_size", f"{table.upper()}_CAPACITY"})
+        for table in inserted_tables:
+            generated_names.add(f"{table}_insert")
+        for (table, fields), result_indexes in getters.items():
+            for result_index in result_indexes:
+                suffix = f"{_table_field_names(result_index + 1)[result_index]}_by_{'_'.join(fields)}"
+                generated_names.add(f"{table}_get_{suffix}")
+        _warn_generated_name_collisions(input_source, generated_names)
     free_prefix_names = [
         name
         for name in (global_free_names or [])
