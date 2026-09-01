@@ -276,15 +276,18 @@ def _reject_tuple_data(process: IntermediateProcess) -> None:
             )
 
 
-def _reject_complex_input_patterns(process: IntermediateProcess) -> None:
-    """Require each input to bind exactly one typed variable."""
+def _reject_complex_input_patterns(process: IntermediateProcess, time_channels: set[str]) -> None:
+    """Require each input to bind one typed variable or use a configured timing channel."""
     for node in process.labeled_nodes():
         if not node.text.startswith("in("):
             continue
         arguments = split_top_level_commas(extract_balanced_parens(node.text, node.text.index("(")))
         if len(arguments) != 2 or not (
             _TYPED_VARIABLE_RE.fullmatch(arguments[1])
-            or _SECONDS_PATTERN_RE.fullmatch(arguments[1])
+            or (
+                _SECONDS_PATTERN_RE.fullmatch(arguments[1])
+                and arguments[0] in time_channels
+            )
         ):
             raise ComplexInputPatternError(
                 f"Input pattern at {{{node.label}}} ({node.text}) is not allowed; "
@@ -367,7 +370,7 @@ def collect_value_function_arities(process: IntermediateProcess) -> dict[str, in
     for node in process.labeled_nodes():
         for match in _FUNCTION_CALL_RE.finditer(node.text):
             name = match.group(1)
-            if name == "seconds" and _seconds_input(node.text) is not None:
+            if name == "seconds" and _seconds_input(node.text, {"tick"}) is not None:
                 continue
             if name in _PROCESS_KEYWORDS or _is_statement_head(node.text, match):
                 continue
@@ -385,11 +388,14 @@ def collect_event_names(process: IntermediateProcess) -> list[str]:
     return names
 
 
-def collect_timing_channels(process: IntermediateProcess) -> set[str]:
-    """Return channels used by seconds input annotations."""
+def collect_timing_channels(
+    process: IntermediateProcess, time_channels: set[str] | None = None
+) -> set[str]:
+    """Return configured channels used by seconds input annotations."""
+    time_channels = time_channels or {"tick"}
     channels: set[str] = set()
     for node in process.labeled_nodes():
-        if _seconds_input(node.text) is not None:
+        if _seconds_input(node.text, time_channels) is not None:
             arguments = extract_balanced_parens(node.text, node.text.index("("))
             channels.add(split_top_level_commas(arguments)[0])
     return channels
@@ -762,6 +768,8 @@ def render_channel_skeleton(
     proverif_functions: ProVerifFunctions | None = None,
     attack_processes: list[AttackProcess] | None = None,
     input_source: str | None = None,
+    non_blocking_channels: Iterable[str] = ("leak",),
+    time_channels: Iterable[str] = ("tick",),
     wide_data: bool = False,
 ) -> list[str]:
     """Write a static UPPAAL model with one automaton for the process's linear prefix and one
@@ -785,12 +793,13 @@ def render_channel_skeleton(
     attack_processes = attack_processes or []
     all_process_nodes = [*process.nodes, *(attack.nodes[0] for attack in attack_processes if attack.nodes)]
     all_process = IntermediateProcess(0, "process and attacks", [], all_process_nodes)
+    non_blocking_channel_names = set(non_blocking_channels)
+    time_channel_names = set(time_channels)
     _reject_tuple_data(all_process)
-    _reject_complex_input_patterns(all_process)
+    _reject_complex_input_patterns(all_process, time_channel_names)
     channels = collect_channel_names(all_process)
     events = collect_event_names(all_process)
-    timing_channels = collect_timing_channels(process)
-    leak_channels = collect_leak_channels(process)
+    timing_channels = collect_timing_channels(process, time_channel_names)
     tables = collect_table_arities(process)
     value_functions = {} if proverif_functions is not None else collect_value_function_arities(process)
     function_metadata = proverif_functions or ProVerifFunctions(
@@ -859,7 +868,7 @@ def render_channel_skeleton(
     for channel in channels:
         declaration_lines.append(
             f"broadcast chan {channel};"
-            if channel in timing_channels or channel in leak_channels
+            if channel in non_blocking_channel_names or channel in timing_channels
             else f"chan {channel};"
         )
         declaration_lines.append(f"data {channel}_p;")
@@ -911,6 +920,7 @@ def render_channel_skeleton(
             name=name,
             component=component,
             wide_data=wide_data,
+            time_channels=time_channel_names,
         )
 
     attack_names = []
@@ -1137,7 +1147,7 @@ def _uppaal_condition(condition: str) -> str:
     return re.sub(r"(?<![=!<>])=(?!=)", "==", condition)
 
 
-def _seconds_input(text: str) -> str | None:
+def _seconds_input(text: str, time_channels: set[str]) -> str | None:
     """Return the delay for an ``in(channel, seconds(delay))`` statement."""
     if not text.startswith("in("):
         return None
@@ -1145,12 +1155,12 @@ def _seconds_input(text: str) -> str | None:
     if len(arguments) != 2:
         return None
     match = _SECONDS_PATTERN_RE.fullmatch(arguments[1])
-    return match.group(1) if match else None
+    return match.group(1) if match and arguments[0] in time_channels else None
 
 
-def _has_seconds_input(component: ProcessSyntaxNode) -> bool:
+def _has_seconds_input(component: ProcessSyntaxNode, time_channels: set[str]) -> bool:
     """Whether a component subtree contains a timed input pattern."""
-    return any(_seconds_input(node.text) is not None for node in _walk_nodes(component))
+    return any(_seconds_input(node.text, time_channels) is not None for node in _walk_nodes(component))
 
 
 def _walk_nodes(node: ProcessSyntaxNode):
@@ -1160,7 +1170,12 @@ def _walk_nodes(node: ProcessSyntaxNode):
 
 
 def _add_component_template(
-    nta: ET.Element, *, name: str, component: ProcessSyntaxNode, wide_data: bool = False
+    nta: ET.Element,
+    *,
+    name: str,
+    component: ProcessSyntaxNode,
+    wide_data: bool = False,
+    time_channels: set[str],
 ) -> None:
     """Add a component automaton beginning after the prefix broadcast."""
     _reject_nested_replication(component)
@@ -1169,7 +1184,7 @@ def _add_component_template(
     local_names = collect_declared_names([component])
     declaration_lines = ["// Locally declared names."]
     declaration_lines.extend(f"data {local_name};" for local_name in local_names)
-    if _has_seconds_input(component):
+    if _has_seconds_input(component, time_channels):
         declaration_lines.append("clock seconds_clock;")
     if len(declaration_lines) == 1:
         declaration_text = "// No locally declared names."
@@ -1198,7 +1213,7 @@ def _add_component_template(
         label_x=30,
         label_y=55,
     )
-    builder = _ComponentBuilder(template, name, wide_data=wide_data)
+    builder = _ComponentBuilder(template, name, wide_data=wide_data, time_channels=time_channels)
     builder.compile_node(component, entry_id, terminal_id)
     builder.finalize_layout(terminal_id if terminates else None)
     _order_template_children(template)
@@ -1256,6 +1271,7 @@ class _ComponentBuilder:
         *,
         wide_data: bool = False,
         condition_failure_target: str | None = None,
+        time_channels: set[str] | None = None,
     ):
         self.template = template
         self.name = name
@@ -1263,6 +1279,7 @@ class _ComponentBuilder:
         self.location_count = 2
         self.loop_targets: set[str] = set()
         self.condition_failure_target = condition_failure_target
+        self.time_channels = time_channels or set()
         self.location_elements = {
             location.get("id"): location for location in template.findall("location")
         }
@@ -1388,7 +1405,7 @@ class _ComponentBuilder:
         if node.text.startswith("get "):
             self.compile_get(node, source, target, guard, x=x)
             return
-        if seconds := _seconds_input(node.text):
+        if seconds := _seconds_input(node.text, self.time_channels):
             self.compile_seconds_input(node, source, target, seconds, guard, x=x)
             return
 

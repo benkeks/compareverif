@@ -72,6 +72,21 @@ Tuple data is not supported. Tuple bindings, tuple literals, and tuple values as
 
 Table storage has fixed capacity (currently three rows). Generated insertions stop when capacity is reached. Generated lookup functions return the first matching row or `-1` when no row matches.
 
+## UPPAAL Pragmas
+
+An input file can configure translation behavior through a YAML block in a ProVerif comment:
+
+```text
+(* UPPAAL
+non_blocking_channels:
+	- leak
+time_channels:
+	- tick
+*)
+```
+
+`non_blocking_channels` declares channels as UPPAAL broadcast channels. It defaults to `leak`. `time_channels` selects which channels may use `in(channel, seconds(n))` timing annotations. It defaults to `tick`. Unknown pragma fields are ignored with a warning.
+
 ## Timing Annotations
 
 The special input form:
@@ -80,7 +95,7 @@ The special input form:
 in(tick, seconds(n))
 ```
 
-is treated as a timing annotation rather than a payload receive. It is translated to a spontaneous broadcast `tick!`, resets a component-local `seconds_clock`, and enters a location with invariant `seconds_clock <= n`. The continuation is enabled when `seconds_clock == n`. No payload variable is assigned, and `seconds` is not translated as a data constructor.
+is treated as a timing annotation rather than a payload receive when `tick` is included in `time_channels`. It is translated to a spontaneous broadcast `tick!`, resets a component-local `seconds_clock`, and enters a location with invariant `seconds_clock <= n`. The continuation is enabled when `seconds_clock == n`. No payload variable is assigned, and `seconds` is not translated as a data constructor.
 
 Other complex input patterns are rejected. Timing annotations use integer literal bounds in the current translator.
 

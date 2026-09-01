@@ -28,9 +28,11 @@ from compareverif.uppaal import (
     extract_proverif_functions,
     ProVerifFunctions,
     ReservedTranslationNameError,
+    UnknownUppaalPragmaWarning,
     analyze_constructor_widths,
     render_channel_skeleton,
     reject_reserved_global_names,
+    parse_uppaal_pragmas,
 )
 
 
@@ -257,6 +259,50 @@ def test_warns_when_generated_channel_payload_name_appears_in_source(tmp_path):
             process,
             input_source="free server_link_p: bitstring [private].",
         )
+
+
+def test_parse_uppaal_pragmas_configures_channels_and_warns_unknown_fields():
+    source = """(* UPPAAL
+non_blocking_channels:
+  - c
+time_channels:
+  - timer
+additional_queries:
+  - A[] true
+*)
+"""
+
+    with pytest.warns(UnknownUppaalPragmaWarning, match="additional_queries"):
+        pragmas = parse_uppaal_pragmas(source)
+
+    assert pragmas.non_blocking_channels == ["c"]
+    assert pragmas.time_channels == ["timer"]
+
+
+def test_configured_non_blocking_and_time_channels_override_defaults(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}out(c, value)
+) | (
+    {2}in(timer, seconds(3));
+    {3}out(c, value)
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+
+    render_channel_skeleton(
+        tmp_path / "model.xml",
+        process,
+        non_blocking_channels=["c"],
+        time_channels=["timer"],
+    )
+
+    document = (tmp_path / "model.xml").read_text()
+    assert "broadcast chan c;" in document
+    assert "broadcast chan timer;" in document
+    assert "clock seconds_clock;" in document
 
 
 def test_free_channel_name_is_not_declared_as_data(tmp_path):

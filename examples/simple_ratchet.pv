@@ -10,7 +10,14 @@
  * independent sending chain.
  *)
 
-
+(* UPPAAL
+non_blocking_channels:
+  - c
+time_channels:
+  - tick
+additional_queries:
+  - A<> true
+*)
 
 (* one-way key derivation functions (no inverse given -> models a hash/KDF) *)
 fun mk(bitstring): bitstring. (* chain key -> message key *)

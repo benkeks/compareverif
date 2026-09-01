@@ -32,6 +32,7 @@ from compareverif.uppaal import (
     extract_proverif_functions,
     render_channel_skeleton,
     reject_reserved_global_names,
+    parse_uppaal_pragmas,
 )
 
 
@@ -113,6 +114,7 @@ def main() -> int:
         try:
             source = scenario_file.read_text()
             declaration_source = "\n".join([*read_declared_library_sources(scenario_file), source])
+            pragmas = parse_uppaal_pragmas(source)
             reject_reserved_global_names(declaration_source)
             render_channel_skeleton(
                 args.uppaal_out,
@@ -121,6 +123,8 @@ def main() -> int:
                 proverif_functions=extract_proverif_functions(declaration_source),
                 attack_processes=attack_processes,
                 input_source=declaration_source,
+                non_blocking_channels=pragmas.non_blocking_channels,
+                time_channels=pragmas.time_channels,
                 wide_data=args.wide_data,
             )
         except (
