@@ -62,6 +62,11 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help="Print attacker processes reconstructed from successful ProVerif attack traces",
     )
+    parser.add_argument(
+        "--show-process",
+        action="store_true",
+        help="Print ProVerif's parsed intermediate process tree",
+    )
     return parser.parse_args()
 
 
@@ -99,7 +104,8 @@ def main() -> int:
         print(f"Could not extract intermediate process: {error}", file=sys.stderr)
         return 1
 
-    print(process.render_tree())
+    if args.show_process:
+        print(process.render_tree())
 
     attack_processes = extract_attack_processes(result.stdout, scenario_file.read_text())
     if args.show_attack_processes:
