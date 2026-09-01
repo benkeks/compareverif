@@ -136,6 +136,19 @@ _PROCESS_KEYWORDS = {
     "then",
     "else",
 }
+_PROVERIF_KEYWORDS = _PROCESS_KEYWORDS | {
+    "attacker",
+    "channel",
+    "data",
+    "event",
+    "free",
+    "fun",
+    "private",
+    "query",
+    "reduc",
+    "table",
+    "type",
+}
 _EVENT_RE = re.compile(r"^event\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*\((.*)\))?$")
 _GET_RE = re.compile(r"^get\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 _TYPED_VARIABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\s*:\s*[A-Za-z_][A-Za-z0-9_]*$")
@@ -520,7 +533,11 @@ def reject_reserved_global_names(source: str) -> None:
 
 
 def _warn_generated_name_collisions(source: str, generated_names: set[str]) -> None:
-    input_names = set(_IDENT_RE.findall(_COMMENT_RE.sub("", source)))
+    input_names = {
+        name
+        for name in _IDENT_RE.findall(_COMMENT_RE.sub("", source))
+        if name not in _PROVERIF_KEYWORDS
+    }
     collisions = sorted(generated_names & input_names)
     if collisions:
         warnings.warn(

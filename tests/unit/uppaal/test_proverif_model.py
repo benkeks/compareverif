@@ -276,6 +276,20 @@ def test_warns_when_generated_location_name_appears_in_source(tmp_path):
         )
 
 
+def test_proverif_data_keyword_does_not_trigger_generated_name_warning(tmp_path):
+    process = extract_let_drifted_process(PROVERIF_OUTPUT)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        render_channel_skeleton(
+            tmp_path / "model.xml",
+            process,
+            input_source="fun seconds(nat): bitstring [data].",
+        )
+
+    assert not any(issubclass(warning.category, GeneratedNameCollisionWarning) for warning in caught)
+
+
 def test_warns_when_generated_attack_location_name_appears_in_source(tmp_path):
     process = extract_let_drifted_process(PROVERIF_OUTPUT)
     attack = AttackProcess(
