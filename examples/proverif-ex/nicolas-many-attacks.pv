@@ -1,0 +1,44 @@
+(*set verboseRules = true.
+set traceDisplay = long.
+*)
+free c:channel.
+
+fun hash(bitstring,bitstring):bitstring.
+
+
+free seed:bitstring [private].
+free nonce:bitstring[private].
+free nonce2:bitstring[private].
+free nonce3:bitstring[private].
+free success:bitstring[private].
+free success2:bitstring[private].
+free sk:bitstring[private].
+free secretcondition:bitstring[private].
+reduc forall m: bitstring, k :bitstring; unhash(hash(m, k), k) = m.
+
+
+fun enc(bitstring, bitstring): bitstring.
+reduc forall m: bitstring, k: bitstring; dec(enc(m, k), k) = m.
+
+query attacker(success).
+query attacker(success2).
+
+let C() =
+    in(c,x:bitstring);
+    if hash(nonce,seed) = x || enc(nonce,sk) = x then 
+        out(c,success).
+
+let C2() =
+    in(c,x:bitstring);
+    in(c,y:bitstring);
+    if hash(nonce2,seed) = x && enc(nonce3,sk) = y then 
+        out(c,success2).
+
+let Oracle() = out(c,secretcondition).
+
+let Oracle_enc() = in(c,x:bitstring);in(c,y:bitstring); if y = secretcondition then out(c,enc(x,sk)).
+
+let Oracle_hash()= in(c,x:bitstring);in(c,y:bitstring); if y = secretcondition then out(c,hash(x,seed)).
+
+process
+    C() | C2() | Oracle() |  Oracle_enc() | Oracle_hash() | out(c,nonce) | out(c,nonce2) | out(c,nonce3)

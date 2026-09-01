@@ -2,7 +2,10 @@
 
 import pytest
 
-from compareverif.proverif.intermediate_process import extract_let_drifted_process
+from compareverif.proverif.intermediate_process import (
+    extract_let_drifted_process,
+    extract_preferred_process,
+)
 
 
 PROVERIF_OUTPUT = """Process 0 (that is, the initial process):
@@ -37,6 +40,20 @@ def test_extracts_let_drifted_process_and_labels():
     assert [node.label for node in parallel.children] == [2, 4]
     assert parallel.children[0].children[0].label == 3
     assert parallel.children[1].children[0].label == 5
+
+
+def test_extract_preferred_process_falls_back_to_initial_process():
+    output = """Process 0 (that is, the initial process):
+{1}out(c, secret)
+
+Translating the process into Horn clauses...
+"""
+
+    process = extract_preferred_process(output)
+
+    assert process.number == 0
+    assert process.description == "that is, the initial process"
+    assert [node.label for node in process.labeled_nodes()] == [1]
 
 
 def test_render_tree_shows_labeled_process_structure():

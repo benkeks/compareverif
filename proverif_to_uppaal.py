@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from compareverif.proverif.intermediate_process import extract_let_drifted_process
+from compareverif.proverif.intermediate_process import extract_preferred_process
 from compareverif.proverif.attack_process import extract_attack_processes
 from compareverif.proverif.libraries import (
     append_library_arguments,
@@ -91,7 +91,7 @@ def main() -> int:
         return result.returncode
 
     try:
-        process = extract_let_drifted_process(result.stdout)
+        process = extract_preferred_process(result.stdout)
     except ValueError as error:
         print(f"Could not extract intermediate process: {error}", file=sys.stderr)
         return 1

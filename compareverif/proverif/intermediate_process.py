@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 
-_PROCESS_HEADER_RE = re.compile(r"^--\s+Process\s+(\d+)\s*\((.+)\):\s*$")
+_PROCESS_HEADER_RE = re.compile(r"^(?:--\s+)?Process\s+(\d+)\s*\((.+)\):\s*$")
 _LABELED_LINE_RE = re.compile(r"^(?P<indent>\s*)\{(?P<label>\d+)\}(?P<text>.*)$")
 _PROCESS_END_RE = re.compile(r"^(?:--\s+|Translating the process into Horn clauses)")
 
@@ -61,6 +61,25 @@ def extract_let_drifted_process(output: str) -> IntermediateProcess:
         raise ValueError("ProVerif output does not contain a let-drifted process")
 
     number, description, source_lines = candidates[-1]
+    return IntermediateProcess(
+        number=number,
+        description=description,
+        source_lines=source_lines,
+        nodes=_build_indentation_tree(source_lines),
+    )
+
+
+def extract_preferred_process(output: str) -> IntermediateProcess:
+    """Extract the final let-drifted process, or the initial process when it is unavailable."""
+    process_blocks = _find_process_blocks(output.splitlines())
+    candidates = [block for block in process_blocks if "let moved downwards" in block[1]]
+    if candidates:
+        number, description, source_lines = candidates[-1]
+    else:
+        initial_processes = [block for block in process_blocks if "initial process" in block[1]]
+        if not initial_processes:
+            raise ValueError("ProVerif output does not contain a renderable process")
+        number, description, source_lines = initial_processes[-1]
     return IntermediateProcess(
         number=number,
         description=description,
