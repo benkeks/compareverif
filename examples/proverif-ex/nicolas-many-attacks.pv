@@ -10,7 +10,7 @@ free seed:bitstring [private].
 free nonce:bitstring[private].
 free nonce2:bitstring[private].
 free nonce3:bitstring[private].
-free success:bitstring[private].
+free success1:bitstring[private].
 free success2:bitstring[private].
 free sk:bitstring[private].
 free secretcondition:bitstring[private].
@@ -20,13 +20,13 @@ reduc forall m: bitstring, k :bitstring; unhash(hash(m, k), k) = m.
 fun enc(bitstring, bitstring): bitstring.
 reduc forall m: bitstring, k: bitstring; dec(enc(m, k), k) = m.
 
-query attacker(success).
+query attacker(success1).
 query attacker(success2).
 
 let C() =
     in(c,x:bitstring);
     if hash(nonce,seed) = x || enc(nonce,sk) = x then 
-        out(c,success).
+        out(c,success1).
 
 let C2() =
     in(c,x:bitstring);

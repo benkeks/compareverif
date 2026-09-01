@@ -265,6 +265,40 @@ def test_warns_when_generated_channel_payload_name_appears_in_source(tmp_path):
         )
 
 
+def test_warns_when_generated_location_name_appears_in_source(tmp_path):
+    process = extract_let_drifted_process(PROVERIF_OUTPUT)
+
+    with pytest.warns(GeneratedNameCollisionWarning, match="step_3"):
+        render_channel_skeleton(
+            tmp_path / "model.xml",
+            process,
+            input_source="free step_3: bitstring [private].",
+        )
+
+
+def test_warns_when_generated_attack_location_name_appears_in_source(tmp_path):
+    process = extract_let_drifted_process(PROVERIF_OUTPUT)
+    attack = AttackProcess(
+        query="not attacker(secret)",
+        query_number=1,
+        nodes=(
+            extract_let_drifted_process(
+                "--  Process 1 (that is, process 0, with let moved downwards):\n"
+                "{1}event attack_breaks_query_1()\n"
+                "\nTranslating the process into Horn clauses...\n"
+            ).nodes[0],
+        ),
+    )
+
+    with pytest.warns(GeneratedNameCollisionWarning, match="AttackOnQuery1_success"):
+        render_channel_skeleton(
+            tmp_path / "model.xml",
+            process,
+            attack_processes=[attack],
+            input_source="free AttackOnQuery1_success: bitstring [private].",
+        )
+
+
 def test_parse_uppaal_pragmas_configures_channels_and_warns_unknown_fields():
     source = """(* UPPAAL
 non_blocking_channels:

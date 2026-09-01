@@ -531,6 +531,18 @@ def _warn_generated_name_collisions(source: str, generated_names: set[str]) -> N
         )
 
 
+def _generated_location_names(
+    process: IntermediateProcess, time_channels: set[str]
+) -> set[str]:
+    """Return generated location labels that must not shadow source identifiers."""
+    names = {"before", "entry", "terminated", "forked", "replication", "get_failed"}
+    for node in process.labeled_nodes():
+        names.add(f"step_{node.label}")
+        if _seconds_input(node.text, time_channels) is not None:
+            names.add(f"step_{node.label}_after")
+    return names
+
+
 def extract_proverif_functions(source: str) -> ProVerifFunctions:
     """Classify declared functions as constructors or reduc-rule selectors."""
     uncommented_source = _COMMENT_RE.sub("", source)
@@ -836,6 +848,21 @@ def render_channel_skeleton(
             *(f"{channel}_p" for channel in channels),
             *(f"{event}_p" for event in events),
         }
+        generated_names.update(_generated_location_names(all_process, time_channel_names))
+        for attack_process in attack_processes:
+            if not attack_process.nodes:
+                continue
+            attack_name = f"AttackOnQuery{attack_process.query_number}"
+            generated_names.update(
+                {
+                    attack_name,
+                    f"{attack_name}_entry",
+                    f"{attack_name}_success",
+                    f"{attack_name}_failed",
+                    "success",
+                    "failed",
+                }
+            )
         for table in tables:
             generated_names.update({f"{table}_size", f"{table.upper()}_CAPACITY"})
         for table in inserted_tables:
