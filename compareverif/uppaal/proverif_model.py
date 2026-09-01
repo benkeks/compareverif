@@ -34,7 +34,7 @@ _FUNCTION_DECLARATION_RE = re.compile(
     r"^\s*fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", re.MULTILINE
 )
 _GLOBAL_IDENTIFIER_RE = re.compile(
-    r"^\s*(?:fun|table|event|channel|let)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE
+    r"^\s*(?:fun|table|event|channel)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE
 )
 _REDUCTION_RE = re.compile(r"\breduc\b")
 _COMMENT_RE = re.compile(r"\(\*.*?\*\)", re.DOTALL)

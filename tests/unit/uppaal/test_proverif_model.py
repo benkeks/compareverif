@@ -250,6 +250,10 @@ def test_all_caps_global_names_are_reserved_for_translation():
         reject_reserved_global_names("fun MK(bitstring): bitstring.\nfree SECRET: bitstring.")
 
 
+def test_all_caps_let_process_names_are_allowed_after_proverif_unfolding():
+    reject_reserved_global_names("let C() = out(c, value).\nlet C2() = in(c, value: bitstring).")
+
+
 def test_warns_when_generated_channel_payload_name_appears_in_source(tmp_path):
     process = extract_let_drifted_process(PROVERIF_OUTPUT)
 
