@@ -9,7 +9,13 @@ from dataclasses import dataclass
 import yaml
 
 _UPPAAL_PRAGMA_RE = re.compile(r"\(\*\s*UPPAAL\s*\n(?P<content>.*?)\*\)", re.DOTALL)
-_SUPPORTED_FIELDS = {"additional_queries", "data_width", "non_blocking_channels", "time_channels"}
+_SUPPORTED_FIELDS = {
+    "additional_queries",
+    "data_width",
+    "non_blocking_channels",
+    "table_capacities",
+    "time_channels",
+}
 
 
 class UnknownUppaalPragmaWarning(UserWarning):
@@ -28,15 +34,17 @@ class UppaalPragmas:
     time_channels: list[str]
     additional_queries: list[str]
     data_width: int | None
+    table_capacities: dict[str, int]
 
 
 def parse_uppaal_pragmas(source: str) -> UppaalPragmas:
     """Parse UPPAAL YAML comment blocks, retaining defaults for omitted supported fields."""
-    values: dict[str, list[str] | int | None] = {
+    values: dict[str, list[str] | dict[str, int] | int | None] = {
         "non_blocking_channels": ["leak"],
         "time_channels": ["tick"],
         "additional_queries": [],
         "data_width": None,
+        "table_capacities": {},
     }
     for match in _UPPAAL_PRAGMA_RE.finditer(source):
         parsed = yaml.safe_load(match.group("content")) or {}
@@ -60,4 +68,20 @@ def parse_uppaal_pragmas(source: str) -> UppaalPragmas:
             if not isinstance(values_list, list) or not all(isinstance(value, str) for value in values_list):
                 raise ValueError(f"UPPAAL pragma field {field!r} must be a list of strings")
             values[field] = values_list
+        if "table_capacities" in parsed:
+            capacities = parsed["table_capacities"]
+            if (
+                not isinstance(capacities, dict)
+                or not all(
+                    isinstance(table, str)
+                    and isinstance(capacity, int)
+                    and not isinstance(capacity, bool)
+                    and capacity > 0
+                    for table, capacity in capacities.items()
+                )
+            ):
+                raise InvalidUppaalPragmaError(
+                    "UPPAAL pragma table_capacities must map table names to positive integers"
+                )
+            values["table_capacities"] = capacities
     return UppaalPragmas(**values)

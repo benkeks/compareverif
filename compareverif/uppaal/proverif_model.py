@@ -444,13 +444,19 @@ def _table_field_names(arity: int) -> list[str]:
     return [f"col{index}" for index in range(1, arity + 1)]
 
 
-def _table_declaration_lines(tables: dict[str, int]) -> list[str]:
+def _table_declaration_lines(
+    tables: dict[str, int], table_capacities: dict[str, int] | None = None
+) -> list[str]:
     """Render a fixed-capacity struct array and size counter for each table."""
     lines: list[str] = []
+    table_capacities = table_capacities or {}
     for table, arity in tables.items():
         fields = ", ".join(_table_field_names(arity))
         capacity_name = f"{table.upper()}_CAPACITY"
-        lines.append(f"const int {capacity_name} = {_TABLE_ROW_CAPACITY};")
+        lines.append(
+            f"const int {capacity_name} = "
+            f"{table_capacities.get(table, _TABLE_ROW_CAPACITY)};"
+        )
         lines.append(f"struct {{ data {fields}; }} {table}[{capacity_name}];")
         lines.append(f"int {table}_size = 0;")
     return lines
@@ -800,6 +806,7 @@ def render_channel_skeleton(
     non_blocking_channels: Iterable[str] = ("leak",),
     time_channels: Iterable[str] = ("tick",),
     additional_queries: Iterable[str] = (),
+    table_capacities: dict[str, int] | None = None,
     wide_data: bool = False,
 ) -> list[str]:
     """Write a static UPPAAL model with one automaton for the process's linear prefix and one
@@ -924,7 +931,7 @@ def render_channel_skeleton(
             declaration_lines.append(f"data {event}_p;")
     if tables:
         declaration_lines.append("\n// Tables extracted from the ProVerif process.")
-        declaration_lines.extend(_table_declaration_lines(tables))
+        declaration_lines.extend(_table_declaration_lines(tables, table_capacities))
     if inserted_tables:
         declaration_lines.append("\n// Insert functions for tables written by the process prefix.")
         declaration_lines.extend(_table_insert_function_lines(inserted_tables))

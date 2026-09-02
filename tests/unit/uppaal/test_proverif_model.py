@@ -323,6 +323,8 @@ time_channels:
 additional_queries:
   - A[] true
 data_width: 64
+table_capacities:
+    passwd: 10
 additional_queriess:
   - E&lt;&gt; true
 *)
@@ -335,6 +337,7 @@ additional_queriess:
     assert pragmas.time_channels == ["timer"]
     assert pragmas.additional_queries == ["A[] true"]
     assert pragmas.data_width == 64
+    assert pragmas.table_capacities == {"passwd": 10}
 
 
 @pytest.mark.parametrize("data_width", [31, 63, 65])
@@ -711,6 +714,17 @@ def test_render_channel_skeleton_declares_table_struct_arrays(tmp_path):
     assert "const int PASSWD_CAPACITY = 3;" in document
     assert "struct { data first, second, third; } passwd[PASSWD_CAPACITY];" in document
     assert "int passwd_size = 0;" in document
+
+
+def test_render_channel_skeleton_overrides_table_capacity(tmp_path):
+    process = extract_let_drifted_process(TABLE_PROVERIF_OUTPUT)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process, table_capacities={"passwd": 10})
+
+    document = output_file.read_text()
+    assert "const int SINGULARIZATIONS_CAPACITY = 3;" in document
+    assert "const int PASSWD_CAPACITY = 10;" in document
 
 
 def test_component_insert_generates_shared_insert_helper(tmp_path):
