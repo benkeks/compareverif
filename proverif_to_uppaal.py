@@ -21,6 +21,7 @@ from compareverif.uppaal import (
     ConstructorTagOverflowError,
     GlobalNameCountWarning,
     DynamicChannelError,
+    InvalidAttackerCostInputError,
     InvalidUppaalPragmaError,
     NestedReplicationError,
     ReservedTranslationNameError,
@@ -134,12 +135,15 @@ def main() -> int:
                 time_channels=pragmas.time_channels,
                 additional_queries=pragmas.additional_queries,
                 table_capacities=pragmas.table_capacities,
+                attacker_resources=pragmas.attacker_resources,
+                attacker_cost_channel=pragmas.attacker_cost_channel,
                 wide_data=args.wide_data or pragmas.data_width == 64,
             )
         except (
             ComplexInputPatternError,
             ConstructorTagOverflowError,
             DynamicChannelError,
+            InvalidAttackerCostInputError,
             NestedReplicationError,
             TupleDataError,
             UnsupportedConstructorArityError,

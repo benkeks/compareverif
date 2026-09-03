@@ -16,6 +16,7 @@ from compareverif.uppaal import (
     ConstructorWidthWarning,
     GeneratedNameCollisionWarning,
     GlobalNameCountWarning,
+    InvalidAttackerCostInputError,
     InvalidUppaalPragmaError,
     DynamicChannelError,
     NestedReplicationError,
@@ -325,6 +326,8 @@ additional_queries:
 data_width: 64
 table_capacities:
     passwd: 10
+attacker_resources: [hack, compute]
+attacker_cost_channel: cost
 additional_queriess:
   - E&lt;&gt; true
 *)
@@ -338,6 +341,46 @@ additional_queriess:
     assert pragmas.additional_queries == ["A[] true"]
     assert pragmas.data_width == 64
     assert pragmas.table_capacities == {"passwd": 10}
+    assert pragmas.attacker_resources == ["hack", "compute"]
+    assert pragmas.attacker_cost_channel == "cost"
+
+
+def test_render_channel_skeleton_accepts_data_function_cost_inputs(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}in(cost, compute(2));
+    {2}event done
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+    functions = extract_proverif_functions("fun compute(nat): bitstring [data].")
+
+    render_channel_skeleton(
+        tmp_path / "model.xml",
+        process,
+        proverif_functions=functions,
+        attacker_resources=["compute"],
+    )
+
+    document = (tmp_path / "model.xml").read_text()
+    assert "chan cost;" not in document
+    assert "compute(2) = cost_p" not in document
+    assert "cost?" not in document
+
+
+def test_render_channel_skeleton_rejects_non_data_attacker_resources(tmp_path):
+    process = extract_let_drifted_process(PROVERIF_OUTPUT)
+    functions = extract_proverif_functions("fun compute(nat): bitstring.")
+
+    with pytest.raises(InvalidAttackerCostInputError, match="\[data\] functions: compute"):
+        render_channel_skeleton(
+            tmp_path / "model.xml",
+            process,
+            proverif_functions=functions,
+            attacker_resources=["compute"],
+        )
 
 
 @pytest.mark.parametrize("data_width", [31, 63, 65])

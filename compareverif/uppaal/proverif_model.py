@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 from xml.etree import ElementTree as ET
@@ -31,7 +31,8 @@ _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _FUNCTION_CALL_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 _FREE_DECLARATION_RE = re.compile(r"^\s*free\s+([^:]+)\s*:", re.MULTILINE)
 _FUNCTION_DECLARATION_RE = re.compile(
-    r"^\s*fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)", re.MULTILINE
+    r"^\s*fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)(?:\s*:\s*[^.\[]+)?\s*(\[data\])?\s*\.",
+    re.MULTILINE,
 )
 _GLOBAL_IDENTIFIER_RE = re.compile(
     r"^\s*(?:fun|table|event|channel)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE
@@ -275,6 +276,11 @@ class ProVerifFunctions:
     selectors: list[str]
     arities: dict[str, int]
     rules: dict[str, ReductionRule]
+    data_functions: list[str] = field(default_factory=list)
+
+
+class InvalidAttackerCostInputError(ValueError):
+    """Raised when an attacker cost input does not match the configured resource model."""
 
 
 def _reject_tuple_data(process: IntermediateProcess) -> None:
@@ -289,7 +295,12 @@ def _reject_tuple_data(process: IntermediateProcess) -> None:
             )
 
 
-def _reject_complex_input_patterns(process: IntermediateProcess, time_channels: set[str]) -> None:
+def _reject_complex_input_patterns(
+    process: IntermediateProcess,
+    time_channels: set[str],
+    attacker_cost_channel: str | None = None,
+    attacker_resources: set[str] | None = None,
+) -> None:
     """Require each input to bind one typed variable or use a configured timing channel."""
     for node in process.labeled_nodes():
         if not node.text.startswith("in("):
@@ -301,11 +312,42 @@ def _reject_complex_input_patterns(process: IntermediateProcess, time_channels: 
                 _SECONDS_PATTERN_RE.fullmatch(arguments[1])
                 and arguments[0] in time_channels
             )
+            or _is_attacker_cost_input(
+                arguments, attacker_cost_channel, attacker_resources or set()
+            )
         ):
             raise ComplexInputPatternError(
                 f"Input pattern at {{{node.label}}} ({node.text}) is not allowed; "
                 "an input must bind exactly one typed variable or use seconds(n)."
             )
+
+
+def _is_attacker_cost_input(
+    arguments: list[str], attacker_cost_channel: str | None, attacker_resources: set[str]
+) -> bool:
+    if len(arguments) != 2 or arguments[0] != attacker_cost_channel:
+        return False
+    match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\((\d+)\)", arguments[1])
+    if match is None:
+        raise InvalidAttackerCostInputError(
+            f"Attacker cost input on channel {attacker_cost_channel!r} must use resource(n)."
+        )
+    if match.group(1) not in attacker_resources:
+        raise InvalidAttackerCostInputError(
+            f"Attacker cost resource {match.group(1)!r} is not listed in attacker_resources."
+        )
+    return True
+
+
+def _validate_attacker_resources(
+    resources: Iterable[str], functions: ProVerifFunctions
+) -> None:
+    unknown = sorted(set(resources) - set(functions.data_functions))
+    if unknown:
+        raise InvalidAttackerCostInputError(
+            "UPPAAL attacker_resources must name declared ProVerif [data] functions: "
+            f"{', '.join(unknown)}."
+        )
 
 
 def _find_tuple_literal(text: str) -> str | None:
@@ -574,10 +616,10 @@ def extract_proverif_functions(source: str) -> ProVerifFunctions:
     selectors = _ordered_unique([name for name, _ in selector_matches])
     selector_set = set(selectors)
     declared_matches = _FUNCTION_DECLARATION_RE.findall(uncommented_source)
-    declared = _ordered_unique([name for name, _ in declared_matches])
+    declared = _ordered_unique([name for name, _, _ in declared_matches])
     arities = {
         name: len(split_top_level_commas(arguments))
-        for name, arguments in declared_matches
+        for name, arguments, _ in declared_matches
     }
     arities.update({rule.selector: len(rule.arguments) for rule in rules})
     return ProVerifFunctions(
@@ -585,6 +627,7 @@ def extract_proverif_functions(source: str) -> ProVerifFunctions:
         selectors=[name for name in selectors if name != "seconds"],
         arities=arities,
         rules={rule.selector: rule for rule in rules if rule.selector != "seconds"},
+        data_functions=[name for name, _, annotation in declared_matches if annotation],
     )
 
 
@@ -807,6 +850,8 @@ def render_channel_skeleton(
     time_channels: Iterable[str] = ("tick",),
     additional_queries: Iterable[str] = (),
     table_capacities: dict[str, int] | None = None,
+    attacker_resources: Iterable[str] = (),
+    attacker_cost_channel: str = "cost",
     wide_data: bool = False,
 ) -> list[str]:
     """Write a static UPPAAL model with one automaton for the process's linear prefix and one
@@ -832,9 +877,19 @@ def render_channel_skeleton(
     all_process = IntermediateProcess(0, "process and attacks", [], all_process_nodes)
     non_blocking_channel_names = set(non_blocking_channels)
     time_channel_names = set(time_channels)
+    attacker_resource_names = set(attacker_resources)
     _reject_tuple_data(all_process)
-    _reject_complex_input_patterns(all_process, time_channel_names)
-    channels = collect_channel_names(all_process)
+    _reject_complex_input_patterns(
+        all_process,
+        time_channel_names,
+        attacker_cost_channel,
+        attacker_resource_names,
+    )
+    channels = [
+        channel
+        for channel in collect_channel_names(all_process)
+        if channel != attacker_cost_channel
+    ]
     events = collect_event_names(all_process)
     timing_channels = collect_timing_channels(process, time_channel_names)
     tables = collect_table_arities(process)
@@ -842,6 +897,7 @@ def render_channel_skeleton(
     function_metadata = proverif_functions or ProVerifFunctions(
         constructors=list(value_functions), selectors=[], arities=value_functions, rules={}
     )
+    _validate_attacker_resources(attacker_resource_names, function_metadata)
     if len(function_metadata.constructors) > 15:
         raise ConstructorTagOverflowError(
             "Constructor bit packing supports at most fifteen datatype IDs."
@@ -961,6 +1017,8 @@ def render_channel_skeleton(
     _add_prefix_template(
         nta,
         decomposition.prefix,
+        attacker_cost_channel=attacker_cost_channel,
+        attacker_resources=attacker_resource_names,
     )
 
     component_names = []
@@ -973,6 +1031,8 @@ def render_channel_skeleton(
             component=component,
             wide_data=wide_data,
             time_channels=time_channel_names,
+            attacker_cost_channel=attacker_cost_channel,
+            attacker_resources=attacker_resource_names,
         )
 
     attack_names = []
@@ -1009,7 +1069,13 @@ def _pretty_statement(node: ProcessSyntaxNode) -> str:
     return "replication" if node.text == "!" else node.text
 
 
-def _add_prefix_template(nta: ET.Element, prefix: list[ProcessSyntaxNode]) -> None:
+def _add_prefix_template(
+    nta: ET.Element,
+    prefix: list[ProcessSyntaxNode],
+    *,
+    attacker_cost_channel: str | None = None,
+    attacker_resources: set[str] | None = None,
+) -> None:
     """Add the linear prefix automaton, ending by broadcasting the fork event."""
     template = ET.SubElement(nta, "template")
     ET.SubElement(template, "name").text = "Prefix"
@@ -1027,7 +1093,11 @@ def _add_prefix_template(nta: ET.Element, prefix: list[ProcessSyntaxNode]) -> No
         location_ids = ["Prefix_terminated", "Prefix_forked"]
 
     for index, node in enumerate(prefix):
-        synchronisation, assignment = _statement_effect(node.text)
+        synchronisation, assignment = _statement_effect(
+            node.text,
+            attacker_cost_channel=attacker_cost_channel,
+            attacker_resources=attacker_resources,
+        )
         _add_transition(
             template,
             location_ids[index],
@@ -1090,13 +1160,20 @@ def _add_transition(
     return transition
 
 
-def _statement_effect(text: str) -> tuple[str | None, str | None]:
+def _statement_effect(
+    text: str,
+    *,
+    attacker_cost_channel: str | None = None,
+    attacker_resources: set[str] | None = None,
+) -> tuple[str | None, str | None]:
     """Return synchronization and update labels for a non-branching statement."""
     if text.startswith("out("):
         args = split_top_level_commas(extract_balanced_parens(text, text.index("(")))
         return (f"{args[0]}!", f"{args[0]}_p = {args[1]}" if len(args) > 1 else None)
     if text.startswith("in("):
         args = split_top_level_commas(extract_balanced_parens(text, text.index("(")))
+        if _is_attacker_cost_input(args, attacker_cost_channel, attacker_resources or set()):
+            return (None, None)
         name = args[1].split(":", 1)[0].strip() if len(args) > 1 else ""
         return (f"{args[0]}?", f"{name} = {args[0]}_p" if name else None)
     if (event := _EVENT_RE.match(text)):
@@ -1232,6 +1309,8 @@ def _add_component_template(
     component: ProcessSyntaxNode,
     wide_data: bool = False,
     time_channels: set[str],
+    attacker_cost_channel: str | None = None,
+    attacker_resources: set[str] | None = None,
 ) -> None:
     """Add a component automaton beginning after the prefix broadcast."""
     _reject_nested_replication(component)
@@ -1269,7 +1348,14 @@ def _add_component_template(
         label_x=30,
         label_y=55,
     )
-    builder = _ComponentBuilder(template, name, wide_data=wide_data, time_channels=time_channels)
+    builder = _ComponentBuilder(
+        template,
+        name,
+        wide_data=wide_data,
+        time_channels=time_channels,
+        attacker_cost_channel=attacker_cost_channel,
+        attacker_resources=attacker_resources,
+    )
     builder.compile_node(component, entry_id, terminal_id)
     builder.finalize_layout(terminal_id if terminates else None)
     _order_template_children(template)
@@ -1328,6 +1414,8 @@ class _ComponentBuilder:
         wide_data: bool = False,
         condition_failure_target: str | None = None,
         time_channels: set[str] | None = None,
+        attacker_cost_channel: str | None = None,
+        attacker_resources: set[str] | None = None,
     ):
         self.template = template
         self.name = name
@@ -1336,6 +1424,8 @@ class _ComponentBuilder:
         self.loop_targets: set[str] = set()
         self.condition_failure_target = condition_failure_target
         self.time_channels = time_channels or set()
+        self.attacker_cost_channel = attacker_cost_channel
+        self.attacker_resources = attacker_resources or set()
         self.location_elements = {
             location.get("id"): location for location in template.findall("location")
         }
@@ -1466,7 +1556,11 @@ class _ComponentBuilder:
             return
 
         next_location = self.location(f"step_{node.label}", x=x)
-        synchronisation, assignment = _statement_effect(node.text)
+        synchronisation, assignment = _statement_effect(
+            node.text,
+            attacker_cost_channel=self.attacker_cost_channel,
+            attacker_resources=self.attacker_resources,
+        )
         self.transition(source, next_location, guard=guard, assignment=assignment, synchronisation=synchronisation, comment=_pretty_statement(node))
         if node.children:
             self.compile_children(node.children, next_location, target, x=x)

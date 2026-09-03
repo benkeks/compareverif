@@ -11,6 +11,8 @@ import yaml
 _UPPAAL_PRAGMA_RE = re.compile(r"\(\*\s*UPPAAL\s*\n(?P<content>.*?)\*\)", re.DOTALL)
 _SUPPORTED_FIELDS = {
     "additional_queries",
+    "attacker_cost_channel",
+    "attacker_resources",
     "data_width",
     "non_blocking_channels",
     "table_capacities",
@@ -35,16 +37,20 @@ class UppaalPragmas:
     additional_queries: list[str]
     data_width: int | None
     table_capacities: dict[str, int]
+    attacker_resources: list[str]
+    attacker_cost_channel: str
 
 
 def parse_uppaal_pragmas(source: str) -> UppaalPragmas:
     """Parse UPPAAL YAML comment blocks, retaining defaults for omitted supported fields."""
-    values: dict[str, list[str] | dict[str, int] | int | None] = {
+    values: dict[str, list[str] | dict[str, int] | str | None] = {
         "non_blocking_channels": ["leak"],
         "time_channels": ["tick"],
         "additional_queries": [],
         "data_width": None,
         "table_capacities": {},
+        "attacker_resources": [],
+        "attacker_cost_channel": "cost",
     }
     for match in _UPPAAL_PRAGMA_RE.finditer(source):
         parsed = yaml.safe_load(match.group("content")) or {}
@@ -63,11 +69,23 @@ def parse_uppaal_pragmas(source: str) -> UppaalPragmas:
                     "UPPAAL pragma data_width must be 64, the only supported wide-data width."
                 )
             values["data_width"] = 64
-        for field in {"additional_queries", "non_blocking_channels", "time_channels"} & parsed.keys():
+        for field in {
+            "additional_queries",
+            "attacker_resources",
+            "non_blocking_channels",
+            "time_channels",
+        } & parsed.keys():
             values_list = parsed[field]
             if not isinstance(values_list, list) or not all(isinstance(value, str) for value in values_list):
                 raise ValueError(f"UPPAAL pragma field {field!r} must be a list of strings")
             values[field] = values_list
+        if "attacker_cost_channel" in parsed:
+            channel = parsed["attacker_cost_channel"]
+            if not isinstance(channel, str):
+                raise InvalidUppaalPragmaError(
+                    "UPPAAL pragma attacker_cost_channel must be a string"
+                )
+            values["attacker_cost_channel"] = channel
         if "table_capacities" in parsed:
             capacities = parsed["table_capacities"]
             if (
