@@ -38,6 +38,13 @@ _GLOBAL_IDENTIFIER_RE = re.compile(
     r"^\s*(?:fun|table|event|channel)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE
 )
 _REDUCTION_RE = re.compile(r"\breduc\b")
+_PROBABILISTIC_REDUCTION_RE = re.compile(
+    r"\breduc\s+forall\s+(?P<success>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*nat\s*,\s*"
+    r"(?P<total>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*nat\s*;\s*"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\(\s*(?P=success)\s*,\s*(?P=total)\s*\)\s*=\s*"
+    r"(?P<result>true|false)\s*\.",
+    re.MULTILINE,
+)
 _COMMENT_RE = re.compile(r"\(\*.*?\*\)", re.DOTALL)
 _TABLE_ROW_CAPACITY = 3
 _TABLE_FIELD_NAMES = ["first", "second", "third", "fourth", "fifth", "sixth"]
@@ -222,6 +229,14 @@ class ReductionRule:
     result: Term
 
 
+@dataclass(frozen=True)
+class ProbabilityRule:
+    """A two-natural-number ProVerif reduction used as a weighted condition."""
+
+    name: str
+    result: bool
+
+
 def analyze_constructor_widths(
     process: IntermediateProcess,
     functions: ProVerifFunctions,
@@ -277,6 +292,11 @@ class ProVerifFunctions:
     arities: dict[str, int]
     rules: dict[str, ReductionRule]
     data_functions: list[str] = field(default_factory=list)
+    probability_rules: dict[str, ProbabilityRule] = field(default_factory=dict)
+
+
+class InvalidProbabilityRuleError(ValueError):
+    """Raised when a probabilistic condition does not use valid integer weights."""
 
 
 class InvalidAttackerCostInputError(ValueError):
@@ -611,7 +631,11 @@ def _generated_location_names(
 def extract_proverif_functions(source: str) -> ProVerifFunctions:
     """Classify declared functions as constructors or reduc-rule selectors."""
     uncommented_source = _COMMENT_RE.sub("", source)
-    rules = _extract_reduction_rules(uncommented_source)
+    probability_rules = _extract_probability_rules(uncommented_source)
+    rules = [
+        rule for rule in _extract_reduction_rules(uncommented_source)
+        if rule.selector not in probability_rules
+    ]
     selector_matches = [(rule.selector, rule.arguments) for rule in rules]
     selectors = _ordered_unique([name for name, _ in selector_matches])
     selector_set = set(selectors)
@@ -628,6 +652,7 @@ def extract_proverif_functions(source: str) -> ProVerifFunctions:
         arities=arities,
         rules={rule.selector: rule for rule in rules if rule.selector != "seconds"},
         data_functions=[name for name, _, annotation in declared_matches if annotation],
+        probability_rules=probability_rules,
     )
 
 
@@ -655,6 +680,16 @@ def _extract_reduction_rules(source: str) -> list[ReductionRule]:
             ReductionRule(selector.name, selector.arguments, _parse_term(right))
         )
     return rules
+
+
+def _extract_probability_rules(source: str) -> dict[str, ProbabilityRule]:
+    """Extract ``rule(success, total) = true|false`` reducers over natural numbers."""
+    return {
+        match.group("name"): ProbabilityRule(
+            name=match.group("name"), result=match.group("result") == "true"
+        )
+        for match in _PROBABILISTIC_REDUCTION_RE.finditer(source)
+    }
 
 
 def _find_top_level_equality(text: str) -> tuple[str, str] | None:
@@ -898,6 +933,9 @@ def render_channel_skeleton(
     function_metadata = proverif_functions or ProVerifFunctions(
         constructors=list(value_functions), selectors=[], arities=value_functions, rules={}
     )
+    _reject_unsupported_probability_rule_usage(
+        all_process, function_metadata.probability_rules
+    )
     _validate_attacker_resources(attacker_resource_names, function_metadata)
     if len(function_metadata.constructors) > 15:
         raise ConstructorTagOverflowError(
@@ -1034,6 +1072,7 @@ def render_channel_skeleton(
             time_channels=time_channel_names,
             attacker_cost_channel=attacker_cost_channel,
             attacker_resources=attacker_resource_budgets,
+            probability_rules=function_metadata.probability_rules,
         )
 
     attack_names = []
@@ -1149,6 +1188,7 @@ def _add_transition(
     guard: str | None = None,
     assignment: str | None = None,
     synchronisation: str | None = None,
+    probability: str | None = None,
     comment: str,
     label_x: int = 60,
     label_y: int = -50,
@@ -1164,6 +1204,8 @@ def _add_transition(
         ET.SubElement(transition, "label", {"kind": "assignment", "x": str(label_x), "y": str(label_y)}).text = assignment
     if synchronisation:
         ET.SubElement(transition, "label", {"kind": "synchronisation", "x": str(label_x), "y": str(label_y + 25)}).text = synchronisation
+    if probability:
+        ET.SubElement(transition, "label", {"kind": "probability", "x": str(label_x), "y": str(label_y + 50)}).text = probability
     ET.SubElement(transition, "label", {"kind": "comments", "x": str(label_x), "y": str(label_y + 50)}).text = comment
     return transition
 
@@ -1341,6 +1383,7 @@ def _add_component_template(
     time_channels: set[str],
     attacker_cost_channel: str | None = None,
     attacker_resources: set[str] | None = None,
+    probability_rules: dict[str, ProbabilityRule] | None = None,
 ) -> None:
     """Add a component automaton beginning after the prefix broadcast."""
     _reject_nested_replication(component)
@@ -1385,6 +1428,7 @@ def _add_component_template(
         time_channels=time_channels,
         attacker_cost_channel=attacker_cost_channel,
         attacker_resources=attacker_resources,
+        probability_rules=probability_rules,
     )
     builder.compile_node(component, entry_id, terminal_id)
     builder.finalize_layout(terminal_id if terminates else None)
@@ -1458,7 +1502,15 @@ def _attack_cost_resources(
 
 def _order_template_children(template: ET.Element) -> None:
     """Order template children according to the UPPAAL XML schema."""
-    order = {"name": 0, "parameter": 1, "declaration": 2, "location": 3, "init": 4, "transition": 5}
+    order = {
+        "name": 0,
+        "parameter": 1,
+        "declaration": 2,
+        "location": 3,
+        "branchpoint": 4,
+        "init": 5,
+        "transition": 6,
+    }
     children = list(template)
     template[:] = [
         child
@@ -1481,6 +1533,7 @@ class _ComponentBuilder:
         time_channels: set[str] | None = None,
         attacker_cost_channel: str | None = None,
         attacker_resources: set[str] | None = None,
+        probability_rules: dict[str, ProbabilityRule] | None = None,
     ):
         self.template = template
         self.name = name
@@ -1491,6 +1544,7 @@ class _ComponentBuilder:
         self.time_channels = time_channels or set()
         self.attacker_cost_channel = attacker_cost_channel
         self.attacker_resources = attacker_resources or set()
+        self.probability_rules = probability_rules or {}
         self.location_elements = {
             location.get("id"): location for location in template.findall("location")
         }
@@ -1517,6 +1571,19 @@ class _ComponentBuilder:
         self.location_y[location_id] = y
         self.location_x[location_id] = x
         self.location_elements[location_id] = location
+        return location_id
+
+    def branchpoint(self, *, x: int = 0) -> str:
+        """Add an anonymous UPPAAL branchpoint for a probabilistic decision."""
+        location_id = f"{self.name}_node_{self.location_count}"
+        y = self.location_count * 160
+        branchpoint = ET.SubElement(
+            self.template, "branchpoint", {"id": location_id, "x": str(x), "y": str(y)}
+        )
+        self.location_count += 1
+        self.location_y[location_id] = y
+        self.location_x[location_id] = x
+        self.location_elements[location_id] = branchpoint
         return location_id
 
     def finalize_layout(self, terminal_id: str | None) -> None:
@@ -1565,7 +1632,7 @@ class _ComponentBuilder:
     @staticmethod
     def _position_transition_labels(transition: ET.Element, x: int, y: int) -> None:
         current_y = y
-        for kind in ("guard", "assignment", "synchronisation", "comments"):
+        for kind in ("guard", "assignment", "synchronisation", "probability", "comments"):
             label = transition.find(f"label[@kind='{kind}']")
             if label is not None:
                 label.set("x", str(x))
@@ -1579,10 +1646,11 @@ class _ComponentBuilder:
         target: str,
         *,
         guard: str | None = None,
+        probability: str | None = None,
         x: int = 0,
     ) -> None:
         if node.label is None:
-            self.compile_children(node.children, source, target, guard=guard, x=x)
+            self.compile_children(node.children, source, target, guard=guard, probability=probability, x=x)
             return
         if node.text == "!":
             replication = self.location("replication", x=-260)
@@ -1593,23 +1661,33 @@ class _ComponentBuilder:
             return
         if node.text.startswith("if "):
             condition = _uppaal_condition(node.text[len("if ") :].removesuffix(" then").strip())
+            probability_weights = _probability_weights(condition, self.probability_rules)
+            decision = self.branchpoint(x=x) if probability_weights else self.location("if", x=x)
+            self.transition(
+                source,
+                decision,
+                guard=guard,
+                probability=probability,
+                comment=_pretty_statement(node),
+            )
             then_branch = next((child for child in node.children if child.text == "then"), None)
             else_branch = next((child for child in node.children if child.text == "else"), None)
             if then_branch:
-                self.compile_children(then_branch.children, source, target, guard=condition, x=-260)
+                self.compile_children(then_branch.children, decision, target, guard=None if probability_weights else condition, probability=probability_weights[0] if probability_weights else None, x=-260)
             elif (else_index := next((index for index, child in enumerate(node.children) if child.text.startswith("else ")), None)) is not None:
-                self.compile_children(node.children[:else_index], source, target, guard=condition, x=-260)
+                self.compile_children(node.children[:else_index], decision, target, guard=None if probability_weights else condition, probability=probability_weights[0] if probability_weights else None, x=-260)
                 alternative = node.children[else_index]
                 alternative.text = alternative.text.removeprefix("else ")
-                self.compile_children([alternative, *node.children[else_index + 1 :]], source, target, guard=f"!({condition})", x=260)
+                self.compile_children([alternative, *node.children[else_index + 1 :]], decision, target, guard=None if probability_weights else f"!({condition})", probability=probability_weights[1] if probability_weights else None, x=260)
                 return
             if else_branch:
-                self.compile_children(else_branch.children, source, target, guard=f"!({condition})", x=260)
+                self.compile_children(else_branch.children, decision, target, guard=None if probability_weights else f"!({condition})", probability=probability_weights[1] if probability_weights else None, x=260)
             elif then_branch:
                 self.transition(
-                    source,
+                    decision,
                     self.condition_failure_target or target,
-                    guard=f"!({condition})",
+                    guard=None if probability_weights else f"!({condition})",
+                    probability=probability_weights[1] if probability_weights else None,
                     comment="if condition failed",
                 )
             return
@@ -1634,7 +1712,7 @@ class _ComponentBuilder:
             attacker_cost_channel=self.attacker_cost_channel,
             attacker_resources=self.attacker_resources,
         )
-        self.transition(source, next_location, guard=guard, assignment=assignment, synchronisation=synchronisation, comment=_pretty_statement(node))
+        self.transition(source, next_location, guard=guard, assignment=assignment, synchronisation=synchronisation, probability=probability, comment=_pretty_statement(node))
         if node.children:
             self.compile_children(node.children, next_location, target, x=x)
         else:
@@ -1699,11 +1777,11 @@ class _ComponentBuilder:
         if node.children:
             self.compile_children(node.children, next_location, target, x=x)
 
-    def compile_children(self, children: list[ProcessSyntaxNode], source: str, target: str, *, guard: str | None = None, x: int = 0) -> None:
+    def compile_children(self, children: list[ProcessSyntaxNode], source: str, target: str, *, guard: str | None = None, probability: str | None = None, x: int = 0) -> None:
         if not children:
-            self.transition(source, target, guard=guard, comment="continue")
+            self.transition(source, target, guard=guard, probability=probability, comment="continue")
             return
-        self.compile_node(children[0], source, target, guard=guard, x=x)
+        self.compile_node(children[0], source, target, guard=guard, probability=probability, x=x)
 
     def compile_get(self, node: ProcessSyntaxNode, source: str, target: str, guard: str | None, *, x: int = 0) -> None:
         translations = _get_translation(node.text)
@@ -1728,7 +1806,7 @@ class _ComponentBuilder:
             if target in self.loop_targets:
                 self.transition(failure_target, target, comment="retry after get failure")
 
-    def transition(self, source: str, target: str, *, guard: str | None = None, assignment: str | None = None, synchronisation: str | None = None, comment: str) -> None:
+    def transition(self, source: str, target: str, *, guard: str | None = None, assignment: str | None = None, synchronisation: str | None = None, probability: str | None = None, comment: str) -> None:
         source_y = self.location_y[source]
         target_y = self.location_y[target]
         source_x = self.location_x[source]
@@ -1740,11 +1818,57 @@ class _ComponentBuilder:
             guard=guard,
             assignment=assignment,
             synchronisation=synchronisation,
+            probability=probability,
             comment=comment,
             label_x=(source_x + target_x) // 2 + (20 if target_x >= source_x else -80),
             label_y=(source_y + target_y) // 2,
         )
         self.transition_elements.append((transition, source, target))
+
+
+def _probability_weights(
+    condition: str, probability_rules: dict[str, ProbabilityRule]
+) -> tuple[str, str] | None:
+    match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\((\d+),\s*(\d+)\)", condition)
+    used_rules = {
+        name
+        for name in probability_rules
+        if re.search(rf"\b{re.escape(name)}\s*\(", condition)
+    }
+    if not used_rules:
+        return None
+    if match is None or match.group(1) not in probability_rules:
+        raise InvalidProbabilityRuleError(
+            "A probabilistic reducer must be a standalone condition with literal "
+            "success and total arguments."
+        )
+    success, total = int(match.group(2)), int(match.group(3))
+    if total == 0 or success > total:
+        raise InvalidProbabilityRuleError(
+            f"Probabilistic condition {condition!r} requires 0 <= success <= total and total > 0."
+        )
+    rule = probability_rules[match.group(1)]
+    return (str(success), str(total - success)) if rule.result else (str(total - success), str(success))
+
+
+def _reject_unsupported_probability_rule_usage(
+    process: IntermediateProcess,
+    probability_rules: dict[str, ProbabilityRule],
+) -> None:
+    """Restrict probability reducers to literal, top-level conditional tests."""
+    for node in process.labeled_nodes():
+        for name in probability_rules:
+            if not re.search(rf"\b{re.escape(name)}\s*\(", node.text):
+                continue
+            if re.fullmatch(
+                rf"if\s+{re.escape(name)}\(\s*\d+\s*,\s*\d+\s*\)\s+then",
+                node.text.strip(),
+            ):
+                continue
+            raise InvalidProbabilityRuleError(
+                f"Probabilistic reducer {name!r} at {{{node.label}}} must be used only "
+                "as a top-level if condition with literal success and total arguments."
+            )
 
 
 def _reject_nested_replication(node: ProcessSyntaxNode, inside_replication: bool = False) -> None:

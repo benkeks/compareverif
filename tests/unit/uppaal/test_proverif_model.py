@@ -17,6 +17,7 @@ from compareverif.uppaal import (
     GeneratedNameCollisionWarning,
     GlobalNameCountWarning,
     InvalidAttackerCostInputError,
+    InvalidProbabilityRuleError,
     InvalidUppaalPragmaError,
     DynamicChannelError,
     NestedReplicationError,
@@ -525,6 +526,144 @@ reduc forall first: bitstring, second: bitstring; nested(select(first), second) 
         "seconds": 1,
         "nested": 2,
     }
+
+
+def test_probabilistic_reducer_creates_weighted_conditional_branches(tmp_path):
+    source = """fun value(): bitstring.
+reduc forall k: nat, n: nat; lucky(k, n) = true.
+"""
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}if lucky(1,2) then
+        {2}out(c, value())
+    else
+        {3}out(c, value())
+) | (
+    {4}out(c, value())
+)
+
+Translating the process into Horn clauses...
+"""
+    functions = extract_proverif_functions(source)
+    output_file = tmp_path / "model.xml"
+
+    assert functions.selectors == []
+    assert functions.probability_rules["lucky"].result is True
+    render_channel_skeleton(
+        output_file,
+        extract_let_drifted_process(output),
+        proverif_functions=functions,
+    )
+
+    root = ET.parse(output_file).getroot()
+    declarations = root.findtext("declaration")
+    component = root.find(".//template[name='Component1']")
+    branchpoint = component.find("branchpoint")
+    labels = component.findall(".//label[@kind='probability']")
+    assert "data lucky(" not in declarations
+    assert branchpoint is not None
+    child_tags = [child.tag for child in component]
+    assert max(index for index, tag in enumerate(child_tags) if tag == "location") < child_tags.index("branchpoint")
+    assert child_tags.index("branchpoint") < child_tags.index("init")
+    assert child_tags.index("branchpoint") < child_tags.index("transition")
+    assert all(
+        transition.find("source").get("ref") == branchpoint.get("id")
+        for transition in component.findall("transition")
+        if transition.find("label[@kind='probability']") is not None
+    )
+    assert [label.text for label in labels] == ["1", "1"]
+
+
+def test_regular_conditional_uses_a_non_urgent_decision_location(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}if value = value then
+        {2}out(c, value)
+    else
+        {3}out(c, value)
+) | (
+    {4}out(c, value)
+)
+
+Translating the process into Horn clauses...
+"""
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, extract_let_drifted_process(output))
+
+    component = ET.parse(output_file).getroot().find(".//template[name='Component1']")
+    decision = next(
+        location for location in component.findall("location") if location.findtext("name") == "if"
+    )
+    assert decision.find("urgent") is None
+    assert any(
+        transition.find("source").get("ref") == decision.get("id")
+        for transition in component.findall("transition")
+    )
+
+
+def test_probabilistic_condition_rejects_successes_above_total(tmp_path):
+    source = "reduc forall k: nat, n: nat; lucky(k, n) = true."
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}if lucky(3,2) then
+        {2}out(c, value)
+) | (
+    {3}out(c, value)
+)
+
+Translating the process into Horn clauses...
+"""
+
+    with pytest.raises(InvalidProbabilityRuleError, match="0 <= success <= total"):
+        render_channel_skeleton(
+            tmp_path / "model.xml",
+            extract_let_drifted_process(output),
+            proverif_functions=extract_proverif_functions(source),
+        )
+
+
+def test_probabilistic_condition_rejects_compound_conditions(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}if lucky(1,2) && value = value then
+        {2}out(c, value)
+) | (
+    {3}out(c, value)
+)
+
+Translating the process into Horn clauses...
+"""
+
+    with pytest.raises(InvalidProbabilityRuleError, match="top-level if condition"):
+        render_channel_skeleton(
+            tmp_path / "model.xml",
+            extract_let_drifted_process(output),
+            proverif_functions=extract_proverif_functions(
+                "reduc forall k: nat, n: nat; lucky(k, n) = true."
+            ),
+        )
+
+
+def test_probabilistic_reducer_rejects_non_if_usage(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}out(c, lucky(1,2))
+) | (
+    {2}out(c, value)
+)
+
+Translating the process into Horn clauses...
+"""
+
+    with pytest.raises(InvalidProbabilityRuleError, match="top-level if condition"):
+        render_channel_skeleton(
+            tmp_path / "model.xml",
+            extract_let_drifted_process(output),
+            proverif_functions=extract_proverif_functions(
+                "reduc forall k: nat, n: nat; lucky(k, n) = true."
+            ),
+        )
 
 
 def test_render_channel_skeleton_lists_source_function_kinds(tmp_path):
