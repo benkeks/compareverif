@@ -7,7 +7,7 @@ from xml.etree import ElementTree as ET
 import pytest
 
 from compareverif.proverif.intermediate_process import extract_let_drifted_process
-from compareverif.proverif.attack_process import AttackProcess
+from compareverif.proverif.attack_process import AttackProcess, extract_attack_processes
 from compareverif.proverif.libraries import read_declared_library_sources
 from compareverif.proverif.process_structure import UnsupportedProcessStructureError
 from compareverif.uppaal import (
@@ -326,7 +326,9 @@ additional_queries:
 data_width: 64
 table_capacities:
     passwd: 10
-attacker_resources: [hack, compute]
+attacker_resources:
+    hack: 10
+    compute: 5
 attacker_cost_channel: cost
 additional_queriess:
   - E&lt;&gt; true
@@ -341,7 +343,7 @@ additional_queriess:
     assert pragmas.additional_queries == ["A[] true"]
     assert pragmas.data_width == 64
     assert pragmas.table_capacities == {"passwd": 10}
-    assert pragmas.attacker_resources == ["hack", "compute"]
+    assert pragmas.attacker_resources == {"hack": 10, "compute": 5}
     assert pragmas.attacker_cost_channel == "cost"
 
 
@@ -361,7 +363,7 @@ Translating the process into Horn clauses...
         tmp_path / "model.xml",
         process,
         proverif_functions=functions,
-        attacker_resources=["compute"],
+        attacker_resources={"compute": 0},
     )
 
     document = (tmp_path / "model.xml").read_text()
@@ -379,8 +381,57 @@ def test_render_channel_skeleton_rejects_non_data_attacker_resources(tmp_path):
             tmp_path / "model.xml",
             process,
             proverif_functions=functions,
-            attacker_resources=["compute"],
+            attacker_resources={"compute": 0},
         )
+
+
+def test_attack_template_models_mirrored_resource_costs(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}in(cost, hack(4));
+    {2}event honest_done
+)
+
+Translating the process into Horn clauses...
+"""
+    trace = """
+-- Query not attacker(secret[]) in process 1.
+1st process: in(cost, hack(4)) done with message hack(4)
+1st process: out(cost, ~M) with ~M = compute(2) done
+The attacker has the message secret = secret.
+"""
+    process = extract_let_drifted_process(output)
+    [attack] = extract_attack_processes(trace)
+    functions = extract_proverif_functions(
+        "fun hack(nat): bitstring [data].\nfun compute(nat): bitstring [data]."
+    )
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(
+        output_file,
+        process,
+        attack_processes=[attack],
+        proverif_functions=functions,
+        attacker_resources={"hack": 10, "compute": 5},
+    )
+
+    root = ET.parse(output_file).getroot()
+    declaration = root.findtext(".//template[name='AttackOnQuery1']/declaration")
+    assert "int hack = 10;" in declaration
+    assert "int compute = 5;" in declaration
+    attack_labels = [
+        (label.get("kind"), label.text)
+        for label in root.findall(".//template[name='AttackOnQuery1']//label")
+    ]
+    assert ("guard", "hack >= 4") in attack_labels
+    assert ("assignment", "hack -= 4") in attack_labels
+    assert ("assignment", "compute += 2") in attack_labels
+    component_labels = [
+        (label.get("kind"), label.text)
+        for label in root.findall(".//template[name='Component1']//label")
+    ]
+    assert ("synchronisation", "cost?") not in component_labels
+    assert ("assignment", "hack -= 4") not in component_labels
 
 
 @pytest.mark.parametrize("data_width", [31, 63, 65])

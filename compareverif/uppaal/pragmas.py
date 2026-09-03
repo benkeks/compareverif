@@ -37,7 +37,7 @@ class UppaalPragmas:
     additional_queries: list[str]
     data_width: int | None
     table_capacities: dict[str, int]
-    attacker_resources: list[str]
+    attacker_resources: dict[str, int]
     attacker_cost_channel: str
 
 
@@ -49,7 +49,7 @@ def parse_uppaal_pragmas(source: str) -> UppaalPragmas:
         "additional_queries": [],
         "data_width": None,
         "table_capacities": {},
-        "attacker_resources": [],
+        "attacker_resources": {},
         "attacker_cost_channel": "cost",
     }
     for match in _UPPAAL_PRAGMA_RE.finditer(source):
@@ -71,7 +71,6 @@ def parse_uppaal_pragmas(source: str) -> UppaalPragmas:
             values["data_width"] = 64
         for field in {
             "additional_queries",
-            "attacker_resources",
             "non_blocking_channels",
             "time_channels",
         } & parsed.keys():
@@ -79,6 +78,22 @@ def parse_uppaal_pragmas(source: str) -> UppaalPragmas:
             if not isinstance(values_list, list) or not all(isinstance(value, str) for value in values_list):
                 raise ValueError(f"UPPAAL pragma field {field!r} must be a list of strings")
             values[field] = values_list
+        if "attacker_resources" in parsed:
+            resources = parsed["attacker_resources"]
+            if (
+                not isinstance(resources, dict)
+                or not all(
+                    isinstance(resource, str)
+                    and isinstance(budget, int)
+                    and not isinstance(budget, bool)
+                    and budget >= 0
+                    for resource, budget in resources.items()
+                )
+            ):
+                raise InvalidUppaalPragmaError(
+                    "UPPAAL pragma attacker_resources must map resource names to non-negative integers"
+                )
+            values["attacker_resources"] = resources
         if "attacker_cost_channel" in parsed:
             channel = parsed["attacker_cost_channel"]
             if not isinstance(channel, str):

@@ -55,3 +55,20 @@ fun spk(sskey): spkey.
     [process] = extract_attack_processes(trace, source)
 
     assert process.statements[0] == "new attack_a: bitstring;"
+
+
+def test_extracts_mirrored_cost_channel_actions():
+    trace = """
+-- Query not attacker(secret[]) in process 1.
+1st process: in(cost, hack(4)) done with message hack(4)
+1st process: out(cost, ~M) with ~M = compute(2) done
+The attacker has the message secret = secret.
+"""
+
+    [process] = extract_attack_processes(trace)
+
+    assert process.statements == (
+        "out(cost, hack(4));",
+        "in(cost, compute(2));",
+        "if secret = secret then event attack_breaks_query_1()",
+    )

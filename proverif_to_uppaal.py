@@ -109,7 +109,13 @@ def main() -> int:
     if args.show_process:
         print(process.render_tree())
 
-    attack_processes = extract_attack_processes(result.stdout, scenario_file.read_text())
+    source = scenario_file.read_text()
+    pragmas = parse_uppaal_pragmas(source)
+    attack_processes = extract_attack_processes(
+        result.stdout,
+        source,
+        attacker_cost_channel=pragmas.attacker_cost_channel,
+    )
     if args.show_attack_processes:
         for attack_process in attack_processes:
             print(f"\nAttack process for query {attack_process.query_number} ({attack_process.query}):")
@@ -120,9 +126,7 @@ def main() -> int:
 
     if args.uppaal_out:
         try:
-            source = scenario_file.read_text()
             declaration_source = "\n".join([*read_declared_library_sources(scenario_file), source])
-            pragmas = parse_uppaal_pragmas(source)
             reject_reserved_global_names(declaration_source)
             render_channel_skeleton(
                 args.uppaal_out,

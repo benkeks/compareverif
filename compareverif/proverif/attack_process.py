@@ -18,6 +18,11 @@ _OUTPUT_RE = re.compile(
 _INPUT_RE = re.compile(
     r"^\d+(?:st|nd|rd|th) process: in\((?P<channel>[^,]+), [^)]+\) done with message (?P<term>.+?)(?: = .+)?$"
 )
+_COST_ACTION_RE = re.compile(
+    r"^\d+(?:st|nd|rd|th) process: (?P<direction>in|out)\("
+    r"(?P<channel>[^,]+), (?P<resource>[A-Za-z_][A-Za-z0-9_]*)\((?P<amount>\d+)\)\) "
+    r"done(?: with message (?P=resource)\((?P=amount)\))?$"
+)
 _ATTACKER_MESSAGE_RE = re.compile(r"^The attacker has the message (?P<term>.+) = (?P<goal>.+)\.$")
 _FREE_RE = re.compile(r"^\s*free\s+(\w+)\s*:\s*(\w+)", re.MULTILINE)
 _FUNCTION_RE = re.compile(r"^\s*fun\s+(\w+)\s*\(([^)]*)\)\s*:\s*(\w+)", re.MULTILINE)
@@ -43,7 +48,9 @@ class AttackProcess:
         return tuple(statement for node in self.nodes for statement in _flatten_statements(node))
 
 
-def extract_attack_processes(trace: str, source: str = "") -> list[AttackProcess]:
+def extract_attack_processes(
+    trace: str, source: str = "", *, attacker_cost_channel: str = "cost"
+) -> list[AttackProcess]:
     """Return attacker processes for successful queries in a long trace.
 
     The function deliberately operates only on ProVerif text and does not depend
@@ -74,8 +81,25 @@ def extract_attack_processes(trace: str, source: str = "") -> list[AttackProcess
         if current_query is None:
             continue
 
+        cost_action_match = _COST_ACTION_RE.match(line)
+        if (
+            cost_action_match
+            and cost_action_match.group("channel") == attacker_cost_channel
+        ):
+            mirrored_direction = "out" if cost_action_match.group("direction") == "in" else "in"
+            statements.append(
+                f"{mirrored_direction}({attacker_cost_channel}, "
+                f"{cost_action_match.group('resource')}({cost_action_match.group('amount')}));"
+            )
+            continue
+
         output_match = _OUTPUT_RE.match(line)
         if output_match:
+            if output_match.group("channel") == attacker_cost_channel:
+                cost_term = output_match.group("term")
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\(\d+\)", cost_term):
+                    statements.append(f"in({attacker_cost_channel}, {cost_term});")
+                    continue
             variable = output_match.group("variable")
             attacker_variable = "attack_" + variable[1:]
             substitutions[variable] = attacker_variable
@@ -179,7 +203,7 @@ def _is_wrapped_trace_line(line: str) -> bool:
     if re.match(r"^\d+(?:st|nd|rd|th) process: out\(", line):
         return not line.endswith(" done")
     if re.match(r"^\d+(?:st|nd|rd|th) process: in\(", line):
-        return " done with message " not in line
+        return not line.endswith(" done") and " done with message " not in line
     return False
 
 

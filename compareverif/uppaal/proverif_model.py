@@ -6,7 +6,7 @@ import re
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 from xml.etree import ElementTree as ET
 
 from compareverif.proverif.identifier_analysis import (
@@ -850,7 +850,7 @@ def render_channel_skeleton(
     time_channels: Iterable[str] = ("tick",),
     additional_queries: Iterable[str] = (),
     table_capacities: dict[str, int] | None = None,
-    attacker_resources: Iterable[str] = (),
+    attacker_resources: Mapping[str, int] | None = None,
     attacker_cost_channel: str = "cost",
     wide_data: bool = False,
 ) -> list[str]:
@@ -877,7 +877,8 @@ def render_channel_skeleton(
     all_process = IntermediateProcess(0, "process and attacks", [], all_process_nodes)
     non_blocking_channel_names = set(non_blocking_channels)
     time_channel_names = set(time_channels)
-    attacker_resource_names = set(attacker_resources)
+    attacker_resource_budgets = dict(attacker_resources or {})
+    attacker_resource_names = set(attacker_resource_budgets)
     _reject_tuple_data(all_process)
     _reject_complex_input_patterns(
         all_process,
@@ -1032,7 +1033,7 @@ def render_channel_skeleton(
             wide_data=wide_data,
             time_channels=time_channel_names,
             attacker_cost_channel=attacker_cost_channel,
-            attacker_resources=attacker_resource_names,
+            attacker_resources=attacker_resource_budgets,
         )
 
     attack_names = []
@@ -1041,7 +1042,14 @@ def render_channel_skeleton(
             continue
         name = f"AttackOnQuery{attack_process.query_number}"
         attack_names.append(name)
-        _add_attack_template(nta, name=name, attack_process=attack_process, wide_data=wide_data)
+        _add_attack_template(
+            nta,
+            name=name,
+            attack_process=attack_process,
+            wide_data=wide_data,
+            attacker_cost_channel=attacker_cost_channel,
+            attacker_resources=attacker_resource_budgets,
+        )
 
     system = ET.SubElement(nta, "system")
     system.text = "system " + ", ".join(["Prefix", *component_names, *attack_names]) + ";\n"
@@ -1074,7 +1082,7 @@ def _add_prefix_template(
     prefix: list[ProcessSyntaxNode],
     *,
     attacker_cost_channel: str | None = None,
-    attacker_resources: set[str] | None = None,
+    attacker_resources: Mapping[str, int] | None = None,
 ) -> None:
     """Add the linear prefix automaton, ending by broadcasting the fork event."""
     template = ET.SubElement(nta, "template")
@@ -1167,6 +1175,11 @@ def _statement_effect(
     attacker_resources: set[str] | None = None,
 ) -> tuple[str | None, str | None]:
     """Return synchronization and update labels for a non-branching statement."""
+    cost_action = _attacker_cost_action(
+        text, attacker_cost_channel, attacker_resources or set()
+    )
+    if cost_action is not None:
+        return (None, None)
     if text.startswith("out("):
         args = split_top_level_commas(extract_balanced_parens(text, text.index("(")))
         return (f"{args[0]}!", f"{args[0]}_p = {args[1]}" if len(args) > 1 else None)
@@ -1182,6 +1195,23 @@ def _statement_effect(
     if (match := _LET_SINGLE_RE.match(text)):
         return (None, f"{match.group(1)} = {match.group(2)}")
     return (None, _prefix_assignment(ProcessSyntaxNode(label=None, text=text, indent=0)))
+
+
+def _attacker_cost_action(
+    text: str, attacker_cost_channel: str | None, attacker_resources: set[str]
+) -> tuple[str, str, int] | None:
+    match = re.fullmatch(
+        r"(in|out)\(([^,]+),\s*([A-Za-z_][A-Za-z0-9_]*)\((\d+)\)\);?",
+        text,
+    )
+    if match is None or match.group(2).strip() != attacker_cost_channel:
+        return None
+    direction, resource, amount = match.group(1), match.group(3), match.group(4)
+    if resource not in attacker_resources:
+        raise InvalidAttackerCostInputError(
+            f"Attacker cost resource {resource!r} is not listed in attacker_resources."
+        )
+    return direction, resource, int(amount)
 
 
 def _collect_table_getters(process: IntermediateProcess, tables: dict[str, int]) -> dict[tuple[str, tuple[str, ...]], set[int]]:
@@ -1362,7 +1392,13 @@ def _add_component_template(
 
 
 def _add_attack_template(
-    nta: ET.Element, *, name: str, attack_process: AttackProcess, wide_data: bool = False
+    nta: ET.Element,
+    *,
+    name: str,
+    attack_process: AttackProcess,
+    wide_data: bool = False,
+    attacker_cost_channel: str | None = None,
+    attacker_resources: set[str] | None = None,
 ) -> None:
     """Add an attacker process automaton that succeeds only when its final test holds."""
     component = attack_process.nodes[0]
@@ -1371,6 +1407,15 @@ def _add_attack_template(
     local_names = collect_declared_names([component])
     declaration_lines = ["// Locally declared attacker names."]
     declaration_lines.extend(f"data {local_name};" for local_name in local_names)
+    cost_resources = _attack_cost_resources(
+        component, attacker_cost_channel, set(attacker_resources or {})
+    )
+    if cost_resources:
+        declaration_lines.append("// Attacker resource counters.")
+        declaration_lines.extend(
+            f"int {resource} = {attacker_resources[resource]};"
+            for resource in sorted(cost_resources)
+        )
     ET.SubElement(template, "declaration").text = "\n".join(declaration_lines) + "\n"
 
     entry_id = f"{name}_entry"
@@ -1385,10 +1430,30 @@ def _add_attack_template(
         )
         ET.SubElement(location, "name", {"x": "20" if title != "failed" else "280", "y": str(y - 24)}).text = title
     ET.SubElement(template, "init", {"ref": entry_id})
-    builder = _ComponentBuilder(template, name, wide_data=wide_data, condition_failure_target=failed_id)
+    builder = _ComponentBuilder(
+        template,
+        name,
+        wide_data=wide_data,
+        condition_failure_target=failed_id,
+        attacker_cost_channel=attacker_cost_channel,
+        attacker_resources=cost_resources,
+    )
     builder.compile_node(component, entry_id, success_id)
     builder.finalize_layout(success_id)
     _order_template_children(template)
+
+
+def _attack_cost_resources(
+    component: ProcessSyntaxNode,
+    attacker_cost_channel: str | None,
+    attacker_resources: set[str],
+) -> set[str]:
+    return {
+        action[1]
+        for node in _walk_nodes(component)
+        if (action := _attacker_cost_action(node.text, attacker_cost_channel, attacker_resources))
+        is not None
+    }
 
 
 def _order_template_children(template: ET.Element) -> None:
@@ -1555,6 +1620,14 @@ class _ComponentBuilder:
             self.compile_seconds_input(node, source, target, seconds, guard, x=x)
             return
 
+        if self.condition_failure_target is not None and (
+            cost_action := _attacker_cost_action(
+                node.text, self.attacker_cost_channel, self.attacker_resources
+            )
+        ) is not None:
+            self.compile_cost_action(node, source, target, cost_action, guard, x=x)
+            return
+
         next_location = self.location(f"step_{node.label}", x=x)
         synchronisation, assignment = _statement_effect(
             node.text,
@@ -1562,6 +1635,36 @@ class _ComponentBuilder:
             attacker_resources=self.attacker_resources,
         )
         self.transition(source, next_location, guard=guard, assignment=assignment, synchronisation=synchronisation, comment=_pretty_statement(node))
+        if node.children:
+            self.compile_children(node.children, next_location, target, x=x)
+        else:
+            self.transition(next_location, target, comment="continue")
+
+    def compile_cost_action(
+        self,
+        node: ProcessSyntaxNode,
+        source: str,
+        target: str,
+        cost_action: tuple[str, str, int],
+        guard: str | None,
+        *,
+        x: int = 0,
+    ) -> None:
+        direction, resource, amount = cost_action
+        next_location = self.location(f"step_{node.label}", x=x)
+        cost_guard = f"{resource} >= {amount}" if direction == "out" else None
+        if guard and cost_guard:
+            cost_guard = f"({guard}) && ({cost_guard})"
+        elif guard:
+            cost_guard = guard
+        assignment = f"{resource} {'-=' if direction == 'out' else '+='} {amount}"
+        self.transition(
+            source,
+            next_location,
+            guard=cost_guard,
+            assignment=assignment,
+            comment=_pretty_statement(node),
+        )
         if node.children:
             self.compile_children(node.children, next_location, target, x=x)
         else:
