@@ -42,10 +42,11 @@ if condition then proc else proc
 - `insert table(value1, value2)` is translated as a function that inserts a fresh value into a small table.
 - `!proc` is translated as a loop (instead of arbitrary width replication). The subprocess terminal transitions return to the replication location. Nested replication is rejected.
 - `in(channel, x: type)` waits for a binary `channel?` synchronization and copies the channel payload into `x`.
+- `in(tick, seconds(k))` delays execution by `k` time units.
 - `out(channel, value)` writes `value` to the channel payload and emits `channel!`.
 - A scalar `let` becomes an assignment from the value expression to the bound variable.
 - `get` supports matching on some table field and binding every remaining table field. It generates getters named, for example, `table_get_second_by_first`. Conditions that match fields beyond the key, or otherwise contain matching logic not supported by this form, are rejected. A failed lookup follows a `get_failed` path; in a replicated process it loops back to the replication location.
-- `if` creates guarded true and false transitions. Branch outcomes are laid out side by side.
+- `if` first enters a dedicated decision step, then takes guarded true and false transitions. Ordinary decisions use a named `if` location; probabilistic decisions use a UPPAAL `branchpoint`.
 - `event name(value)` is translated as a broadcast output on `name!`, with a global payload variable.
 
 A communication channel must resolve to a global channel declaration. Dynamically bound channels, such as channels introduced by `new`, are rejected. Tuples are not supported as payloads or otherwise.
@@ -70,7 +71,23 @@ Constructors receive four-bit datatype tags (limiting to fifteen constructors). 
 
 Tuple data is not supported. Tuple bindings, tuple literals, and tuple values as function arguments are rejected. Input patterns must bind exactly one typed variable. Constructors with more than two arguments are rejected. A warning is emitted when a constructor term requires more than seven four-bit components in the 31-bit data range. (But there might be cases where this limit hits without a warning.)
 
-Table storage has fixed capacity (currently three rows). Generated insertions stop when capacity is reached. Generated lookup functions return the first matching row or `-1` when no row matches.
+Table storage has fixed capacity (3 rows by default). Generated insertions stop when capacity is reached. Generated lookup functions return the first matching row or `-1` when no row matches.
+
+### Probabilistic Ifs
+
+A reduction over two natural-number parameters that returns a Boolean literal defines a probabilistic condition to be used in `if`-statements:
+
+```text
+reduc forall k: nat, n: nat; lucky(k, n) = true.
+```
+
+It may only be used as a complete conditional test with integer literals, e.g. here stating that in 1 out of 2 cases the `then` branch is taken.:
+
+```text
+if lucky(1, 2) then proc else proc
+```
+
+The translator emits a `branchpoint` with outgoing UPPAAL probability labels `1` and `1`, representing the true and false outcomes. In general, `rule(k, n) = true` assigns weights `k` and `n - k`; a rule returning `false` reverses those weights. The translator rejects zero totals, $k > n$, compound conditions, and use of a probabilistic function anywhere other than such an `if` condition.
 
 ## UPPAAL Pragmas
 
@@ -85,10 +102,31 @@ time_channels:
 additional_queries:
 	- A[] true
 data_width: 64
+table_capacities:
+	passwd: 100
+attacker_resources:
+	compute: 20
+	hack: 1
+attacker_cost_channel: cost
 *)
 ```
 
-`non_blocking_channels` declares channels as UPPAAL broadcast channels. It defaults to `leak`. `time_channels` selects which channels may use `in(channel, seconds(n))` timing annotations. It defaults to `tick`. `additional_queries` adds each listed query verbatim to the generated UPPAAL query list. `data_width: 64` enables the four-field wide data representation; other widths are rejected. Unknown pragma fields are ignored with a warning.
+`non_blocking_channels` declares channels as UPPAAL broadcast channels. It defaults to `leak`. `time_channels` selects which channels may use `in(channel, seconds(n))` timing annotations. It defaults to `tick`. `additional_queries` adds each listed query verbatim to the generated UPPAAL query list. `data_width: 64` enables the four-field wide data representation; other widths are rejected.
+
+`table_capacities` maps table names to positive row capacities. Tables absent from the map use the default capacity of 3. `attacker_resources` maps declared ProVerif `[data]` function names to non-negative initial budgets. `attacker_cost_channel` selects the channel used for resource actions and defaults to `cost`. Unknown pragma fields are ignored with a warning.
+
+## Attack Replay and Resources
+
+When ProVerif finds an attack, the translator runs it with long trace output and builds one `AttackOnQueryN` template for each attack trace. The template starts independently of the prefix fork and reaches its `success` location only when the recorded attack path completes. A generated query `E<> AttackOnQueryN.success` accompanies each template.
+
+Attack traces may contain resource actions on the configured cost channel:
+
+```text
+out(cost, compute(2));
+in(cost, compute(1));
+```
+
+For each resource used by an attack, its template declares a local counter initialized from `attacker_resources`. An output spends the stated amount and requires sufficient budget; an input recharges the amount. The corresponding cost actions in honest-process templates are neutral control-flow steps.
 
 ## Timing Annotations
 
@@ -110,6 +148,7 @@ The translator rejects or does not model:
 - dynamically bound communication channels;
 - tuple data and tuple bindings;
 - complex `in` patterns other than `seconds(n)`;
+- probabilistic reducers used outside a top-level literal `if rule(k, n) then` condition;
 - `get` conditions that match beyond the first key;
 - constructors with more than two arguments;
 - process structures outside the supported linear-prefix/parallel forms
