@@ -548,7 +548,7 @@ Translating the process into Horn clauses...
     output_file = tmp_path / "model.xml"
 
     assert functions.selectors == []
-    assert functions.probability_rules["lucky"].result is True
+    assert "lucky" in functions.probability_rules
     render_channel_skeleton(
         output_file,
         extract_let_drifted_process(output),

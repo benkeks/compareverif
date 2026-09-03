@@ -1847,8 +1847,7 @@ def _probability_weights(
         raise InvalidProbabilityRuleError(
             f"Probabilistic condition {condition!r} requires 0 <= success <= total and total > 0."
         )
-    rule = probability_rules[match.group(1)]
-    return (str(success), str(total - success)) if rule.result else (str(total - success), str(success))
+    return str(success), str(total - success)
 
 
 def _reject_unsupported_probability_rule_usage(

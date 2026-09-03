@@ -87,7 +87,7 @@ It may only be used as a complete conditional test with integer literals, e.g. h
 if lucky(1, 2) then proc else proc
 ```
 
-The translator emits a `branchpoint` with outgoing UPPAAL probability labels `1` and `1`, representing the true and false outcomes. In general, `rule(k, n) = true` assigns weights `k` and `n - k`; a rule returning `false` reverses those weights. The translator rejects zero totals, $k > n$, compound conditions, and use of a probabilistic function anywhere other than such an `if` condition.
+The translator emits a `branchpoint` with outgoing UPPAAL probability labels `1` and `1`, representing the true and false outcomes. In general, every probabilistic rule assigns weights `k` and `n - k`. The reduction result only guides ProVerif's symbolic branch exploration; it does not affect the generated UPPAAL probabilities. The translator rejects zero totals, $k > n$, compound conditions, and use of a probabilistic function anywhere other than such an `if` condition.
 
 ## UPPAAL Pragmas
 
