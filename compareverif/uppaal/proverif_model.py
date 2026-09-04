@@ -1134,6 +1134,7 @@ def _add_prefix_template(
         location = ET.SubElement(template, "location", {"id": location_id, "x": "0", "y": str(location_y)})
         name = "terminated" if location_id == "Prefix_terminated" else "forked" if location_id == "Prefix_forked" else f"step_{index}"
         ET.SubElement(location, "name", {"x": "20", "y": str(location_y - 24)}).text = name
+        _add_exponential_rate(location, location_y)
     ET.SubElement(template, "init", {"ref": location_ids[0]})
 
     if not prefix:
@@ -1405,11 +1406,14 @@ def _add_component_template(
     terminal_id = f"{name}_terminated" if terminates else f"{name}_replication"
     before = ET.SubElement(template, "location", {"id": before_id, "x": "0", "y": "0"})
     ET.SubElement(before, "name", {"x": "20", "y": "-24"}).text = "before"
+    _add_exponential_rate(before, 0)
     entry = ET.SubElement(template, "location", {"id": entry_id, "x": "0", "y": "160"})
     ET.SubElement(entry, "name", {"x": "20", "y": "136"}).text = "entry"
+    _add_exponential_rate(entry, 160)
     if terminates:
         terminated = ET.SubElement(template, "location", {"id": terminal_id, "x": "0", "y": "320"})
         ET.SubElement(terminated, "name", {"x": "20", "y": "296"}).text = "terminated"
+        _add_exponential_rate(terminated, 320)
     ET.SubElement(template, "init", {"ref": before_id})
 
     _add_transition(
@@ -1473,6 +1477,7 @@ def _add_attack_template(
             template, "location", {"id": location_id, "x": "0" if title != "failed" else "260", "y": str(y)}
         )
         ET.SubElement(location, "name", {"x": "20" if title != "failed" else "280", "y": str(y - 24)}).text = title
+        _add_exponential_rate(location, y)
     ET.SubElement(template, "init", {"ref": entry_id})
     builder = _ComponentBuilder(
         template,
@@ -1520,6 +1525,15 @@ def _order_template_children(template: ET.Element) -> None:
     ]
 
 
+def _add_exponential_rate(location: ET.Element, y: int) -> None:
+    """Enable SMC timing for locations that do not constrain time with an invariant."""
+    ET.SubElement(
+        location,
+        "label",
+        {"kind": "exponentialrate", "x": "20", "y": str(y + 20)},
+    ).text = "0.5"
+
+
 class _ComponentBuilder:
     """Emit a small vertical UPPAAL control-flow graph from syntax-tree nodes."""
 
@@ -1565,6 +1579,8 @@ class _ComponentBuilder:
         ET.SubElement(location, "name", {"x": str(x + 20), "y": str(y - 24)}).text = title
         if invariant:
             ET.SubElement(location, "label", {"kind": "invariant", "x": "20", "y": str(y + 20)}).text = invariant
+        else:
+            _add_exponential_rate(location, y)
         if urgent:
             ET.SubElement(location, "urgent")
         self.location_count += 1

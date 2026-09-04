@@ -483,6 +483,22 @@ Translating the process into Horn clauses...
     assert "clock seconds_clock;" in document
 
 
+def test_locations_without_invariants_have_smc_exponential_rates(tmp_path):
+    process = extract_let_drifted_process(PROVERIF_OUTPUT)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process)
+
+    for location in ET.parse(output_file).getroot().iter("location"):
+        invariant = location.find("label[@kind='invariant']")
+        rate = location.find("label[@kind='exponentialrate']")
+        if invariant is None:
+            assert rate is not None
+            assert rate.text == "0.5"
+        else:
+            assert rate is None
+
+
 def test_free_channel_name_is_not_declared_as_data(tmp_path):
     process = extract_let_drifted_process(PROVERIF_OUTPUT)
     output_file = tmp_path / "model.xml"
