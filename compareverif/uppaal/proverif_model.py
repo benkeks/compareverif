@@ -1656,8 +1656,7 @@ class _ComponentBuilder:
             replication = self.location("replication", x=-260)
             self.loop_targets.add(replication)
             self.transition(source, replication, guard=guard, comment="replication")
-            loop_target = replication if target == f"{self.name}_replication" else target
-            self.compile_children(node.children, replication, loop_target, x=x)
+            self.compile_children(node.children, replication, replication, x=x)
             return
         if node.text.startswith("if "):
             condition = _uppaal_condition(node.text[len("if ") :].removesuffix(" then").strip())

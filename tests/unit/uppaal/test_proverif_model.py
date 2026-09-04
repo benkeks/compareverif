@@ -1283,6 +1283,39 @@ Translating the process into Horn clauses...
     )
 
 
+def test_replication_after_initial_component_step_loops_to_replication(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}out(c, value);
+    {2}!
+    {3}event repeated
+) | (
+    {4}event other
+)
+
+Translating the process into Horn clauses...
+"""
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, extract_let_drifted_process(output))
+
+    component = ET.parse(output_file).getroot().find(".//template[name='Component1']")
+    replication_id = next(
+        location.get("id") for location in component.findall("location")
+        if location.findtext("name") == "replication"
+    )
+    event_transition = next(
+        transition for transition in component.findall("transition")
+        if transition.findtext("label[@kind='synchronisation']") == "repeated!"
+    )
+    event_target = event_transition.find("target").get("ref")
+    assert any(
+        transition.find("source").get("ref") == event_target
+        and transition.find("target").get("ref") == replication_id
+        for transition in component.findall("transition")
+    )
+
+
 def test_get_failed_is_right_of_terminated(tmp_path):
     output = """--  Process 1 (that is, process 0, with let moved downwards):
 {1}new key: bitstring;
