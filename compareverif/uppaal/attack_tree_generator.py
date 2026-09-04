@@ -6,17 +6,15 @@ from xml.etree import ElementTree as ET
 
 from compareverif.attack_tree import DerivationTree, TreeNode
 from compareverif.scenarios.generator import create_scenario_filename
-from .immediate_capability import ImmediateCapabilityAutomaton
-from .mitigatable_capability import MitigatableCapabilityAutomaton
+from .document import DOCTYPE, write_document
+from .attack_tree_immediate_capability import ImmediateCapabilityAutomaton
+from .attack_tree_mitigatable_capability import MitigatableCapabilityAutomaton
 
 
-class UppaalGenerator:
+class AttackTreeUppaalGenerator:
     """Generate a single-loop event automaton for a derivation tree."""
 
-    DOCTYPE = (
-        "<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' "
-        "'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>"
-    )
+    DOCTYPE = DOCTYPE
 
     @staticmethod
     def _slugify_name(name: str) -> str:
@@ -367,11 +365,4 @@ class UppaalGenerator:
     @classmethod
     def _write_document(cls, output_file: Path, nta: ET.Element) -> None:
         """Write the XML document with UPPAAL's required doctype."""
-        tree = ET.ElementTree(nta)
-        ET.indent(tree, space="  ")
-        output_file = Path(output_file)
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        with output_file.open("wb") as handle:
-            handle.write(b'<?xml version="1.0" encoding="utf-8"?>\n')
-            handle.write(f"{cls.DOCTYPE}\n".encode("utf-8"))
-            tree.write(handle, encoding="utf-8", xml_declaration=False)
+        write_document(output_file, nta)
