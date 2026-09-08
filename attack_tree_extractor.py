@@ -19,7 +19,7 @@ from compareverif.attack_tree import (
     CapabilityAnalyzer,
     GraphvizRenderer,
 )
-from compareverif.uppaal import UppaalGenerator
+from compareverif.uppaal import AttackTreeUppaalGenerator
 
 
 def _describe_query(query: str) -> str:
@@ -355,7 +355,7 @@ def main():
                     renderer.render_to_json(tree, json_file)
 
                 if uppaal_file:
-                    UppaalGenerator.render_tree(uppaal_file, tree)
+                    AttackTreeUppaalGenerator.render_tree(uppaal_file, tree)
                     print(f"UPPAAL model written to: {uppaal_file}")
 
                 if show_window:
@@ -363,7 +363,7 @@ def main():
                     windows_created = True
 
     if uppaal_file and not args.files:
-        UppaalGenerator.render_empty(uppaal_file)
+        AttackTreeUppaalGenerator.render_empty(uppaal_file)
 
     if show_window and windows_created:
         renderer.show_windows()

@@ -1,0 +1,120 @@
+"""Parse optional UPPAAL configuration pragmas from ProVerif comments."""
+
+from __future__ import annotations
+
+import re
+import warnings
+from dataclasses import dataclass
+
+import yaml
+
+_UPPAAL_PRAGMA_RE = re.compile(r"\(\*\s*UPPAAL\s*\n(?P<content>.*?)\*\)", re.DOTALL)
+_SUPPORTED_FIELDS = {
+    "additional_queries",
+    "attacker_cost_channel",
+    "attacker_resources",
+    "data_width",
+    "non_blocking_channels",
+    "table_capacities",
+    "time_channels",
+}
+
+
+class UnknownUppaalPragmaWarning(UserWarning):
+    """Warn when an UPPAAL pragma contains a field the translator does not support."""
+
+
+class InvalidUppaalPragmaError(ValueError):
+    """Raised when a supported UPPAAL pragma has an unsupported value."""
+
+
+@dataclass(frozen=True)
+class UppaalPragmas:
+    """Translator configuration extracted from ``(* UPPAAL ... *)`` comments."""
+
+    non_blocking_channels: list[str]
+    time_channels: list[str]
+    additional_queries: list[str]
+    data_width: int | None
+    table_capacities: dict[str, int]
+    attacker_resources: dict[str, int]
+    attacker_cost_channel: str
+
+
+def parse_uppaal_pragmas(source: str) -> UppaalPragmas:
+    """Parse UPPAAL YAML comment blocks, retaining defaults for omitted supported fields."""
+    values: dict[str, list[str] | dict[str, int] | str | None] = {
+        "non_blocking_channels": ["leak"],
+        "time_channels": ["tick"],
+        "additional_queries": [],
+        "data_width": None,
+        "table_capacities": {},
+        "attacker_resources": {},
+        "attacker_cost_channel": "cost",
+    }
+    for match in _UPPAAL_PRAGMA_RE.finditer(source):
+        parsed = yaml.safe_load(match.group("content")) or {}
+        if not isinstance(parsed, dict):
+            raise ValueError("UPPAAL pragma must contain a YAML key-value mapping")
+        unknown = sorted(set(parsed) - _SUPPORTED_FIELDS)
+        if unknown:
+            warnings.warn(
+                f"Unsupported UPPAAL pragma fields: {', '.join(unknown)}.",
+                UnknownUppaalPragmaWarning,
+                stacklevel=2,
+            )
+        if "data_width" in parsed:
+            if parsed["data_width"] != 64:
+                raise InvalidUppaalPragmaError(
+                    "UPPAAL pragma data_width must be 64, the only supported wide-data width."
+                )
+            values["data_width"] = 64
+        for field in {
+            "additional_queries",
+            "non_blocking_channels",
+            "time_channels",
+        } & parsed.keys():
+            values_list = parsed[field]
+            if not isinstance(values_list, list) or not all(isinstance(value, str) for value in values_list):
+                raise ValueError(f"UPPAAL pragma field {field!r} must be a list of strings")
+            values[field] = values_list
+        if "attacker_resources" in parsed:
+            resources = parsed["attacker_resources"]
+            if (
+                not isinstance(resources, dict)
+                or not all(
+                    isinstance(resource, str)
+                    and isinstance(budget, int)
+                    and not isinstance(budget, bool)
+                    and budget >= 0
+                    for resource, budget in resources.items()
+                )
+            ):
+                raise InvalidUppaalPragmaError(
+                    "UPPAAL pragma attacker_resources must map resource names to non-negative integers"
+                )
+            values["attacker_resources"] = resources
+        if "attacker_cost_channel" in parsed:
+            channel = parsed["attacker_cost_channel"]
+            if not isinstance(channel, str):
+                raise InvalidUppaalPragmaError(
+                    "UPPAAL pragma attacker_cost_channel must be a string"
+                )
+            values["attacker_cost_channel"] = channel
+        if "table_capacities" in parsed:
+            capacities = parsed["table_capacities"]
+            if (
+                not isinstance(capacities, dict)
+                or not all(
+                    isinstance(table, str)
+                    and isinstance(capacity, int)
+                    and not isinstance(capacity, bool)
+                    and capacity > 0
+                    for table, capacity in capacities.items()
+                )
+            ):
+                raise InvalidUppaalPragmaError(
+                    "UPPAAL pragma table_capacities must map table names to positive integers"
+                )
+            values["table_capacities"] = capacities
+    return UppaalPragmas(**values)

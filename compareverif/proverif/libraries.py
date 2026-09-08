@@ -30,6 +30,18 @@ def extract_declared_libraries_from_file(file_path: Path) -> List[str]:
     return extract_declared_libraries(content)
 
 
+def read_declared_library_sources(file_path: Path) -> List[str]:
+    """Read locally resolvable ``-lib`` files declared by a ProVerif scenario."""
+    sources: List[str] = []
+    for library in extract_declared_libraries_from_file(file_path):
+        library_path = file_path.parent / library
+        try:
+            sources.append(library_path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+    return sources
+
+
 def append_library_arguments(command: List[str], libraries: Iterable[str]) -> None:
     """Append `-lib <name>` pairs to an existing ProVerif command."""
     seen = set()

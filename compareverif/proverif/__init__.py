@@ -7,6 +7,7 @@ from .output_parser import (
     Clause,
     Derivation,
 )
+from .attack_process import AttackProcess, extract_attack_processes
 
 __all__ = [
     "ProVerifRunner",
@@ -14,4 +15,6 @@ __all__ = [
     "ProVerifOutput",
     "Clause",
     "Derivation",
+    "AttackProcess",
+    "extract_attack_processes",
 ]
