@@ -59,10 +59,16 @@ def parse_arguments() -> argparse.Namespace:
             "bounded int, using DATA_SHL/DATA_SHR/DATA_OR/DATA_AND helpers for packing."
         ),
     )
-    parser.add_argument(
+    attack_options = parser.add_mutually_exclusive_group()
+    attack_options.add_argument(
         "--show-attack-processes",
         action="store_true",
         help="Print attacker processes reconstructed from successful ProVerif attack traces",
+    )
+    attack_options.add_argument(
+        "--no-attacks",
+        action="store_true",
+        help="Translate only the main process, without waiting for query attack traces",
     )
     parser.add_argument(
         "--show-process",
@@ -81,7 +87,7 @@ def main() -> int:
 
     command = [args.proverif]
     append_library_arguments(command, extract_declared_libraries_from_file(scenario_file))
-    if args.show_attack_processes or args.uppaal_out:
+    if (args.show_attack_processes or args.uppaal_out) and not args.no_attacks:
         command.extend(["-set", "traceDisplay", "long"])
     command.extend(["-test", scenario_file.name])
     try:
@@ -91,10 +97,18 @@ def main() -> int:
             text=True,
             cwd=scenario_file.parent,
             check=False,
+            timeout=0.5 if args.no_attacks else None,
         )
     except FileNotFoundError:
         print(f"ProVerif executable not found: {args.proverif}", file=sys.stderr)
         return 2
+    except subprocess.TimeoutExpired as error:
+        if not args.no_attacks:
+            raise
+        output = error.stdout or ""
+        if isinstance(output, bytes):
+            output = output.decode(errors="replace")
+        result = subprocess.CompletedProcess(command, 0, output, "")
 
     if result.returncode:
         print(result.stderr or result.stdout, file=sys.stderr, end="")
@@ -111,12 +125,12 @@ def main() -> int:
 
     source = scenario_file.read_text()
     pragmas = parse_uppaal_pragmas(source)
-    attack_processes = extract_attack_processes(
+    attack_processes = [] if args.no_attacks else extract_attack_processes(
         result.stdout,
         source,
         attacker_cost_channel=pragmas.attacker_cost_channel,
     )
-    if args.show_attack_processes:
+    if args.show_attack_processes and not args.no_attacks:
         for attack_process in attack_processes:
             print(f"\nAttack process for query {attack_process.query_number} ({attack_process.query}):")
             print(attack_process.render())
