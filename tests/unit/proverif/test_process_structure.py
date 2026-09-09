@@ -82,3 +82,16 @@ def test_decomposes_branching_root_as_a_single_component():
 
     assert decomposition.prefix == []
     assert [node.label for node in decomposition.components] == [1]
+
+
+def test_decomposes_conditional_with_only_then_branch_as_a_single_component():
+    process = _process(
+        "{1}in(c, value: bitstring);\n"
+        "{2}if value = expected then\n"
+        "    {3}event matched"
+    )
+
+    decomposition = decompose_process(process)
+
+    assert decomposition.prefix == []
+    assert [node.label for node in decomposition.components] == [1]

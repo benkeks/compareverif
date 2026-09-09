@@ -1,0 +1,19 @@
+(* Example about let-drifting and inline ifs from Section 4.1.4 of the ProVerif manual *)
+
+free c: channel.
+free Aa: bitstring.
+free Bb: bitstring.
+
+process
+    in (c, x: bitstring);
+    in (c, y: bitstring);
+    if x = Aa || x = Bb then
+        let z = (
+            if y = Aa
+            then
+                new n : bitstring;
+                (x, n)
+            else
+                (x, y)
+        ) in
+        out (c, z)

@@ -303,16 +303,77 @@ class InvalidAttackerCostInputError(ValueError):
     """Raised when an attacker cost input does not match the configured resource model."""
 
 
+class InlineIfExpressionError(ValueError):
+    """Raised when an expression-level conditional has no alternative branch."""
+
+
 def _reject_tuple_data(process: IntermediateProcess) -> None:
-    """Raise TupleDataError if any statement contains a tuple literal (grouped, comma-separated
-    parentheses that are not a function/table/event call's argument list)."""
+    """Reject tuple patterns and tuple values whose arity cannot be represented."""
     for node in process.labeled_nodes():
+        if re.match(r"^let\s+\(", node.text):
+            raise TupleDataError(
+                f"Tuple binding pattern at {{{node.label}}} ({node.text}) is not supported."
+            )
         tuple_contents = _find_tuple_literal(node.text)
-        if tuple_contents is not None:
+        if tuple_contents is not None and len(split_top_level_commas(tuple_contents)) != 2:
             raise TupleDataError(
                 f"Tuple data ({tuple_contents}) at {{{node.label}}} ({node.text}) is not allowed; "
-                "tuples are not supported in bindings or function arguments."
+                "only pairs are supported."
             )
+
+
+def _translate_pair_literals(process: IntermediateProcess) -> IntermediateProcess:
+    """Replace ProVerif tuple values with calls to the generated binary ``pair`` constructor."""
+    def translate_text(text: str) -> str:
+        parts: list[str] = []
+        index = 0
+        while index < len(text):
+            if text[index] != "(":
+                parts.append(text[index])
+                index += 1
+                continue
+            close_index = find_matching_paren(text, index)
+            contents = text[index + 1 : close_index]
+            translated_contents = translate_text(contents)
+            preceding = text[index - 1] if index else ""
+            arguments = split_top_level_commas(contents)
+            if not (preceding.isalnum() or preceding == "_") and len(arguments) == 2:
+                translated_arguments = split_top_level_commas(translated_contents)
+                parts.append(f"pair({translated_arguments[0]}, {translated_arguments[1]})")
+            else:
+                parts.extend(("(", translated_contents, ")"))
+            index = close_index + 1
+        return "".join(parts)
+
+    def translate_node(node: ProcessSyntaxNode) -> ProcessSyntaxNode:
+        return ProcessSyntaxNode(
+            label=node.label,
+            text=translate_text(node.text),
+            indent=node.indent,
+            children=[translate_node(child) for child in node.children],
+            has_parallel_children=node.has_parallel_children,
+        )
+
+    return IntermediateProcess(
+        number=process.number,
+        description=process.description,
+        source_lines=process.source_lines,
+        nodes=[translate_node(node) for node in process.nodes],
+    )
+
+
+def _with_generated_pair_constructor(functions: ProVerifFunctions) -> ProVerifFunctions:
+    """Add the binary constructor used to represent ProVerif tuple values."""
+    if "pair" in functions.constructors:
+        return functions
+    return ProVerifFunctions(
+        constructors=[*functions.constructors, "pair"],
+        selectors=functions.selectors,
+        arities={**functions.arities, "pair": 2},
+        rules=functions.rules,
+        data_functions=functions.data_functions,
+        probability_rules=functions.probability_rules,
+    )
 
 
 def _reject_complex_input_patterns(
@@ -908,13 +969,14 @@ def render_channel_skeleton(
     TupleDataError if any statement uses tuple data in a binding or as a function argument.
     """
     attack_processes = attack_processes or []
+    _reject_tuple_data(process)
+    process = _translate_pair_literals(process)
     all_process_nodes = [*process.nodes, *(attack.nodes[0] for attack in attack_processes if attack.nodes)]
     all_process = IntermediateProcess(0, "process and attacks", [], all_process_nodes)
     non_blocking_channel_names = set(non_blocking_channels)
     time_channel_names = set(time_channels)
     attacker_resource_budgets = dict(attacker_resources or {})
     attacker_resource_names = set(attacker_resource_budgets)
-    _reject_tuple_data(all_process)
     _reject_complex_input_patterns(
         all_process,
         time_channel_names,
@@ -930,9 +992,14 @@ def render_channel_skeleton(
     timing_channels = collect_timing_channels(process, time_channel_names)
     tables = collect_table_arities(process)
     value_functions = {} if proverif_functions is not None else collect_value_function_arities(process)
+    has_pair_literals = any("pair(" in node.text for node in process.labeled_nodes())
+    if has_pair_literals:
+        value_functions.pop("pair", None)
     function_metadata = proverif_functions or ProVerifFunctions(
-        constructors=list(value_functions), selectors=[], arities=value_functions, rules={}
+        constructors=[], selectors=[], arities={}, rules={}
     )
+    if has_pair_literals:
+        function_metadata = _with_generated_pair_constructor(function_metadata)
     _reject_unsupported_probability_rule_usage(
         all_process, function_metadata.probability_rules
     )
@@ -1043,9 +1110,9 @@ def render_channel_skeleton(
     declaration_lines.append(f"int entity_counter = {len(free_prefix_names)};")
     new_return = "DATA_FROM_INT(entity_counter)" if wide_data else "entity_counter"
     declaration_lines.append(f"data NEW() {{ entity_counter++; return {new_return}; }}")
-    if proverif_functions is not None:
+    if proverif_functions is not None or has_pair_literals:
         declaration_lines.append("\n// Functions declared by the ProVerif source.")
-        declaration_lines.extend(_function_declaration_lines(proverif_functions, wide_data))
+        declaration_lines.extend(_function_declaration_lines(function_metadata, wide_data))
     if value_functions:
         declaration_lines.append("\n// ProVerif value constructors represented as fresh entity identifiers.")
         declaration_lines.extend(_value_function_lines(value_functions))
@@ -1225,7 +1292,10 @@ def _statement_effect(
         return (None, None)
     if text.startswith("out("):
         args = split_top_level_commas(extract_balanced_parens(text, text.index("(")))
-        return (f"{args[0]}!", f"{args[0]}_p = {args[1]}" if len(args) > 1 else None)
+        return (
+            f"{args[0]}!",
+            f"{args[0]}_p = {_uppaal_expression(args[1])}" if len(args) > 1 else None,
+        )
     if text.startswith("in("):
         args = split_top_level_commas(extract_balanced_parens(text, text.index("(")))
         if _is_attacker_cost_input(args, attacker_cost_channel, attacker_resources or set()):
@@ -1234,9 +1304,12 @@ def _statement_effect(
         return (f"{args[0]}?", f"{name} = {args[0]}_p" if name else None)
     if (event := _EVENT_RE.match(text)):
         payload = event.group(2)
-        return (f"{event.group(1)}!", f"{event.group(1)}_p = {payload}" if payload else None)
+        return (
+            f"{event.group(1)}!",
+            f"{event.group(1)}_p = {_uppaal_expression(payload)}" if payload else None,
+        )
     if (match := _LET_SINGLE_RE.match(text)):
-        return (None, f"{match.group(1)} = {match.group(2)}")
+        return (None, f"{match.group(1)} = {_uppaal_expression(match.group(2))}")
     return (None, _prefix_assignment(ProcessSyntaxNode(label=None, text=text, indent=0)))
 
 
@@ -1350,7 +1423,76 @@ def _split_top_level_equality(equality: str) -> tuple[str, str]:
 
 def _uppaal_condition(condition: str) -> str:
     """Translate ProVerif equality syntax to UPPAAL's equality operator."""
-    return re.sub(r"(?<![=!<>])=(?!=)", "==", condition)
+    return _uppaal_expression(condition)
+
+
+def _uppaal_expression(expression: str) -> str:
+    """Translate expression-level ProVerif conditionals into UPPAAL ternaries."""
+    expression = expression.strip()
+    unwrapped = _strip_grouping_parentheses(expression)
+    if re.match(r"^if\s+", unwrapped):
+        then_index = _find_expression_keyword(unwrapped, "then", 2)
+        if then_index is None:
+            raise InlineIfExpressionError(f"Inline if expression {expression!r} is missing then.")
+        else_index = _find_expression_else(unwrapped, then_index + 4)
+        if else_index is None:
+            raise InlineIfExpressionError(f"Inline if expression {expression!r} requires an else branch.")
+        condition = unwrapped[2:then_index]
+        when_true = unwrapped[then_index + 4:else_index]
+        when_false = unwrapped[else_index + 4:]
+        return (
+            f"({_uppaal_condition(condition)} ? {_uppaal_expression(when_true)} : "
+            f"{_uppaal_expression(when_false)})"
+        )
+
+    parts: list[str] = []
+    index = 0
+    while index < len(expression):
+        if expression[index] != "(":
+            parts.append(expression[index])
+            index += 1
+            continue
+        close_index = find_matching_paren(expression, index)
+        translated_contents = _uppaal_expression(expression[index + 1:close_index])
+        if translated_contents.startswith("(") and translated_contents.endswith(")"):
+            parts.append(translated_contents)
+        else:
+            parts.extend(("(", translated_contents, ")"))
+        index = close_index + 1
+    return re.sub(r"(?<![=!<>])=(?!=)", "==", "".join(parts))
+
+
+def _find_expression_keyword(expression: str, keyword: str, start: int) -> int | None:
+    """Find a keyword not nested in parentheses."""
+    depth = 0
+    for match in re.finditer(r"\b(?:then|else)\b", expression[start:]):
+        index = start + match.start()
+        depth += expression[start:index].count("(") - expression[start:index].count(")")
+        start = index
+        if depth == 0 and match.group() == keyword:
+            return index
+    return None
+
+
+def _find_expression_else(expression: str, start: int) -> int | None:
+    """Find the else paired with an inline if expression."""
+    depth = 0
+    nested_ifs = 0
+    token_re = re.compile(r"\b(?:if|else)\b|[()]")
+    for match in token_re.finditer(expression, start):
+        token = match.group()
+        if token == "(":
+            depth += 1
+        elif token == ")":
+            depth -= 1
+        elif depth == 0 and token == "if":
+            nested_ifs += 1
+        elif depth == 0 and token == "else":
+            if nested_ifs:
+                nested_ifs -= 1
+            else:
+                return match.start()
+    return None
 
 
 def _seconds_input(text: str, time_channels: set[str]) -> str | None:

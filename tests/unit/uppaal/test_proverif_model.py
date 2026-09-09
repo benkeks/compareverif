@@ -17,6 +17,7 @@ from compareverif.uppaal import (
     GeneratedNameCollisionWarning,
     GlobalNameCountWarning,
     InvalidAttackerCostInputError,
+    InlineIfExpressionError,
     InvalidProbabilityRuleError,
     InvalidUppaalPragmaError,
     DynamicChannelError,
@@ -1230,11 +1231,11 @@ Translating the process into Horn clauses...
 """
     process = extract_let_drifted_process(output)
 
-    with pytest.raises(TupleDataError, match="Tuple data"):
+    with pytest.raises(TupleDataError, match="Tuple binding pattern"):
         render_channel_skeleton(tmp_path / "model.xml", process)
 
 
-def test_tuple_function_argument_is_rejected(tmp_path):
+def test_tuple_function_argument_is_translated_to_generated_pair(tmp_path):
     output = """--  Process 1 (that is, process 0, with let moved downwards):
 {1}new key: bitstring;
 (
@@ -1247,8 +1248,76 @@ Translating the process into Horn clauses...
 """
     process = extract_let_drifted_process(output)
 
-    with pytest.raises(TupleDataError, match="Tuple data"):
+    output_file = tmp_path / "model.xml"
+    render_channel_skeleton(output_file, process)
+
+    declarations = ET.parse(output_file).getroot().findtext("declaration")
+    assert "const int PAIR" in declarations
+    assert "data pair(data value1, data value2)" in declarations
+    assert "data hashed(data value1) { return NEW(); }" in declarations
+    labels = [label.text for label in ET.parse(output_file).getroot().findall(".//label")]
+    assert "c_p = hashed(pair(key, key))" in labels
+
+
+def test_inline_if_expression_is_translated_to_a_ternary_update(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}in(c, x: bitstring);
+    {2}let result: bitstring = (if x = yes then accepted else rejected) in
+    {3}out(c, result)
+) | (
+    {4}event done
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process)
+
+    labels = [label.text for label in ET.parse(output_file).getroot().findall(".//label")]
+    assert "result = (x == yes ? accepted : rejected)" in labels
+
+
+def test_inline_if_expression_without_else_is_rejected(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}let result: bitstring = (if x = yes then accepted) in
+    {2}out(c, result)
+) | (
+    {3}event done
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+
+    with pytest.raises(InlineIfExpressionError, match="requires an else branch"):
         render_channel_skeleton(tmp_path / "model.xml", process)
+
+
+def test_inline_if_expression_is_translated_inside_a_guard(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}if (if flag then accepted else rejected) = accepted then
+        {2}event done
+) | (
+    {3}event other
+)
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process)
+
+    guards = [
+        label.text
+        for label in ET.parse(output_file).getroot().findall(".//label[@kind='guard']")
+    ]
+    assert "(flag ? accepted : rejected) == accepted" in guards
 
 
 @pytest.mark.parametrize("pattern", ["hashed(value)", "first: bitstring, second: bitstring"])

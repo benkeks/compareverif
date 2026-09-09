@@ -44,6 +44,8 @@ def decompose_process(process: IntermediateProcess) -> ProcessDecomposition:
                 f"unexpected {node.text!r}; expected process format "
                 "(step; step; (proc1 | proc2)), with the prefix or parallel part optionally omitted"
             )
+        if node.text.startswith("if "):
+            return ProcessDecomposition(prefix=[], components=[process.nodes[0]])
         if len(node.children) == 1 and _is_parallel(node.children[0]):
             prefix.append(node)
             return ProcessDecomposition(prefix=prefix, components=node.children[0].children)
