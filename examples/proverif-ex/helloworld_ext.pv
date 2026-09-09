@@ -1,0 +1,18 @@
+free c : channel.
+
+free Cocks : bitstring [ private ].
+free Rsa: bitstring [ private ].
+
+event evCocks.
+event evRSA.
+
+query event(evCocks) ==> event(evRSA).
+
+process
+    out (c, Rsa);
+    in (c, x: bitstring);
+    if x = Cocks then
+        event evCocks;
+        event evRSA
+    else
+        event evRSA

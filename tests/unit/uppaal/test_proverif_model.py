@@ -1077,7 +1077,7 @@ def test_prefix_new_and_insert_steps_generate_fresh_ids_and_table_updates(tmp_pa
     ] == [("30", "200"), ("30", "250")]
 
 
-def test_render_channel_skeleton_rejects_process_without_top_level_parallel(tmp_path):
+def test_render_channel_skeleton_translates_branching_process_as_one_component(tmp_path):
     output = """--  Process 1 (that is, process 0, with let moved downwards):
 {1}if key = value then
     {2}out(c, key)
@@ -1088,8 +1088,14 @@ Translating the process into Horn clauses...
 """
     process = extract_let_drifted_process(output)
 
-    with pytest.raises(UnsupportedProcessStructureError):
-        render_channel_skeleton(tmp_path / "model.xml", process)
+    output_file = tmp_path / "model.xml"
+    render_channel_skeleton(output_file, process)
+
+    template_names = [
+        template.findtext("name")
+        for template in ET.parse(output_file).getroot().findall("template")
+    ]
+    assert template_names == ["Prefix", "Component1"]
 
 
 def test_component_translation_handles_process_constructs(tmp_path):
