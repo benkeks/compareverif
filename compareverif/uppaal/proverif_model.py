@@ -921,12 +921,12 @@ def render_channel_skeleton(
         attacker_cost_channel,
         attacker_resource_names,
     )
+    events = collect_event_names(all_process)
     channels = [
         channel
         for channel in collect_channel_names(all_process)
-        if channel != attacker_cost_channel
+        if channel != attacker_cost_channel and channel not in events
     ]
-    events = collect_event_names(all_process)
     timing_channels = collect_timing_channels(process, time_channel_names)
     tables = collect_table_arities(process)
     value_functions = {} if proverif_functions is not None else collect_value_function_arities(process)

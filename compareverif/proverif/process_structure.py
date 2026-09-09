@@ -51,11 +51,9 @@ def decompose_process(process: IntermediateProcess) -> ProcessDecomposition:
             prefix.append(node)
             return ProcessDecomposition(prefix=prefix, components=[])
         if len(node.children) != 1:
-            raise UnsupportedProcessStructureError(
-                f"statement at {{{node.label}}} has {len(node.children)} continuations; "
-                "expected process format (step; step; (proc1 | proc2)), with the prefix or "
-                "parallel part optionally omitted"
-            )
+            # A branch cannot occur in the linear prefix. Reinterpret the whole
+            # process as one component so its preceding steps remain local to it.
+            return ProcessDecomposition(prefix=[], components=[process.nodes[0]])
         prefix.append(node)
         node = node.children[0]
 

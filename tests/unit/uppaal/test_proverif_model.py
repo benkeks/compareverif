@@ -113,6 +113,22 @@ def test_render_channel_skeleton_declares_channel_and_payload_variable(tmp_path)
         assert f"data {channel}_p;" in document
 
 
+def test_event_channel_is_declared_once_as_broadcast(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+{1}event completed
+
+Translating the process into Horn clauses...
+"""
+    process = extract_let_drifted_process(output)
+    output_file = tmp_path / "model.xml"
+
+    render_channel_skeleton(output_file, process)
+
+    declarations = ET.parse(output_file).getroot().findtext("declaration")
+    assert declarations.count("chan completed;") == 1
+    assert "broadcast chan completed;" in declarations
+
+
 def test_render_channel_skeleton_builds_prefix_and_component_automata(tmp_path):
     process = extract_let_drifted_process(PROVERIF_OUTPUT)
     output_file = tmp_path / "model.xml"

@@ -1,4 +1,9 @@
-from compareverif.proverif.attack_process import extract_attack_processes
+import pytest
+
+from compareverif.proverif.attack_process import (
+    UntranslatedAttackWarning,
+    extract_attack_processes,
+)
 
 
 def test_extracts_attack_process_from_long_trace():
@@ -71,4 +76,33 @@ The attacker has the message secret = secret.
         "out(cost, hack(4));",
         "in(cost, compute(2));",
         "if secret = secret then event attack_breaks_query_1()",
+    )
+
+
+def test_warns_when_a_failed_query_has_no_supported_attack_trace():
+    trace = """
+-- Query not event(evRSA) in process 0.
+The event evRSA is executed at {6}.
+A trace has been found.
+RESULT not event(evRSA) is false.
+"""
+
+    with pytest.warns(UntranslatedAttackWarning, match=r"not event\(evRSA\)"):
+        assert extract_attack_processes(trace) == []
+
+
+def test_extracts_event_goal_attack_by_mirroring_the_event_as_input():
+    trace = """
+-- Query event(evRSA) ==> event(evCocks) in process 0.
+1st process: in(c, x: bitstring) done with message a
+1st process: event evRSA executed; it is a goal
+RESULT event(evRSA) ==> event(evCocks) is false.
+"""
+
+    [process] = extract_attack_processes(trace)
+
+    assert process.statements == (
+        "out(c, a);",
+        "in(evRSA, attack_event_1: bitstring);",
+        "event attack_breaks_query_1()",
     )

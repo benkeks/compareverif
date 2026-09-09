@@ -1,3 +1,5 @@
+(* Example from UPPAAL manual *)
+
 free c : channel.
 
 free Cocks : bitstring [ private ].
@@ -7,6 +9,7 @@ event evCocks.
 event evRSA.
 
 query event(evCocks) ==> event(evRSA).
+query event(evRSA) ==> event(evCocks).
 
 process
     out (c, Rsa);

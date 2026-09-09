@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass
 
 from .identifier_analysis import collect_declared_name_types
@@ -23,11 +24,20 @@ _COST_ACTION_RE = re.compile(
     r"(?P<channel>[^,]+), (?P<resource>[A-Za-z_][A-Za-z0-9_]*)\((?P<amount>\d+)\)\) "
     r"done(?: with message (?P=resource)\((?P=amount)\))?$"
 )
+_EVENT_RE = re.compile(
+    r"^\d+(?:st|nd|rd|th) process: event (?P<event>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?:\([^)]*\))? executed(?:; it is a goal)?$"
+)
 _ATTACKER_MESSAGE_RE = re.compile(r"^The attacker has the message (?P<term>.+) = (?P<goal>.+)\.$")
 _FREE_RE = re.compile(r"^\s*free\s+(\w+)\s*:\s*(\w+)", re.MULTILINE)
 _FUNCTION_RE = re.compile(r"^\s*fun\s+(\w+)\s*\(([^)]*)\)\s*:\s*(\w+)", re.MULTILINE)
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 _APPLICATION_RE = re.compile(r"^(\w+)\(")
+_FAILED_QUERY_RESULT_RE = re.compile(r"^RESULT .+ is false\.$")
+
+
+class UntranslatedAttackWarning(UserWarning):
+    """Raised when ProVerif found an attack that cannot be translated."""
 
 
 @dataclass(frozen=True)
@@ -65,6 +75,7 @@ def extract_attack_processes(
     substitutions: dict[str, str] = {}
     fresh_names: set[str] = set()
     in_attacker_knowledge = False
+    event_input_count = 0
     query_number = 0
 
     for line in _logical_lines(trace.splitlines()):
@@ -76,6 +87,7 @@ def extract_attack_processes(
             substitutions = {}
             fresh_names = set()
             in_attacker_knowledge = False
+            event_input_count = 0
             continue
 
         if current_query is None:
@@ -118,6 +130,14 @@ def extract_attack_processes(
             statements.append(f"out({input_match.group('channel')}, {term});")
             continue
 
+        event_match = _EVENT_RE.match(line)
+        if event_match:
+            event_input_count += 1
+            statements.append(
+                f"in({event_match.group('event')}, attack_event_{event_input_count}: bitstring);"
+            )
+            continue
+
         if line == "Additional knowledge of the attacker:":
             in_attacker_knowledge = True
             continue
@@ -158,11 +178,44 @@ def extract_attack_processes(
             )
             current_query = None
 
+        if current_query is not None and _FAILED_QUERY_RESULT_RE.match(line):
+            if event_input_count:
+                fresh_statements = [
+                    f"new attack_{name}: {_fresh_type(name, trace, function_signatures)};"
+                    for name in sorted(fresh_names)
+                ]
+                processes.append(
+                    AttackProcess(
+                        query=current_query,
+                        query_number=query_number,
+                        nodes=_build_process_nodes(
+                            [*fresh_statements, *statements, f"event attack_breaks_query_{query_number}()"]
+                        ),
+                    )
+                )
+            else:
+                warnings.warn(
+                    f"Skipping unsupported ProVerif attack for query: {current_query}",
+                    UntranslatedAttackWarning,
+                    stacklevel=2,
+                )
+            current_query = None
+
     return processes
 
 
 def _build_process_nodes(statements: list[str]) -> tuple[ProcessSyntaxNode, ...]:
     """Build the linear attacker process as a continuation syntax tree."""
+    if not statements:
+        return ()
+    if not statements[-2].startswith("if "):
+        nodes = [
+            ProcessSyntaxNode(label=index, text=text, indent=0)
+            for index, text in enumerate(statements, start=1)
+        ]
+        for node, child in zip(nodes, nodes[1:]):
+            node.children = [child]
+        return tuple(nodes[:1])
     nodes = [
         ProcessSyntaxNode(label=index, text=text, indent=0)
         for index, text in enumerate(statements[:-1], start=1)
