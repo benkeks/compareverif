@@ -254,8 +254,8 @@ def test_timed_capability_has_parameterized_three_state_acquisition(tmp_path):
 @pytest.mark.parametrize(
     "attributes, expected_message",
     [
-        ({"unlocking_time": "2"}, "missing mitigation_time"),
         ({"mitigation_time": "1"}, "missing unlocking_time"),
+        ({"unlocking_time": "soon"}, "malformed unlocking_time"),
         ({"unlocking_time": "soon", "mitigation_time": "1"}, "malformed unlocking_time"),
         ({"unlocking_time": "2", "mitigation_time": "-1"}, "invalid mitigation_time"),
     ],

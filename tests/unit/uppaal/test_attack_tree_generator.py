@@ -251,11 +251,44 @@ def test_timed_capability_has_parameterized_three_state_acquisition(tmp_path):
     assert "\n\n" in document.split("<system>", 1)[1].split("</system>", 1)[0]
 
 
+def test_unlocking_only_capability_uses_timed_acquisition_backend(tmp_path):
+    output_file = tmp_path / "model.xml"
+    tree = DerivationTree(
+        goal="attacker(secret)",
+        capability_attributes={"Database leak": {"unlocking_time": "2"}},
+    )
+    tree.add_node(
+        "Database leak",
+        node_type="capability",
+        capabilities={"Database leak"},
+        variant_id="capability_leaf",
+    )
+
+    AttackTreeUppaalGenerator.render_tree(output_file, tree)
+
+    root = ET.parse(output_file).getroot()
+    template = root.find(".//template[name='Obtain_cap_database_leak']")
+    assert template.findtext("parameter") == "const int unlocking_time"
+    assert "// Backend: timed_capability" in template.findtext("declaration")
+    assert template.findtext("declaration").endswith("clock unlocking_clock;\n")
+    assert {name.text for name in template.findall("location/name")} == {
+        "Idle",
+        "Committed",
+        "Obtained",
+    }
+    assert len(template.findall("transition")) == 2
+    assert "mitigation_clock" not in ET.tostring(template, encoding="unicode")
+    assert not template.findall(".//label[@kind='invariant']")
+    document = output_file.read_text()
+    assert "const int DATABASE_LEAK_UNLOCKING_TIME = 2;" in document
+    assert "cap_database_leak_process = Obtain_cap_database_leak(\n    DATABASE_LEAK_UNLOCKING_TIME\n);" in document
+
+
 @pytest.mark.parametrize(
     "attributes, expected_message",
     [
-        ({"unlocking_time": "2"}, "missing mitigation_time"),
         ({"mitigation_time": "1"}, "missing unlocking_time"),
+        ({"unlocking_time": "soon"}, "malformed unlocking_time"),
         ({"unlocking_time": "soon", "mitigation_time": "1"}, "malformed unlocking_time"),
         ({"unlocking_time": "2", "mitigation_time": "-1"}, "invalid mitigation_time"),
     ],

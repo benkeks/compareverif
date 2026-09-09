@@ -9,6 +9,7 @@ from compareverif.scenarios.generator import create_scenario_filename
 from .document import DOCTYPE, write_document
 from .attack_tree_immediate_capability import ImmediateCapabilityAutomaton
 from .attack_tree_mitigatable_capability import MitigatableCapabilityAutomaton
+from .attack_tree_timed_capability import TimedCapabilityAutomaton
 
 
 class AttackTreeUppaalGenerator:
@@ -82,9 +83,14 @@ class AttackTreeUppaalGenerator:
         """Select the capability automaton backend from its declared attributes."""
         attributes = cls._capability_attributes(tree, node)
 
-        if "unlocking_time" in attributes or "mitigation_time" in attributes:
+        if "unlocking_time" in attributes and "mitigation_time" in attributes:
             cls._timing_parameters(tree, node)
             return "mitigatable_capability"
+        if "unlocking_time" in attributes:
+            cls._unlocking_time(tree, node)
+            return "timed_capability"
+        if "mitigation_time" in attributes:
+            cls._timing_parameters(tree, node)
         return "immediate_capability"
 
     @classmethod
@@ -125,6 +131,26 @@ class AttackTreeUppaalGenerator:
                 )
             values.append(value)
         return values[0], values[1]
+
+    @classmethod
+    def _unlocking_time(cls, tree: DerivationTree, node: TreeNode) -> int:
+        """Validate and return the unlocking time for a timed capability."""
+        attributes = cls._capability_attributes(tree, node)
+        capability_names = ", ".join(sorted(node.capabilities or {node.fact}))
+        raw_value = attributes["unlocking_time"]
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Capability {capability_names!r} has malformed unlocking_time: {raw_value!r}; "
+                "expected a non-negative integer"
+            ) from exc
+        if value < 0:
+            raise ValueError(
+                f"Capability {capability_names!r} has invalid unlocking_time: {value}; "
+                "expected a non-negative integer"
+            )
+        return value
 
     @classmethod
     def render_empty(cls, output_file: Path) -> None:
@@ -255,6 +281,7 @@ class AttackTreeUppaalGenerator:
         backend_by_name = {
             "immediate_capability": ImmediateCapabilityAutomaton,
             "mitigatable_capability": MitigatableCapabilityAutomaton,
+            "timed_capability": TimedCapabilityAutomaton,
         }
         for key, node in capability_nodes:
             capability_name = variable_names[key]
@@ -270,6 +297,12 @@ class AttackTreeUppaalGenerator:
                     "// Backend: mitigatable_capability\n"
                     "clock unlocking_clock, mitigation_clock;\n"
                 )
+            elif capability_backend == "timed_capability":
+                ET.SubElement(capability_template, "parameter").text = "const int unlocking_time"
+                ET.SubElement(capability_template, "declaration").text = (
+                    "// Backend: timed_capability\n"
+                    "clock unlocking_clock;\n"
+                )
             else:
                 ET.SubElement(capability_template, "declaration").text = "// Backend: immediate_capability\n"
 
@@ -282,7 +315,7 @@ class AttackTreeUppaalGenerator:
                 {"id": idle_id, "x": "0", "y": "0"},
             )
             ET.SubElement(idle, "name", {"x": "0", "y": "-34"}).text = "Idle"
-            if capability_backend == "mitigatable_capability":
+            if capability_backend in {"mitigatable_capability", "timed_capability"}:
                 committed = ET.SubElement(
                     capability_template,
                     "location",
@@ -321,6 +354,9 @@ class AttackTreeUppaalGenerator:
                 unlocking_time, mitigation_time = cls._timing_parameters(tree, node)
                 backend_kwargs["unlocking_time"] = unlocking_time
                 backend_kwargs["mitigation_time"] = mitigation_time
+            elif capability_backend == "timed_capability":
+                backend_kwargs["committed_id"] = committed_id
+                backend_kwargs["unlocking_time"] = cls._unlocking_time(tree, node)
             backend.render(**backend_kwargs)
 
         system = ET.SubElement(nta, "system")
@@ -339,6 +375,19 @@ class AttackTreeUppaalGenerator:
                             f"{capability_name}_process = Obtain_{capability_name}(",
                             f"    {capability_constant_prefix}_UNLOCKING_TIME,",
                             f"    {capability_constant_prefix}_MITIGATION_TIME",
+                            ");",
+                        ]
+                    )
+                )
+            elif cls._capability_backend(tree, node) == "timed_capability":
+                unlocking_time = cls._unlocking_time(tree, node)
+                capability_constant_prefix = capability_name.removeprefix("cap_").upper()
+                system_blocks.append(
+                    "\n".join(
+                        [
+                            f"const int {capability_constant_prefix}_UNLOCKING_TIME = {unlocking_time};",
+                            f"{capability_name}_process = Obtain_{capability_name}(\n"
+                            f"    {capability_constant_prefix}_UNLOCKING_TIME\n"
                             ");",
                         ]
                     )
