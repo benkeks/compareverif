@@ -1,4 +1,4 @@
-# Using the Artefact of CompareVerif
+# Using the Artifact of CompareVerif
 
 ## Starting up
 
@@ -20,7 +20,7 @@ docker image ls
 
 which lists you all available images and compareverif should be among them.
 
-## Using the artefact
+## Using the artifact
 
 You can now run CompareVerif scripts with the prefix `docker run compareverif python3`. For example, to look for minimal attacks on the example file `examples/hashed_passwords_paper.pv`, enter:
 
@@ -38,7 +38,7 @@ docker run --rm compareverif python3 -m pytest
 
 ## Reproducing results
 
-All the figures of the paper can be reproduced by running the script `reproduce-results.sh` in the root of the artefact.
+All the figures of the paper can be reproduced by running the script `reproduce-results.sh` in the root of the artifact.
 
 ```bash
 ./reproduce-results.sh
@@ -80,7 +80,7 @@ python3 scenario_preprocessor.py examples/singularized_passwords_paper.pv exampl
 
 ## Cleaning up
 
-The reproduction script creates a container named `compareverifRecreate` that is used to run the artefact. You can stop and remove it with:
+The reproduction script creates a container named `compareverifRecreate` that is used to run the artifact. You can stop and remove it with:
 
 ```
 docker stop compareverifRecreate

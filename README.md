@@ -301,11 +301,11 @@ python3 -m coverage run -m pytest tests/
 python3 -m coverage report -m
 ```
 
-## Artefact
+## Artifact
 
 The Dockerfile describes how to bundle dependencies and the CompareVerif code into a Docker image.
 
-The description of the artefact and how to reproduce the results for our SEFM submission can be found [here](artefact/artefact-appendix.pdf).
+The description of the artifact and how to reproduce the results for our SEFM submission can be found [here](artifact/artifact-appendix.pdf).
 
 For the docker image itself, you can either download it from [here](https://zenodo.org/records/21480719) or you can build it yourself. To do so simply run
 
@@ -320,4 +320,4 @@ If you have downloaded the tar, you need to load it:
 docker load < compareverif-docker.tar.gz
 ```
 Once this is done, please follow the steps described in
-[`artefact/README.md`](artefact/README.md) on how to work with the image.
+[`artifact/README.md`](artifact/README.md) on how to work with the image.
