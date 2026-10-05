@@ -41,7 +41,7 @@ from compareverif.uppaal import (
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render ProVerif's labeled, let-drifted intermediate process as a tree."
+        description="Translate a ProVerif model to UPPAAL."
     )
     parser.add_argument("scenario_file", type=Path, help="ProVerif input file (.pv)")
     parser.add_argument(
@@ -50,7 +50,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--uppaal-out",
         type=Path,
-        help="Write a blank UPPAAL model declaring the process's channels to this file",
+        help="Write a UPPAAL model to this file (default: <input>.xml)",
     )
     parser.add_argument(
         "--wide-data",
@@ -85,10 +85,11 @@ def main() -> int:
     if not scenario_file.is_file():
         print(f"Scenario file not found: {scenario_file}", file=sys.stderr)
         return 2
+    uppaal_output = args.uppaal_out or scenario_file.with_suffix(".xml")
 
     command = [args.proverif]
     append_library_arguments(command, extract_declared_libraries_from_file(scenario_file))
-    if (args.show_attack_processes or args.uppaal_out) and not args.no_attacks:
+    if (args.show_attack_processes or uppaal_output) and not args.no_attacks:
         command.extend(["-set", "traceDisplay", "long"])
     command.extend(["-test", scenario_file.name])
     try:
@@ -139,47 +140,41 @@ def main() -> int:
     if contains_replication(process):
         print("Warning: replications will be translated to loops.", file=sys.stderr)
 
-    if args.uppaal_out:
-        try:
-            declaration_source = "\n".join([*read_declared_library_sources(scenario_file), source])
-            reject_reserved_global_names(declaration_source)
-            render_channel_skeleton(
-                args.uppaal_out,
-                process,
-                global_free_names=extract_global_free_names(source),
-                proverif_functions=extract_proverif_functions(declaration_source),
-                attack_processes=attack_processes,
-                input_source=declaration_source,
-                non_blocking_channels=pragmas.non_blocking_channels,
-                time_channels=pragmas.time_channels,
-                additional_queries=pragmas.additional_queries,
-                table_capacities=pragmas.table_capacities,
-                attacker_resources=pragmas.attacker_resources,
-                attacker_cost_channel=pragmas.attacker_cost_channel,
-                wide_data=args.wide_data or pragmas.data_width == 64,
-            )
-        except (
-            ComplexInputPatternError,
-            ConstructorTagOverflowError,
-            DynamicChannelError,
-            InvalidAttackerCostInputError,
-            InlineIfExpressionError,
-            NestedReplicationError,
-            TupleDataError,
-            UnsupportedConstructorArityError,
-            UnsupportedGetConditionError,
-            UnsupportedSelectorRuleError,
-            InvalidUppaalPragmaError,
-            ReservedTranslationNameError,
-            UnsupportedProcessStructureError,
-        ) as error:
-            print(f"Cannot translate to a static UPPAAL model: {error}", file=sys.stderr)
-            return 1
-    else:
-        print(
-            "Warning: no UPPAAL output was generated; provide --uppaal-out <path> to write a model.",
-            file=sys.stderr,
+    try:
+        declaration_source = "\n".join([*read_declared_library_sources(scenario_file), source])
+        reject_reserved_global_names(declaration_source)
+        render_channel_skeleton(
+            uppaal_output,
+            process,
+            global_free_names=extract_global_free_names(source),
+            proverif_functions=extract_proverif_functions(declaration_source),
+            attack_processes=attack_processes,
+            input_source=declaration_source,
+            non_blocking_channels=pragmas.non_blocking_channels,
+            time_channels=pragmas.time_channels,
+            additional_queries=pragmas.additional_queries,
+            table_capacities=pragmas.table_capacities,
+            attacker_resources=pragmas.attacker_resources,
+            attacker_cost_channel=pragmas.attacker_cost_channel,
+            wide_data=args.wide_data or pragmas.data_width == 64,
         )
+    except (
+        ComplexInputPatternError,
+        ConstructorTagOverflowError,
+        DynamicChannelError,
+        InvalidAttackerCostInputError,
+        InlineIfExpressionError,
+        NestedReplicationError,
+        TupleDataError,
+        UnsupportedConstructorArityError,
+        UnsupportedGetConditionError,
+        UnsupportedSelectorRuleError,
+        InvalidUppaalPragmaError,
+        ReservedTranslationNameError,
+        UnsupportedProcessStructureError,
+    ) as error:
+        print(f"Cannot translate to a static UPPAAL model: {error}", file=sys.stderr)
+        return 1
 
     return 0
 

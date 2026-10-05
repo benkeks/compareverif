@@ -49,6 +49,25 @@ def test_no_attacks_uses_short_timeout_and_initial_process(tmp_path, monkeypatch
     assert "AttackOnQuery" not in document
 
 
+def test_defaults_uppaal_output_to_input_name_with_xml_suffix(tmp_path, monkeypatch):
+    scenario = tmp_path / "scenario.pv"
+    output_file = tmp_path / "scenario.xml"
+    scenario.write_text("channel c.\nprocess out(c, value) | out(c, value).\n")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["proverif_to_uppaal.py", "--no-attacks", str(scenario)],
+    )
+    monkeypatch.setattr(
+        proverif_to_uppaal.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, INITIAL_PROCESS, ""),
+    )
+
+    assert proverif_to_uppaal.main() == 0
+    assert output_file.is_file()
+
+
 def test_no_attacks_conflicts_with_show_attack_processes(monkeypatch, capsys):
     monkeypatch.setattr(
         sys,
