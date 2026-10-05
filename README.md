@@ -7,11 +7,12 @@ This can be used to compare the security of different protocol designs through t
 
 ## Description
 
-There are two main scripts in this project:
+The main scripts in this project are:
 
 - [`scenario_preprocessor.py`](#usage-of-the-scenario-preprocessor) automates the generation and verification of multiple attack scenarios, where capabilities are expressed as magical comments `(*** Attack name [price] {key: value} some oracle code ***)` in ProVerif files.
 - [`pareto_comparison.py`](#usage-of-the-pareto-comparison) renders Pareto fronts from manifests so you can compare breaking costs across protocol variants.
 - [`attack_tree_extractor.py`](#usage-of-the-attack-tree-extractor) extracts and visualizes attack trees from ProVerif output, connecting it derivations back to underlying capabilities.
+- [`proverif_to_uppaal.py`](#usage-of-the-proverif-to-uppaal-translator) translates ProVerif processes and found attacks into UPPAAL automata.
 
 The shared code is located in `compareverif/`.
 
@@ -272,6 +273,25 @@ Transition guards require prerequisite nodes to be true, and each transition emi
 Capability costs from the manifest become integer resources named `res_<resource>`. Capability transitions require sufficient resources and decrement them when the capability is activated. The initial budgets are sized to enable the attack.
 
 The model includes a reachability query for the main attack goal.
+
+## Usage of the ProVerif-to-UPPAAL Translator (independent of CompareVerif)
+
+Translate a model and the attacks that ProVerif finds, writing `examples/hashed_passwords_static.xml` by default:
+```bash
+python3 proverif_to_uppaal.py examples/hashed_passwords_static.pv
+```
+
+Choose an output filename:
+```bash
+python3 proverif_to_uppaal.py examples/hashed_passwords_static.pv --uppaal-out model.xml
+```
+
+Translate only the main process, without waiting for ProVerif to find attack traces:
+```bash
+python3 proverif_to_uppaal.py examples/hashed_passwords_static.pv --no-attacks
+```
+
+See [docs/uppaal-processes.md](docs/uppaal-processes.md) for translation semantics, supported constructs, pragmas, and options.
 
 ## Testing
 
