@@ -9,7 +9,7 @@ This can be used to compare the security of different protocol designs through t
 
 The main scripts in this project are:
 
-- [`scenario_preprocessor.py`](#usage-of-the-scenario-preprocessor) automates the generation and verification of multiple attack scenarios, where capabilities are expressed as magical comments `(*** Attack name [price] {key: value} some oracle code ***)` in ProVerif files.
+- [`scenario_comparator.py`](#usage-of-the-scenario-comparator) automates the generation and verification of multiple attack scenarios, where capabilities are expressed as magical comments `(*** Attack name [price] {key: value} some oracle code ***)` in ProVerif files.
 - [`pareto_comparison.py`](#usage-of-the-pareto-comparison) renders Pareto fronts from manifests so you can compare breaking costs across protocol variants.
 - [`attack_tree_extractor.py`](#usage-of-the-attack-tree-extractor) extracts and visualizes attack trees from ProVerif output, connecting it derivations back to underlying capabilities.
 - [`proverif_to_uppaal.py`](#usage-of-the-proverif-to-uppaal-translator) translates ProVerif processes and found attacks into UPPAAL automata.
@@ -28,14 +28,14 @@ Under `examples`, this project contains ProVerif models for analyzing the securi
 - [Graphviz](https://graphviz.org/) - Optional, required for PDF rendering of attack trees
 - [pytest](https://pytest.org/) - Test framework (optional, for running tests)
 
-## Usage of the Scenario Preprocessor
+## Usage of the Scenario Comparator
 
-The scenario preprocessor automatically generates multiple security scenarios from ProVerif files that contain special "magical comments" marking optional attack vectors.
+The scenario comparator automatically generates multiple security scenarios from ProVerif files that contain special "magical comments" marking optional attack vectors.
 
 **Basic usage:**
 
 ```bash
-python3 scenario_preprocessor.py [--verbose] [--check-lazily] [--logs] <input_file.pv> [additional_files.pv ...]
+python3 scenario_comparator.py [--verbose] [--check-lazily] [--logs] <input_file.pv> [additional_files.pv ...]
 ```
 
 By default, output is concise. The generated-file list and per-scenario ProVerif status reports are shown only when `--verbose` is enabled.
@@ -44,32 +44,32 @@ By default, output is concise. The generated-file list and per-scenario ProVerif
 
 Process a single example file:
 ```bash
-python3 scenario_preprocessor.py examples/hashed_passwords.pv
+python3 scenario_comparator.py examples/hashed_passwords.pv
 ```
 
 Process multiple example files:
 ```bash
-python3 scenario_preprocessor.py examples/hashed_passwords.pv examples/singularized_passwords.pv
+python3 scenario_comparator.py examples/hashed_passwords.pv examples/singularized_passwords.pv
 ```
 
 Show detailed generation and verification logs:
 ```bash
-python3 scenario_preprocessor.py --verbose examples/hashed_passwords.pv
+python3 scenario_comparator.py --verbose examples/hashed_passwords.pv
 ```
 
 Use lazy generation with monotone search instead of checking all scenarios:
 ```bash
-python3 scenario_preprocessor.py --check-lazily examples/hashed_passwords.pv
+python3 scenario_comparator.py --check-lazily examples/hashed_passwords.pv
 ```
 
 Persist the full ProVerif console output for each generated scenario in `.pv.log` files:
 ```bash
-python3 scenario_preprocessor.py --logs examples/hashed_passwords.pv
+python3 scenario_comparator.py --logs examples/hashed_passwords.pv
 ```
 
 ### How It Works
 
-The preprocessor looks for special comment blocks in your ProVerif files:
+The comparator looks for special comment blocks in your ProVerif files:
 
 ```proverif
 (*** Attack Scenario Name
@@ -78,9 +78,9 @@ The preprocessor looks for special comment blocks in your ProVerif files:
 ***)
 ```
 
-By default, the preprocessor treats each magical comment block as a boolean snippet, generates all scenario files eagerly, and runs ProVerif on every capability-variant combination to verify all possible scenarios exhaustively. With `--check-lazily`, it switches to lazy generation with monotone search to find subset-minimal breaking capability combinations without running ProVerif on every snippet subset, and reconstructs the variant-cost Pareto front offline without additional ProVerif runs. With `--verbose`, results are displayed with checkmarks (✓) for proven properties and crosses (✗) for failed properties. The names of properties are extracted from comments in the ProVerif files in front of the checks (`query` and `weaksecret`).
+By default, the comparator treats each magical comment block as a boolean snippet, generates all scenario files eagerly, and runs ProVerif on every capability-variant combination to verify all possible scenarios exhaustively. With `--check-lazily`, it switches to lazy generation with monotone search to find subset-minimal breaking capability combinations without running ProVerif on every snippet subset, and reconstructs the variant-cost Pareto front offline without additional ProVerif runs. With `--verbose`, results are displayed with checkmarks (✓) for proven properties and crosses (✗) for failed properties. The names of properties are extracted from comments in the ProVerif files in front of the checks (`query` and `weaksecret`).
 
-Even in lazy mode, the preprocessor still generates the base scenario and each single-capability scenario up front so that downstream tooling such as the attack-tree extractor can compare those files directly from the manifest.
+Even in lazy mode, the comparator still generates the base scenario and each single-capability scenario up front so that downstream tooling such as the attack-tree extractor can compare those files directly from the manifest.
 
 ### Output
 
@@ -92,9 +92,9 @@ Generated scenarios are placed in `_scenarios/<filename>/` subdirectories. For e
 The script automatically runs ProVerif on all generated scenarios. Detailed verification logs are displayed only in verbose mode.
 With `--logs`, the full ProVerif console output for each scenario is written to a sibling log file with the name `<scenario>.pv.log` in the same `_scenarios/<filename>/` directory.
 
-For each input file, the preprocessor generates a `manifest.json` file in the corresponding scenario directory (e.g., `_scenarios/hashed_passwords/manifest.json`). This manifest provides a comprehensive machine-readable record of all generated scenarios and their verification results. (Documented in [`docs/manifests.md`](docs/manifests.md).)
+For each input file, the comparator generates a `manifest.json` file in the corresponding scenario directory (e.g., `_scenarios/hashed_passwords/manifest.json`). This manifest provides a comprehensive machine-readable record of all generated scenarios and their verification results. (Documented in [`docs/manifests.md`](docs/manifests.md).)
 
-Capability headers may also specify costs in square brackets and arbitrary string key-value attributes in curly braces, e.g. `Database leak [1 hack] {unlock: 1, mitigate: 2}`. Attribute values may be wrapped in single or double quotes to include commas or colons, e.g. `{note: "a, b: c"}`. Attributes carry no built-in semantics for the preprocessor itself; they are propagated verbatim to `manifest.json` (see [`docs/manifests.md`](docs/manifests.md)), so downstream tooling or readers can attach custom metadata to attacker capabilities.
+Capability headers may also specify costs in square brackets and arbitrary string key-value attributes in curly braces, e.g. `Database leak [1 hack] {unlock: 1, mitigate: 2}`. Attribute values may be wrapped in single or double quotes to include commas or colons, e.g. `{note: "a, b: c"}`. Attributes carry no built-in semantics for the comparator itself; they are propagated verbatim to `manifest.json` (see [`docs/manifests.md`](docs/manifests.md)), so downstream tooling or readers can attach custom metadata to attacker capabilities.
 
 ## Usage of the Pareto Comparison
 
@@ -175,7 +175,7 @@ python3 attack_tree_extractor.py <scenario_file.pv> --uppaal-out attack_tree.xml
 
 **Examples:**
 
-The examples assume that the `scenario_preprocessor.py` has already been run to generate the scenario files in `_scenarios/`.
+The examples assume that the `scenario_comparator.py` has already been run to generate the scenario files in `_scenarios/`.
 
 Extract clauses and derivations from a generated scenario:
 ```bash

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scenario preprocessing CLI tool for generating scenario combinations from ProVerif files and running verification."""
+"""Scenario comparison CLI tool for generating scenario combinations from ProVerif files and running verification."""
 
 import argparse
 import sys
@@ -16,7 +16,7 @@ DEFAULT_TABLE_WIDTH = 60
 
 
 def main() -> None:
-    """Main entry point for scenario preprocessing."""
+    """Main entry point for scenario comparison."""
     parser = argparse.ArgumentParser(
         description=(
             "Generate scenario combinations from ProVerif files and run verification "

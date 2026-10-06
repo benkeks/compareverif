@@ -25,7 +25,7 @@ echo "Should reproduce output from paper, i.e. no pw leakage: {Server compromise
 read  -n 1 -p "Ready? [Hit any key!]" input_selection
 echo "---begin of output---"
 
-MYDOCKER python3 scenario_preprocessor.py examples/hashed_passwords_paper.pv
+MYDOCKER python3 scenario_comparator.py examples/hashed_passwords_paper.pv
 
 echo "---end of output---"
 echo ""
@@ -52,7 +52,7 @@ echo ""
 echo "Section 5.3, Fig. 5: Bechmarking Singularization Using CompareVerif"
 read  -n 1 -p "Ready? (Will write results to out-comparison) [Hit any key!]" input_selection
 
-MYDOCKER python3 scenario_preprocessor.py examples/singularized_passwords_paper.pv
+MYDOCKER python3 scenario_comparator.py examples/singularized_passwords_paper.pv
 MYDOCKER python3 pareto_comparison.py --out-png out-comparison/comparison --query "no pw leakage" _scenarios/hashed_passwords_paper/ _scenarios/singularized_passwords_paper/
 
 docker cp compareverifRecreate:/compareverif/out-comparison/ out-comparison/

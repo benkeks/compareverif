@@ -25,7 +25,7 @@ which lists you all available images and compareverif should be among them.
 You can now run CompareVerif scripts with the prefix `docker run compareverif python3`. For example, to look for minimal attacks on the example file `examples/hashed_passwords_paper.pv`, enter:
 
 ```bash
-docker run --rm compareverif python3 scenario_preprocessor.py examples/hashed_passwords_paper.pv
+docker run --rm compareverif python3 scenario_comparator.py examples/hashed_passwords_paper.pv
 ```
 
 ## Running unit tests
@@ -53,7 +53,7 @@ If you want to check the file output of scenario preprocessing described by Sect
 ```
 docker run -it compareverif bash
 # in the container
-python3 scenario_preprocessor.py examples/hashed_passwords_paper.pv
+python3 scenario_comparator.py examples/hashed_passwords_paper.pv
 cd _scenarios/hashed_passwords_paper
 ls -l
 less manifest.json
@@ -68,14 +68,14 @@ At the beginning of Section 4, we claim that our input format works well with th
 As an other example of applying our tool beyond the ones used in the paper, we provide `examples/_simple_ratchet.pv` and a Jupyter notebook in `notebooks/exhaustive_generation_of_AG_simple_ratchet.ipynb` that examines interesting attack scenarios on a simple ratchet scheme of message exchange. You can examine its attack Pareto fronts for message secrecy at different stages by:
 
 ```
-docker run compareverif python3 scenario_preprocessor.py examples/simple_ratchet.pv
+docker run compareverif python3 scenario_comparator.py examples/simple_ratchet.pv
 ```
 
 Also, `singularized_passwords_no_elgamal.pv` presents a variation on the paper case study about singularization (Section 5). In this version of the protocol, the password communication between application and singularization server has no ElGamal encryption layer. This leads to a situation, where a compromised singularization server can leak the user password. To see that this induces a slightly lower Pareto front in our pricing scheme, you can run:
 
 ```
 docker run -it compareverif
-python3 scenario_preprocessor.py examples/singularized_passwords_paper.pv examples/singularized_passwords_no_elgamal.pv
+python3 scenario_comparator.py examples/singularized_passwords_paper.pv examples/singularized_passwords_no_elgamal.pv
 ```
 
 ## Cleaning up
