@@ -2,9 +2,43 @@
 
 from pathlib import Path
 from unittest.mock import patch
+from xml.etree import ElementTree as ET
 
 from compareverif.attack_tree import DerivationTree, CapabilityAnalyzer
-from compareverif.proverif import ProVerifOutput, Clause
+from compareverif.proverif import ProVerifOutput, Clause, ProVerifOutputParser
+from compareverif.attack_tree.analyzer import DerivationTreeAnalyzer
+from compareverif.uppaal import AttackTreeUppaalGenerator
+
+
+def test_hypothesis_remains_a_leaf_when_fact_also_has_a_clause_derivation(tmp_path):
+    output = ProVerifOutputParser().parse("""
+Derivation:
+goal event(finished)
+    clause 1 event(finished)
+        clause 2 attacker(key)
+            duplicate event(finished)
+        hypothesis attacker(key)
+""")
+
+    tree = DerivationTreeAnalyzer.build_tree_from_derivations(output.derivations)
+
+    key = ("attacker(key)", None)
+    assert tree.nodes[key].rule == "hypothesis"
+    assert tree.nodes[key].clause_number is None
+    assert tree.nodes[key].clause_scope is None
+    assert not any(source == key for source, _ in tree.edges)
+    assert any(target == key for _, target in tree.edges)
+
+    output_file = tmp_path / "hypothesis.xml"
+    AttackTreeUppaalGenerator.render_tree(output_file, tree)
+    root = ET.parse(output_file).getroot()
+    transition = next(
+        transition
+        for transition in root.findall(".//transition")
+        if transition.findtext("label[@kind='comments']") == "Attacker learns key."
+    )
+    variable = transition.findtext("label[@kind='assignment']").removesuffix(" = true")
+    assert transition.findtext("label[@kind='guard']") == f"!{variable}"
 
 class TestFuzzyClauseMatchingRegression:
     """Regression tests for fuzzy structural clause matching (false attribution).

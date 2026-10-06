@@ -189,9 +189,10 @@ class DerivationTree:
             if capabilities:
                 self.nodes[key].capabilities.update(capabilities)
             # Update rule if the new rule is more specific/informative
-            # Rule priority (highest to lowest): goal > clause > initial > duplicate > apply*
+            # Rule priority (highest to lowest): goal > hypothesis > clause > initial > duplicate > apply*
             rule_priority = {
-                "goal": 5,
+                "goal": 6,
+                "hypothesis": 5,
                 self.CAPABILITY_RULE: 4,
                 "clause": 4,
                 "initial": 3,
@@ -208,7 +209,10 @@ class DerivationTree:
             if new_priority > current_priority:
                 self.nodes[key].rule = rule
             # Keep goal nodes purely as goals (don't attach clause metadata)
-            if self.nodes[key].rule != "goal":
+            if self.nodes[key].rule == "hypothesis":
+                self.nodes[key].clause_number = None
+                self.nodes[key].clause_scope = None
+            elif self.nodes[key].rule != "goal":
                 # Update clause number if provided
                 if clause_number is not None:
                     self.nodes[key].clause_number = clause_number

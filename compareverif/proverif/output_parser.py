@@ -328,6 +328,20 @@ class ProVerifOutputParser:
                     )
                     self.output.derivations.append(derivation)
 
+            elif stripped_line.startswith("hypothesis "):
+                fact = stripped_line.removeprefix("hypothesis ").strip()
+                if fact:
+                    self.output.derivations.append(
+                        Derivation(
+                            conclusion=fact,
+                            premises=[],
+                            rule_name="hypothesis",
+                            indent_level=indent_level,
+                            query=query,
+                            query_scope=query_scope,
+                        )
+                    )
+
             # Extract initial knowledge facts
             elif stripped_line.startswith("initial knowledge "):
                 match = re.search(r"initial knowledge\s+(.+?)$", stripped_line)

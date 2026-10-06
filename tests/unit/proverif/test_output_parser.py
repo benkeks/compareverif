@@ -160,6 +160,22 @@ class TestProVerifOutputParser:
         assert len(parser.output.derivations) == 1
         assert parser.output.derivations[0].rule_name == "initial"
 
+    def test_parse_derivation_hypothesis(self):
+        parser = ProVerifOutputParser()
+        parser._parse_derivation_block(
+            ["        hypothesis attacker(xxx_2)"],
+            query="event(finished)",
+            query_scope=2,
+        )
+
+        [derivation] = parser.output.derivations
+        assert derivation.conclusion == "attacker(xxx_2)"
+        assert derivation.rule_name == "hypothesis"
+        assert derivation.premises == []
+        assert derivation.indent_level == 2
+        assert derivation.query == "event(finished)"
+        assert derivation.query_scope == 2
+
     def test_full_parse_with_clauses_and_derivations(self):
         """Test full parsing with both clauses and derivations."""
         parser = ProVerifOutputParser()

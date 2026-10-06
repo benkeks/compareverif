@@ -20,6 +20,10 @@ The attack tree visualizations show:
 - **Optional attack highlighting** (`--highlight-attack`) that fades branches not on paths above attack capability nodes
 - **OR markers on capability edges** when multiple capabilities can realize the same fact
 
+ProVerif `hypothesis` premises are retained as fact nodes with `rule: hypothesis`.
+They are assumption leaves without derivation prerequisites, even when the same fact
+also occurs in a clause or duplicate step.
+
 When `--json-out` is enabled, each scenario additionally produces a JSON file
 `<scenario>_derivation.json` with this structure:
 

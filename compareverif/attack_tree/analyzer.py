@@ -104,14 +104,14 @@ class DerivationTreeAnalyzer:
                 )
                 variant_id = f"goal_clause_{scope}_{deriv.clause_number}_{idx}"
 
-            tree.add_node(
+            node = tree.add_node(
                 deriv.conclusion,
                 deriv.rule_name,
                 clause_number=deriv.clause_number,
                 variant_id=variant_id,
                 clause_scope=deriv.query_scope,
             )
-            deriv_node_keys[idx] = (deriv.conclusion, variant_id)
+            deriv_node_keys[idx] = (deriv.conclusion, node.variant_id)
 
         # Build parent-child relationships based on indentation
         # For each derivation, find its parent (the closest previous derivation with lower indent)
@@ -139,6 +139,9 @@ class DerivationTreeAnalyzer:
                 current_key = deriv_node_keys[i]
 
                 if parent_key is None or current_key is None:
+                    continue
+
+                if tree.nodes[parent_key].rule == "hypothesis":
                     continue
 
                 # Don't create exact same-node self-loops; allow same-fact edges when variants differ
