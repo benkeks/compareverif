@@ -40,6 +40,53 @@ goal event(finished)
     variable = transition.findtext("label[@kind='assignment']").removesuffix(" = true")
     assert transition.findtext("label[@kind='guard']") == f"!{variable}"
 
+def test_apply_contraction_follows_ancestry_instead_of_previous_siblings():
+    output = ProVerifOutputParser().parse("""
+Derivation:
+goal event(done)
+    clause 1 attacker(server_finished)
+        clause 2 attacker(master_secret)
+            initial knowledge attacker(seed)
+        apply 2-tuple attacker(transcript)
+            apply FIN attacker(finished_message)
+                clause 3 attacker(client_finished)
+                    duplicate attacker(master_secret)
+""")
+
+    tree = DerivationTreeAnalyzer.build_tree_from_derivations(output.derivations)
+
+    goal = ("event(done)", DerivationTree.GOAL_VARIANT)
+    server = ("attacker(server_finished)", None)
+    master = ("attacker(master_secret)", None)
+    client = ("attacker(client_finished)", None)
+    seed = ("attacker(seed)", None)
+    assert set(tree.edges) == {
+        (goal, server),
+        (server, master),
+        (server, client),
+        (master, seed),
+        (client, master),
+    }
+    assert all(not (node.rule or "").startswith("apply ") for node in tree.nodes.values())
+
+
+def test_seconds_annotation_follows_apply_ancestry_instead_of_previous_sibling():
+    output = ProVerifOutputParser().parse("""
+Derivation:
+goal event(done)
+    clause 1 event(previous_sibling)
+        initial knowledge attacker(seed)
+    apply wrapper attacker(wrapped_time)
+        apply seconds attacker(seconds(3))
+            apply 0 attacker(0)
+""")
+
+    tree = DerivationTreeAnalyzer.build_tree_from_derivations(output.derivations)
+
+    assert tree.nodes[("event(done)", DerivationTree.GOAL_VARIANT)].required_seconds == 3
+    assert tree.nodes[("event(previous_sibling)", None)].required_seconds is None
+
+
 class TestFuzzyClauseMatchingRegression:
     """Regression tests for fuzzy structural clause matching (false attribution).
     

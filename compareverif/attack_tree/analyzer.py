@@ -113,25 +113,29 @@ class DerivationTreeAnalyzer:
             )
             deriv_node_keys[idx] = (deriv.conclusion, node.variant_id)
 
-        # Build parent-child relationships based on indentation
-        # For each derivation, find its parent (the closest previous derivation with lower indent)
+        parent_indices = []
+        ancestor_stack = []
+        for index, deriv in enumerate(all_derivs):
+            while (
+                ancestor_stack
+                and all_derivs[ancestor_stack[-1]].indent_level >= deriv.indent_level
+            ):
+                ancestor_stack.pop()
+            parent_indices.append(ancestor_stack[-1] if ancestor_stack else None)
+            ancestor_stack.append(index)
+
+        retained_parent_indices = []
+        for index, parent_idx in enumerate(parent_indices):
+            while parent_idx is not None and deriv_node_keys[parent_idx] is None:
+                parent_idx = parent_indices[parent_idx]
+            retained_parent_indices.append(parent_idx)
+
         for i, deriv in enumerate(all_derivs):
             # Skip "apply" transformations
             if deriv.rule_name and deriv.rule_name.startswith("apply "):
                 continue
 
-            current_indent = deriv.indent_level
-
-            # Find parent: look backwards for first item with lower indent level, skipping apply steps
-            parent_idx = None
-            for j in range(i - 1, -1, -1):
-                if all_derivs[j].rule_name and all_derivs[j].rule_name.startswith(
-                    "apply "
-                ):
-                    continue
-                if all_derivs[j].indent_level < current_indent:
-                    parent_idx = j
-                    break
+            parent_idx = retained_parent_indices[i]
 
             # If parent found and it's not a self-loop, create edge
             if parent_idx is not None:
@@ -156,7 +160,7 @@ class DerivationTreeAnalyzer:
         # A derivation step concluding attacker(seconds(N)) - directly or via constructor
         # application (e.g. "apply seconds attacker(seconds(1))") - means its nearest real
         # ancestor step can only fire once N seconds have elapsed. "apply" steps never become
-        # tree nodes/edges themselves, so this is resolved with its own ancestor search.
+        # tree nodes/edges themselves, so use their nearest retained ancestor.
         for i, deriv in enumerate(all_derivs):
             seconds_match = DerivationTreeAnalyzer.REQUIRED_SECONDS_PATTERN.match(
                 deriv.conclusion.strip()
@@ -165,16 +169,12 @@ class DerivationTreeAnalyzer:
                 continue
 
             seconds_value = int(seconds_match.group(1))
-            current_indent = deriv.indent_level
-            for j in range(i - 1, -1, -1):
-                if all_derivs[j].rule_name and all_derivs[j].rule_name.startswith("apply "):
-                    continue
-                if all_derivs[j].indent_level < current_indent:
-                    ancestor_key = deriv_node_keys[j]
-                    if ancestor_key is not None:
-                        tree.mark_required_seconds(
-                            ancestor_key[0], ancestor_key[1], seconds_value
-                        )
-                    break
+            parent_idx = retained_parent_indices[i]
+            if parent_idx is not None:
+                ancestor_key = deriv_node_keys[parent_idx]
+                if ancestor_key is not None:
+                    tree.mark_required_seconds(
+                        ancestor_key[0], ancestor_key[1], seconds_value
+                    )
 
         return tree
