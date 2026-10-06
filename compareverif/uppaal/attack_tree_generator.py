@@ -235,8 +235,14 @@ class AttackTreeUppaalGenerator:
                 nail_offset = 180 + (index % 4) * 180
                 nail_height = -180 - (index // 4) * 140
             guard_parts = [f"!{variable_names[key]}"]
-            for req_key in prerequisites[key]:
-                guard_parts.append(f"{variable_names[req_key]}")
+            if node.node_type == "or":
+                alternatives = " || ".join(
+                    variable_names[req_key] for req_key in prerequisites[key]
+                )
+                guard_parts.append(f"({alternatives})" if alternatives else "false")
+            else:
+                for req_key in prerequisites[key]:
+                    guard_parts.append(f"{variable_names[req_key]}")
             if node.required_seconds is not None:
                 guard_parts.append(f"attack_clock >= {node.required_seconds}")
             guard_text = " && ".join(guard_parts)

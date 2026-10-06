@@ -78,40 +78,11 @@ class DerivationTreeAnalyzer:
             capability_attributes,
         )
 
-        # Separate derivations into different categories
         all_derivs = first_tree_derivs
-
-        deriv_node_keys = [None] * len(all_derivs)
-
-        # Add all nodes (including duplicates and transformations)
-        for idx, deriv in enumerate(all_derivs):
-            # Skip "apply" transformations - they don't represent real derivation steps
-            if deriv.rule_name and deriv.rule_name.startswith("apply "):
-                continue
-
-            variant_id = None
-            # Preserve explicit clause steps that conclude the goal fact as separate nodes.
-            # Otherwise they collapse into the goal node and hide capability/cost attribution.
-            if (
-                deriv.rule_name == "clause"
-                and deriv.clause_number is not None
-                and deriv.conclusion == goal
-            ):
-                scope = (
-                    str(deriv.query_scope)
-                    if deriv.query_scope is not None
-                    else "global"
-                )
-                variant_id = f"goal_clause_{scope}_{deriv.clause_number}_{idx}"
-
-            node = tree.add_node(
-                deriv.conclusion,
-                deriv.rule_name,
-                clause_number=deriv.clause_number,
-                variant_id=variant_id,
-                clause_scope=deriv.query_scope,
-            )
-            deriv_node_keys[idx] = (deriv.conclusion, node.variant_id)
+        retained = [
+            not (deriv.rule_name or "").startswith("apply ")
+            for deriv in all_derivs
+        ]
 
         parent_indices = []
         ancestor_stack = []
@@ -125,56 +96,96 @@ class DerivationTreeAnalyzer:
             ancestor_stack.append(index)
 
         retained_parent_indices = []
-        for index, parent_idx in enumerate(parent_indices):
-            while parent_idx is not None and deriv_node_keys[parent_idx] is None:
+        for parent_idx in parent_indices:
+            while parent_idx is not None and not retained[parent_idx]:
                 parent_idx = parent_indices[parent_idx]
             retained_parent_indices.append(parent_idx)
 
-        for i, deriv in enumerate(all_derivs):
-            # Skip "apply" transformations
-            if deriv.rule_name and deriv.rule_name.startswith("apply "):
-                continue
-
-            parent_idx = retained_parent_indices[i]
-
-            # If parent found and it's not a self-loop, create edge
-            if parent_idx is not None:
-                parent_key = deriv_node_keys[parent_idx]
-                current_key = deriv_node_keys[i]
-
-                if parent_key is None or current_key is None:
-                    continue
-
-                if tree.nodes[parent_key].rule == "hypothesis":
-                    continue
-
-                # Don't create exact same-node self-loops; allow same-fact edges when variants differ
-                if parent_key != current_key:
-                    tree.add_edge(
-                        parent_key[0],
-                        current_key[0],
-                        source_variant=parent_key[1],
-                        target_variant=current_key[1],
-                    )
-
-        # A derivation step concluding attacker(seconds(N)) - directly or via constructor
-        # application (e.g. "apply seconds attacker(seconds(1))") - means its nearest real
-        # ancestor step can only fire once N seconds have elapsed. "apply" steps never become
-        # tree nodes/edges themselves, so use their nearest retained ancestor.
-        for i, deriv in enumerate(all_derivs):
+        requirements = [set() for _ in all_derivs]
+        seconds_by_index = {}
+        for index, deriv in enumerate(all_derivs):
+            parent_idx = retained_parent_indices[index]
+            if retained[index] and parent_idx is not None:
+                requirements[parent_idx].add(deriv.conclusion)
             seconds_match = DerivationTreeAnalyzer.REQUIRED_SECONDS_PATTERN.match(
                 deriv.conclusion.strip()
             )
-            if not seconds_match:
-                continue
+            if seconds_match and parent_idx is not None:
+                seconds_by_index[parent_idx] = max(
+                    seconds_by_index.get(parent_idx, 0), int(seconds_match.group(1))
+                )
 
-            seconds_value = int(seconds_match.group(1))
-            parent_idx = retained_parent_indices[i]
-            if parent_idx is not None:
-                ancestor_key = deriv_node_keys[parent_idx]
-                if ancestor_key is not None:
-                    tree.mark_required_seconds(
-                        ancestor_key[0], ancestor_key[1], seconds_value
-                    )
+        proofs_by_fact = {}
+        for index, deriv in enumerate(all_derivs):
+            if not retained[index]:
+                continue
+            proofs = proofs_by_fact.setdefault(deriv.conclusion, {})
+            if deriv.rule_name in {"goal", "duplicate"}:
+                continue
+            if deriv.rule_name in {"hypothesis", "initial"}:
+                requirements[index].clear()
+            signature = (
+                deriv.rule_name,
+                deriv.clause_number,
+                deriv.query_scope,
+                frozenset(requirements[index]),
+                seconds_by_index.get(index),
+            )
+            proofs.setdefault(signature, index)
+
+        fact_keys = {}
+        proof_keys = {}
+        for fact, proofs in proofs_by_fact.items():
+            indices = list(proofs.values())
+            if fact == goal:
+                fact_keys[fact] = (fact, tree.GOAL_VARIANT)
+                if len(indices) > 1:
+                    tree.nodes[fact_keys[fact]].node_type = "or"
+            elif len(indices) > 1:
+                tree.add_node(fact, rule="or", node_type="or")
+                fact_keys[fact] = (fact, None)
+            elif not indices:
+                tree.add_node(fact, rule="duplicate")
+                fact_keys[fact] = (fact, None)
+
+            for index in indices:
+                deriv = all_derivs[index]
+                scope = str(deriv.query_scope) if deriv.query_scope is not None else "global"
+                variant_id = None
+                if fact == goal and deriv.rule_name == "clause":
+                    variant_id = f"goal_clause_{scope}_{deriv.clause_number}_{index}"
+                elif fact == goal or len(indices) > 1:
+                    variant_id = f"derivation_{scope}_{index}"
+                node = tree.add_node(
+                    fact,
+                    deriv.rule_name,
+                    clause_number=deriv.clause_number,
+                    variant_id=variant_id,
+                    clause_scope=deriv.query_scope,
+                )
+                proof_keys[index] = (fact, node.variant_id)
+                if fact not in fact_keys:
+                    fact_keys[fact] = proof_keys[index]
+                if index in seconds_by_index:
+                    tree.mark_required_seconds(fact, node.variant_id, seconds_by_index[index])
+
+        edges = [
+            (fact_keys[goal], fact_keys[required_fact])
+            for required_fact in sorted(requirements[0])
+            if required_fact != goal
+        ]
+        if 0 in seconds_by_index:
+            tree.mark_required_seconds(goal, tree.GOAL_VARIANT, seconds_by_index[0])
+        for fact, proofs in proofs_by_fact.items():
+            fact_key = fact_keys[fact]
+            for index in proofs.values():
+                proof_key = proof_keys[index]
+                if fact_key != proof_key:
+                    edges.append((fact_key, proof_key))
+                for required_fact in sorted(requirements[index]):
+                    required_key = fact_keys[required_fact]
+                    if proof_key != required_key:
+                        edges.append((proof_key, required_key))
+        tree.edges = list(dict.fromkeys(edges))
 
         return tree

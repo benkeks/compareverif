@@ -19,6 +19,9 @@ The attack tree visualizations show:
 - **Optional clause IDs** inside fact nodes when `--show-clause-ids` is enabled
 - **Optional attack highlighting** (`--highlight-attack`) that fades branches not on paths above attack capability nodes
 - **OR markers on capability edges** when multiple capabilities can realize the same fact
+- **OR fact nodes** as diamonds above alternative derivations of the same fact
+
+For example, proofs requiring `(A AND B)` or `(C AND D)` produce two bundle nodes under one OR fact node, rather than requiring all four facts or allowing arbitrary mixtures of them. JSON uses `depends_on_all` for each bundle and `depends_on_any` for the shared node. UPPAAL uses `&&` within bundles and a parenthesized `||` guard on the shared node.
 
 ProVerif `hypothesis` premises are retained as fact nodes with `rule: hypothesis`.
 They are assumption leaves without derivation prerequisites, even when the same fact

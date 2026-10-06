@@ -55,6 +55,8 @@ class GraphvizRenderer:
                 html_parts.append(
                     GraphvizRenderer._format_label_html(f"(❌ {tree.query_tag})")
                 )
+            if node.node_type == "or":
+                html_parts.append("OR")
 
             if node.node_type == "capability":
                 cost_parts = []
@@ -82,6 +84,9 @@ class GraphvizRenderer:
             elif node.rule == "goal":
                 fillcolor = "#D8B4E2"
                 shape = "ellipse"
+            elif node.node_type == "or":
+                fillcolor = "#D9D9D9"
+                shape = "diamond"
             elif fact.startswith("table("):
                 fillcolor = "#D9D9D9"
                 shape = "cylinder"
@@ -135,7 +140,7 @@ class GraphvizRenderer:
 
             visited.add(edge_key)
             edge_label = ""
-            if (
+            if source_node.node_type == "or" or (
                 target_node.node_type == "capability"
                 and len(capability_children_by_fact.get(source_key, set())) > 1
             ):

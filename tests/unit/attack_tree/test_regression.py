@@ -21,24 +21,93 @@ goal event(finished)
 """)
 
     tree = DerivationTreeAnalyzer.build_tree_from_derivations(output.derivations)
+    assert tree is not None
 
-    key = ("attacker(key)", None)
-    assert tree.nodes[key].rule == "hypothesis"
+    fact_key = ("attacker(key)", None)
+    assert tree.nodes[fact_key].node_type == "or"
+    key = next(key for key, node in tree.nodes.items() if node.rule == "hypothesis")
     assert tree.nodes[key].clause_number is None
     assert tree.nodes[key].clause_scope is None
     assert not any(source == key for source, _ in tree.edges)
-    assert any(target == key for _, target in tree.edges)
+    assert (fact_key, key) in tree.edges
 
     output_file = tmp_path / "hypothesis.xml"
     AttackTreeUppaalGenerator.render_tree(output_file, tree)
     root = ET.parse(output_file).getroot()
+    variable = AttackTreeUppaalGenerator._node_variable_names(tree)[key]
     transition = next(
         transition
         for transition in root.findall(".//transition")
-        if transition.findtext("label[@kind='comments']") == "Attacker learns key."
+        if transition.findtext("label[@kind='assignment']") == f"{variable} = true"
     )
-    variable = transition.findtext("label[@kind='assignment']").removesuffix(" = true")
     assert transition.findtext("label[@kind='guard']") == f"!{variable}"
+
+
+def test_alternative_derivations_keep_separate_requirement_bundles(tmp_path):
+    output = ProVerifOutputParser().parse("""
+Derivation:
+goal event(done)
+    clause 1 attacker(result)
+        initial knowledge attacker(left)
+        initial knowledge attacker(right)
+    clause 2 attacker(result)
+        initial knowledge attacker(other)
+    clause 3 event(consumer)
+        duplicate attacker(result)
+""")
+
+    tree = DerivationTreeAnalyzer.build_tree_from_derivations(output.derivations)
+    assert tree is not None
+
+    fact_key = ("attacker(result)", None)
+    assert tree.nodes[fact_key].node_type == "or"
+    alternatives = [target for source, target in tree.edges if source == fact_key]
+    assert len(alternatives) == 2
+    bundles = {
+        frozenset(target[0] for source, target in tree.edges if source == alternative)
+        for alternative in alternatives
+    }
+    assert bundles == {
+        frozenset({"attacker(left)", "attacker(right)"}),
+        frozenset({"attacker(other)"}),
+    }
+    assert (("event(consumer)", None), fact_key) in tree.edges
+
+    nodes_by_id = {node["id"]: node for node in tree.to_json()["nodes"]}
+    fact_json = nodes_by_id[tree.nodes[fact_key].node_id]
+    assert fact_json["depends_on_all"] == []
+    alternative_ids = [tree.nodes[alternative].node_id for alternative in alternatives]
+    assert all(node_id is not None for node_id in alternative_ids)
+    assert fact_json["depends_on_any"] == [
+        sorted(node_id for node_id in alternative_ids if node_id is not None)
+    ]
+    for alternative in alternatives:
+        bundle_json = nodes_by_id[tree.nodes[alternative].node_id]
+        assert bundle_json["depends_on_any"] == []
+        assert bundle_json["depends_on_all"]
+
+    output_file = tmp_path / "alternatives.xml"
+    AttackTreeUppaalGenerator.render_tree(output_file, tree)
+    names = AttackTreeUppaalGenerator._node_variable_names(tree)
+    guards_by_variable = {
+        (transition.findtext("label[@kind='assignment']") or "").removesuffix(" = true"):
+        transition.findtext("label[@kind='guard']")
+        for transition in ET.parse(output_file).getroot().findall(".//transition")
+    }
+    assert guards_by_variable[names[fact_key]] == (
+        f"!{names[fact_key]} && "
+        f"({names[alternatives[0]]} || {names[alternatives[1]]})"
+    )
+    for alternative in alternatives:
+        prerequisites = [target for source, target in tree.edges if source == alternative]
+        assert guards_by_variable[names[alternative]] == " && ".join(
+            [f"!{names[alternative]}", *(names[target] for target in prerequisites)]
+        )
+    consumer_name = names[("event(consumer)", None)]
+    assert guards_by_variable[consumer_name] == f"!{consumer_name} && {names[fact_key]}"
+    dot = tree.to_graphviz()
+    assert 'shape="diamond"' in dot
+    assert '[label="OR", style=dashed]' in dot
 
 def test_apply_contraction_follows_ancestry_instead_of_previous_siblings():
     output = ProVerifOutputParser().parse("""
@@ -54,6 +123,7 @@ goal event(done)
 """)
 
     tree = DerivationTreeAnalyzer.build_tree_from_derivations(output.derivations)
+    assert tree is not None
 
     goal = ("event(done)", DerivationTree.GOAL_VARIANT)
     server = ("attacker(server_finished)", None)
@@ -82,9 +152,82 @@ goal event(done)
 """)
 
     tree = DerivationTreeAnalyzer.build_tree_from_derivations(output.derivations)
+    assert tree is not None
 
     assert tree.nodes[("event(done)", DerivationTree.GOAL_VARIANT)].required_seconds == 3
     assert tree.nodes[("event(previous_sibling)", None)].required_seconds is None
+
+
+def test_same_clause_keeps_distinct_bundles_and_delays_but_deduplicates_repeats():
+    output = ProVerifOutputParser().parse("""
+Derivation:
+goal event(done)
+    clause 7 attacker(result)
+        initial knowledge attacker(left)
+        apply seconds attacker(seconds(2))
+    clause 7 attacker(result)
+        initial knowledge attacker(right)
+        apply seconds attacker(seconds(5))
+    clause 7 attacker(result)
+        initial knowledge attacker(left)
+        apply seconds attacker(seconds(2))
+""")
+
+    tree = DerivationTreeAnalyzer.build_tree_from_derivations(output.derivations)
+    assert tree is not None
+
+    fact_key = ("attacker(result)", None)
+    assert tree.nodes[fact_key].node_type == "or"
+    assert tree.nodes[fact_key].required_seconds is None
+    alternatives = [target for source, target in tree.edges if source == fact_key]
+    assert len(alternatives) == 2
+    assert {tree.nodes[key].clause_number for key in alternatives} == {7}
+    assert {tree.nodes[key].required_seconds for key in alternatives} == {2, 5}
+    for alternative in alternatives:
+        required = {target[0] for source, target in tree.edges if source == alternative}
+        assert required == (
+            {"attacker(left)"}
+            if tree.nodes[alternative].required_seconds == 2
+            else {"attacker(right)"}
+        )
+
+
+def test_multiple_goal_derivations_keep_semantic_goal_above_alternatives(tmp_path):
+    output = ProVerifOutputParser().parse("""
+Derivation:
+goal attacker(result)
+    clause 1 attacker(result)
+        initial knowledge attacker(left)
+    clause 2 attacker(result)
+        initial knowledge attacker(right)
+""")
+
+    tree = DerivationTreeAnalyzer.build_tree_from_derivations(output.derivations)
+    assert tree is not None
+
+    goal_key = (tree.goal, DerivationTree.GOAL_VARIANT)
+    assert tree.nodes[goal_key].rule == "goal"
+    assert tree.nodes[goal_key].node_type == "or"
+    alternatives = [target for source, target in tree.edges if source == goal_key]
+    assert len(alternatives) == 2
+    assert {tree.nodes[key].clause_number for key in alternatives} == {1, 2}
+    for key in alternatives:
+        variant_id = tree.nodes[key].variant_id
+        assert variant_id is not None
+        assert variant_id.startswith("goal_clause_")
+
+    output_file = tmp_path / "goal.xml"
+    AttackTreeUppaalGenerator.render_tree(output_file, tree)
+    root = ET.parse(output_file).getroot()
+    names = AttackTreeUppaalGenerator._node_variable_names(tree)
+    assert root.findtext(".//formula") == f"E<> {names[goal_key]}"
+    transition = next(
+        transition for transition in root.findall(".//transition")
+        if transition.findtext("label[@kind='assignment']") == f"{names[goal_key]} = true"
+    )
+    assert transition.findtext("label[@kind='guard']") == (
+        f"!{names[goal_key]} && ({names[alternatives[0]]} || {names[alternatives[1]]})"
+    )
 
 
 class TestFuzzyClauseMatchingRegression:

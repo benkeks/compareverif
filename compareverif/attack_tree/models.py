@@ -319,11 +319,16 @@ class DerivationTree:
                 if self.nodes[target_key].node_type != "capability"
             ]
 
-            conjunctive_ids.update(non_capability_targets)
-            if len(capability_targets) > 1:
-                disjunctive_groups.append(sorted(set(capability_targets)))
-            elif len(capability_targets) == 1:
-                conjunctive_ids.add(capability_targets[0])
+            if node.node_type == "or":
+                alternatives = sorted(set(non_capability_targets + capability_targets))
+                if alternatives:
+                    disjunctive_groups.append(alternatives)
+            else:
+                conjunctive_ids.update(non_capability_targets)
+                if len(capability_targets) > 1:
+                    disjunctive_groups.append(sorted(set(capability_targets)))
+                elif len(capability_targets) == 1:
+                    conjunctive_ids.add(capability_targets[0])
 
             nodes.append(
                 {
