@@ -1,0 +1,110 @@
+(********************************************************)
+(* TLS 1.2 RSA authentication: static UPPAAL abstraction *)
+(********************************************************)
+
+(* Adapted from tls12_attack.pv for proverif_to_uppaal.py.
+   Only the TLS 1.2 RSA branch is retained. DHE, TLS 1.3,
+   application data, PSKs, and post-session phases are omitted.
+    RSA decryption is ideal; the weak-decryption oracle is omitted.
+    The master secret depends only on the premaster secret.
+   The transcript is abstracted to the client/server nonce pair;
+   the original multi-field event is reduced to that pair and
+   the server public key. This is not an equivalent TLS model.
+    Opaque wire constructors keep intercepted trace messages whole.
+    The scalar completion marker immediately precedes the goal event
+    so attack replay need not parse its nested event argument.
+   Replication is translated to sequential loops by the tool. *)
+
+(* UPPAAL
+data_width: 64
+table_capacities:
+    long_term_keys: 2
+*)
+
+free io: channel.
+free leak: channel.
+
+type secret_key.
+type public_key.
+fun pk(secret_key): public_key.
+fun rsa_enc(public_key, bitstring): bitstring.
+reduc forall key: secret_key, plaintext: bitstring;
+    rsa_dec(key, rsa_enc(pk(key), plaintext)) = plaintext.
+
+fun client_hello(bitstring): bitstring.
+reduc forall nonce: bitstring;
+    client_nonce(client_hello(nonce)) = nonce.
+fun server_hello(bitstring): bitstring.
+reduc forall nonce: bitstring;
+    server_nonce(server_hello(nonce)) = nonce.
+fun certificate(public_key): bitstring.
+reduc forall key: public_key;
+    certificate_key(certificate(key)) = key.
+fun client_key_exchange(bitstring): bitstring.
+reduc forall ciphertext: bitstring;
+    exchange_payload(client_key_exchange(ciphertext)) = ciphertext.
+fun finished(bitstring): bitstring.
+reduc forall verify_data: bitstring;
+    finished_payload(finished(verify_data)) = verify_data.
+
+fun session(bitstring, bitstring): bitstring [data].
+fun master_secret(bitstring): bitstring.
+fun client_verify(bitstring, bitstring): bitstring.
+fun server_verify(bitstring, bitstring): bitstring.
+fun authenticated_session(bitstring, public_key): bitstring [data].
+
+table long_term_keys(public_key, secret_key).
+event client_finished(bitstring).
+event server_finished(bitstring).
+event client_handshake_complete(bitstring).
+
+let client12() =
+    new cr: bitstring;
+    out(io, client_hello(cr));
+    in(io, hello: bitstring);
+    let sr: bitstring = server_nonce(hello) in
+    in(io, cert: bitstring);
+    let peer: public_key = certificate_key(cert) in
+    get long_term_keys(stored_peer, unused_key: secret_key)
+        suchthat stored_peer = peer in
+    new pms: bitstring;
+    let ms: bitstring = master_secret(pms) in
+    let transcript: bitstring = session(cr, sr) in
+    out(io, client_key_exchange(rsa_enc(peer, pms)));
+    out(io, finished(client_verify(ms, transcript)));
+    in(io, response: bitstring);
+    let verify_data: bitstring = finished_payload(response) in
+    if verify_data = server_verify(ms, transcript) then
+        event client_handshake_complete(cr);
+        event client_finished(authenticated_session(transcript, peer)).
+
+let server12(server_key: secret_key) =
+    in(io, hello: bitstring);
+    let cr: bitstring = client_nonce(hello) in
+    new sr: bitstring;
+    out(io, server_hello(sr));
+    out(io, certificate(pk(server_key)));
+    in(io, exchange: bitstring);
+    let ciphertext: bitstring = exchange_payload(exchange) in
+    let pms: bitstring = rsa_dec(server_key, ciphertext) in
+    let ms: bitstring = master_secret(pms) in
+    let transcript: bitstring = session(cr, sr) in
+    in(io, request: bitstring);
+    let verify_data: bitstring = finished_payload(request) in
+    if verify_data = client_verify(ms, transcript) then
+        event server_finished(authenticated_session(transcript, pk(server_key)));
+        out(io, finished(server_verify(ms, transcript))).
+
+(* As in the original query, no compromised-key exception is made. *)
+query connection: bitstring;
+    event(client_finished(connection)) ==> event(server_finished(connection)).
+
+process
+    new honest_key: secret_key;
+    new compromised_key: secret_key;
+    insert long_term_keys(pk(honest_key), honest_key);
+    insert long_term_keys(pk(compromised_key), compromised_key);
+    ( !client12()
+    | !server12(honest_key)
+    | out(leak, compromised_key)
+    | out(io, certificate(pk(compromised_key))) )

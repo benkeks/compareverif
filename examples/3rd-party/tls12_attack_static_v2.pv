@@ -1,0 +1,166 @@
+(********************************************************)
+(* Bounded TLS 1.2 RSA authentication and weak decryption *)
+(********************************************************)
+
+(* Adapted from tls12_attack.pv, independently of the earlier static model.
+   One client and one server session keep fresh names and packed values bounded.
+   The client offers strong RSA; the attacker selects strong or weak server RSA,
+   without an offer/mode consistency check, as in the original client.
+   Hash/AE choices are fixed, NoPSK and TLS12 are implicit, and DHE, TLS 1.3,
+   application data, session tables, and post-session compromise are omitted.
+
+   The master secret binds the premaster secret and both nonces. Rather than
+   packing an unbounded transcript into one PRF argument, each Finished flight
+   authenticates CH, SH, CRT, and CKE separately under the same master secret.
+   Direction-specific constructors separate the client and server flights.
+   The server flight does not literally hash the preceding client Finished;
+   it binds its defining key and transcript instead. This is a PRF abstraction,
+   not an equivalent representation of the original TLS cryptography.
+
+   Correspondence binds cr, sr, peer key, RSA mode, and pms in one packed value.
+   With fixed remaining parameters these determine ms, the traffic keys, and
+   the abstract client Finished flight. Scalar completion markers permit attack
+   replay despite the translator's limitations on nested event trace arguments.
+   Wire messages are opaque constructors with public selectors. *)
+
+(* UPPAAL
+data_width: 64
+table_capacities:
+    long_term_keys: 2
+*)
+
+free io: channel.
+free leak: channel.
+type secret_key.
+
+fun pk(secret_key): bitstring.
+fun rsa_enc(bitstring, bitstring): bitstring.
+reduc forall key: secret_key, plaintext: bitstring;
+    rsa_dec(key, rsa_enc(pk(key), plaintext)) = plaintext.
+fun sign(secret_key, bitstring): bitstring.
+free strong_rsa: bitstring.
+free weak_rsa: bitstring.
+free zero: bitstring.
+
+fun pair(bitstring, bitstring): bitstring.
+reduc forall first: bitstring, second: bitstring;
+    first_field(pair(first, second)) = first.
+reduc forall first: bitstring, second: bitstring;
+    second_field(pair(first, second)) = second.
+
+fun client_hello(bitstring, bitstring): bitstring.
+reduc forall nonce: bitstring, offer: bitstring;
+    client_nonce(client_hello(nonce, offer)) = nonce.
+reduc forall nonce: bitstring, offer: bitstring;
+    client_offer(client_hello(nonce, offer)) = offer.
+fun server_hello(bitstring, bitstring): bitstring.
+reduc forall nonce: bitstring, mode: bitstring;
+    server_nonce(server_hello(nonce, mode)) = nonce.
+reduc forall nonce: bitstring, mode: bitstring;
+    server_mode(server_hello(nonce, mode)) = mode.
+fun certificate(bitstring): bitstring.
+reduc forall key: bitstring;
+    certificate_key(certificate(key)) = key.
+fun client_key_exchange(bitstring): bitstring.
+reduc forall ciphertext: bitstring;
+    exchange_payload(client_key_exchange(ciphertext)) = ciphertext.
+fun finished(bitstring): bitstring.
+reduc forall verify_data: bitstring;
+    finished_payload(finished(verify_data)) = verify_data.
+
+fun master_secret(bitstring, bitstring): bitstring.
+fun client_verify(bitstring, bitstring): bitstring.
+fun server_verify(bitstring, bitstring): bitstring.
+
+table long_term_keys(bitstring, secret_key).
+event client_finished(bitstring).
+event server_finished(bitstring).
+event client_handshake_complete(bitstring).
+event server_handshake_complete(bitstring).
+
+let client12() =
+    new cr: bitstring;
+    let ch: bitstring = client_hello(cr, strong_rsa) in
+    out(io, ch);
+    in(io, sh: bitstring);
+    let sr: bitstring = server_nonce(sh) in
+    let mode: bitstring = server_mode(sh) in
+    if mode = strong_rsa || mode = weak_rsa then
+    in(io, cert: bitstring);
+    let peer: bitstring = certificate_key(cert) in
+    get long_term_keys(stored_peer, unused_key: secret_key)
+        suchthat stored_peer = peer in
+    new pms: bitstring;
+    let ms: bitstring = master_secret(pms, pair(cr, sr)) in
+    let exchange: bitstring = client_key_exchange(rsa_enc(peer, pms)) in
+    out(io, exchange);
+    out(io, finished(client_verify(ms, ch)));
+    out(io, finished(client_verify(ms, sh)));
+    out(io, finished(client_verify(ms, cert)));
+    out(io, finished(client_verify(ms, exchange)));
+    in(io, response_ch: bitstring);
+    let verify_ch: bitstring = finished_payload(response_ch) in
+    if verify_ch = server_verify(ms, ch) then
+    in(io, response_sh: bitstring);
+    let verify_sh: bitstring = finished_payload(response_sh) in
+    if verify_sh = server_verify(ms, sh) then
+    in(io, response_cert: bitstring);
+    let verify_cert: bitstring = finished_payload(response_cert) in
+    if verify_cert = server_verify(ms, cert) then
+    in(io, response_exchange: bitstring);
+    let verify_exchange: bitstring = finished_payload(response_exchange) in
+    if verify_exchange = server_verify(ms, exchange) then
+        event client_handshake_complete(cr);
+        event client_finished(pair(pair(cr, sr), pair(peer, pair(mode, pms)))).
+
+let server12(server_key: secret_key) =
+    in(io, ch: bitstring);
+    let cr: bitstring = client_nonce(ch) in
+    let offer: bitstring = client_offer(ch) in
+    if offer = strong_rsa then
+    in(io, mode: bitstring);
+    if mode = strong_rsa || mode = weak_rsa then
+    new sr: bitstring;
+    let sh: bitstring = server_hello(sr, mode) in
+    out(io, sh);
+    let cert: bitstring = certificate(pk(server_key)) in
+    out(io, cert);
+    in(io, exchange: bitstring);
+    let ciphertext: bitstring = exchange_payload(exchange) in
+    let pms: bitstring = rsa_dec(server_key, ciphertext) in
+    let disclosure: bitstring = if mode = weak_rsa
+        then pair(pms, sign(server_key, pms)) else zero in
+    out(io, disclosure);
+    let ms: bitstring = master_secret(pms, pair(cr, sr)) in
+    in(io, request_ch: bitstring);
+    let verify_ch: bitstring = finished_payload(request_ch) in
+    if verify_ch = client_verify(ms, ch) then
+    in(io, request_sh: bitstring);
+    let verify_sh: bitstring = finished_payload(request_sh) in
+    if verify_sh = client_verify(ms, sh) then
+    in(io, request_cert: bitstring);
+    let verify_cert: bitstring = finished_payload(request_cert) in
+    if verify_cert = client_verify(ms, cert) then
+    in(io, request_exchange: bitstring);
+    let verify_exchange: bitstring = finished_payload(request_exchange) in
+    if verify_exchange = client_verify(ms, exchange) then
+        event server_handshake_complete(cr);
+        event server_finished(pair(pair(cr, sr), pair(pk(server_key), pair(mode, pms))));
+        out(io, finished(server_verify(ms, ch)));
+        out(io, finished(server_verify(ms, sh)));
+        out(io, finished(server_verify(ms, cert)));
+        out(io, finished(server_verify(ms, exchange))).
+
+(* The original query does not exempt weak or compromised keys. *)
+query connection: bitstring;
+    event(client_finished(connection)) ==> event(server_finished(connection)).
+
+process
+    new honest_key: secret_key;
+    new compromised_key: secret_key;
+    insert long_term_keys(pk(honest_key), honest_key);
+    insert long_term_keys(pk(compromised_key), compromised_key);
+    ( client12()
+    | server12(honest_key)
+    | out(io, certificate(pk(compromised_key)))
+    | out(leak, compromised_key) )

@@ -291,6 +291,18 @@ Translate only the main process, without waiting for ProVerif to find attack tra
 python3 proverif_to_uppaal.py examples/hashed_passwords_static.pv --no-attacks
 ```
 
+Translate the bounded TLS 1.2 RSA authentication example, including its compromised-key attack:
+```bash
+python3 proverif_to_uppaal.py examples/3rd-party/tls12_attack_static.pv --uppaal-out tls12_static.xml
+```
+
+[examples/3rd-party/tls12_attack_static.pv](examples/3rd-party/tls12_attack_static.pv) adapts the original TLS model to scalar inputs, explicit selectors, binary constructors, and 64-bit packed data. It retains the client/server RSA handshake and an authentication correspondence query, but omits DHE, TLS 1.3, weak-decryption oracles, application data, and post-session phases. Its transcript and key schedule are simplified; it is not equivalent to the original model.
+
+The closer, one-client/one-server RSA adaptation is [examples/3rd-party/tls12_attack_static_v2.pv](examples/3rd-party/tls12_attack_static_v2.pv):
+```bash
+python3 proverif_to_uppaal.py examples/3rd-party/tls12_attack_static_v2.pv --uppaal-out tls12_static_v2.xml
+```
+
 See [docs/uppaal-processes.md](docs/uppaal-processes.md) for translation semantics, supported constructs, pragmas, and options.
 
 ## Testing
