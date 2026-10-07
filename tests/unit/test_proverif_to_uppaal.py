@@ -53,6 +53,37 @@ def test_no_attacks_uses_short_timeout_and_initial_process(tmp_path, monkeypatch
     assert "AttackOnQuery" not in document
 
 
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        ("client() | server(key)", ["client_1", "server_2"]),
+        ("client(first) | client(second)", ["client_1", "client_2"]),
+        ("!client(first) | !(client(second))", ["client_1", "client_2"]),
+        ("!(out(c, value); client()) | !server(key)", ["Component1", "server_2"]),
+        ("out(c, value) | client(key)", ["Component1", "client_2"]),
+        ("client() | server(key) | extra()", ["Component1", "Component2"]),
+        ("wrapper()", ["Component1", "Component2"]),
+    ],
+)
+def test_source_macro_names_are_used_only_when_parallel_width_matches(
+    tmp_path, monkeypatch, body, expected
+):
+    scenario = tmp_path / "scenario.pv"
+    scenario.write_text(f"channel c.\nprocess ({body}).\n")
+    monkeypatch.setattr(
+        sys, "argv", ["proverif_to_uppaal.py", "--no-attacks", str(scenario)]
+    )
+    monkeypatch.setattr(
+        proverif_to_uppaal.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, INITIAL_PROCESS, ""),
+    )
+    assert proverif_to_uppaal.main() == 0
+    root = ET.parse(scenario.with_suffix(".xml")).getroot()
+    assert [node.findtext("name") for node in root.findall("template")] == ["Prefix", *expected]
+    assert root.findtext("system") == "system " + ", ".join(["Prefix", *expected]) + ";\n"
+
+
 def test_defaults_uppaal_output_to_input_name_with_xml_suffix(tmp_path, monkeypatch):
     scenario = tmp_path / "scenario.pv"
     output_file = tmp_path / "scenario.xml"
@@ -186,6 +217,8 @@ def test_tls12_static_v2_authentication_controls(
         warnings.simplefilter("error")
         assert proverif_to_uppaal.main() == 0
     document = scenario.with_suffix(".xml").read_text()
+    assert "<name>client12_1</name>" in document
+    assert "<name>server12_2</name>" in document
     assert ("AttackOnQuery1" in document) == (expected == "false")
     assert "attack_weak_rsa" not in document
     assert "attack_strong_rsa" not in document

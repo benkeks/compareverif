@@ -17,7 +17,7 @@ from compareverif.proverif.identifier_analysis import (
 )
 from compareverif.proverif.intermediate_process import IntermediateProcess, ProcessSyntaxNode
 from compareverif.proverif.attack_process import AttackProcess
-from compareverif.proverif.process_structure import decompose_process
+from compareverif.proverif.process_structure import collect_source_component_macro_names, decompose_process
 from compareverif.proverif.syntax_utils import (
     IDENTIFIER_PATTERN,
     IDENTIFIER_RE,
@@ -1001,6 +1001,13 @@ def render_channel_skeleton(
                 stacklevel=2,
             )
     decomposition = decompose_process(process)
+    source_macro_names = collect_source_component_macro_names(input_source) if input_source else []
+    if len(source_macro_names) != len(decomposition.components):
+        source_macro_names = [None] * len(decomposition.components)
+    component_names = [
+        f"{macro_name}_{index}" if macro_name else f"Component{index}"
+        for index, macro_name in enumerate(source_macro_names, start=1)
+    ]
     prefix_names = [name for node in decomposition.prefix for name in declared_names_of(node.text)]
     inserted_tables = collect_inserted_tables(process.labeled_nodes())
     getters = _collect_table_getters(process, tables)
@@ -1011,7 +1018,7 @@ def render_channel_skeleton(
             "NEW",
             _FORK_CHANNEL,
             "Prefix",
-            *(f"Component{index}" for index, _ in enumerate(decomposition.components, start=1)),
+            *component_names,
             *(f"{channel}_p" for channel in channels),
             *(f"{event}_p" for event in events),
         }
@@ -1108,10 +1115,7 @@ def render_channel_skeleton(
         attacker_resources=attacker_resource_names,
     )
 
-    component_names = []
-    for index, component in enumerate(decomposition.components, start=1):
-        name = f"Component{index}"
-        component_names.append(name)
+    for name, component in zip(component_names, decomposition.components):
         _add_component_template(
             nta,
             name=name,

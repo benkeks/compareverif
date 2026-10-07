@@ -5,6 +5,7 @@ import pytest
 from compareverif.proverif.intermediate_process import IntermediateProcess, extract_let_drifted_process
 from compareverif.proverif.process_structure import (
     UnsupportedProcessStructureError,
+    collect_source_component_macro_names,
     decompose_process,
 )
 
@@ -95,3 +96,28 @@ def test_decomposes_conditional_with_only_then_branch_as_a_single_component():
 
     assert decomposition.prefix == []
     assert [node.label for node in decomposition.components] == [1]
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("process (client() | server(key))", ["client", "server"]),
+        ("process client(first) | client(second).", ["client", "client"]),
+        ("process ((client)) | (server(pair(a,b)))", ["client", "server"]),
+        ("process new key: bitstring; insert keys(key); (client() | server(key))", ["client", "server"]),
+        ("process (client() | (server(key) | out(io, value)))", ["client", "server", None]),
+        ("process (out(io, value); client() | server())", [None, "server"]),
+        ("process (!client() | server())", ["client", "server"]),
+        ("process (!client | !(server(pair(a,b))))", ["client", "server"]),
+        ("process (!((client(key))) | ((!(server))))", ["client", "server"]),
+        ("process (!(client(); out(io, value)) | server())", [None, "server"]),
+        ("process (!(client() | server()) | other())", [None, "other"]),
+        ("process (!!client() | server())", [None, "server"]),
+        ("process (if a = b || c = d then client() | server())", [None, "server"]),
+        ('set label = "process (fake | fake)". process client("a|b;(c)") | server()', ["client", "server"]),
+        ("(* process (fake | fake) (* nested *) *) process (client() | server())", ["client", "server"]),
+        ("free value: bitstring.", []),
+    ],
+)
+def test_collects_macro_names_from_source_main_components(source, expected):
+    assert collect_source_component_macro_names(source) == expected
