@@ -109,6 +109,94 @@ RESULT event(evRSA) ==> event(evCocks) is false.
 
 
 @pytest.mark.parametrize(
+    "event",
+    [
+        "goal",
+        "goal()",
+        "goal(value)",
+        "goal(pair(first, pair(second, third)))",
+        "goal (pair(first, pair(second, third)))",
+        "goal(pair(first,\n    pair(second, third)))",
+        "goal(pair(first, second))\n    executed; it is a goal",
+        "goal\n    executed; it is a goal",
+        "goal(pair(first, second)) executed;\n    it is a goal",
+    ],
+)
+def test_parses_nested_and_wrapped_event_goals(event):
+    suffix = "" if "executed;" in event else " executed; it is a goal"
+    trace = f"""
+-- Query event(goal(value)) ==> event(other(value)) in process 0.
+1st process: event {event}{suffix}
+RESULT event(goal(value)) ==> event(other(value)) is false.
+"""
+    [process] = extract_attack_processes(trace)
+    assert process.statements == (
+        "in(goal, attack_event_1: bitstring);",
+        "event attack_breaks_query_1()",
+    )
+
+
+def test_nested_goal_is_observed_after_an_ordinary_completion_event():
+    trace = """
+-- Query event(goal(value)) ==> event(other(value)) in process 0.
+1st process: event complete(nonce) executed
+1st process: event goal(pair(nonce, pair(key, mode))) executed; it is a goal
+RESULT event(goal(value)) ==> event(other(value)) is false.
+"""
+    [process] = extract_attack_processes(trace)
+    assert process.statements == (
+        "in(complete, attack_event_1: bitstring);",
+        "in(goal, attack_event_2: bitstring);",
+        "event attack_breaks_query_1()",
+    )
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        "goal(pair(first, second)",
+        "goal(pair(first, second)))",
+        "goal(pair(first, second)) unexpected",
+        "12goal(first)",
+    ],
+)
+def test_malformed_event_goals_are_not_accepted(event):
+    trace = f"""
+-- Query event(goal(value)) ==> event(other(value)) in process 0.
+1st process: event {event} executed; it is a goal
+RESULT event(goal(value)) ==> event(other(value)) is false.
+"""
+    with pytest.warns(UntranslatedAttackWarning):
+        assert extract_attack_processes(trace) == []
+
+
+def test_incomplete_wrapped_event_does_not_consume_the_query_result():
+    trace = """
+-- Query event(goal(value)) ==> event(other(value)) in process 0.
+1st process: event goal(pair(first,
+    second)
+RESULT event(goal(value)) ==> event(other(value)) is false.
+"""
+    with pytest.warns(UntranslatedAttackWarning):
+        assert extract_attack_processes(trace) == []
+
+
+def test_incomplete_wrapped_event_does_not_consume_the_next_event():
+    trace = """
+-- Query event(goal(value)) ==> event(other(value)) in process 0.
+1st process: event incomplete(pair(first,
+    second)
+2nd process: event goal(pair(first, second)) executed; it is a goal
+RESULT event(goal(value)) ==> event(other(value)) is false.
+"""
+    [process] = extract_attack_processes(trace)
+    assert process.statements == (
+        "in(goal, attack_event_1: bitstring);",
+        "event attack_breaks_query_1()",
+    )
+
+
+@pytest.mark.parametrize(
     "source",
     [
         "free first, second: bitstring.",

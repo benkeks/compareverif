@@ -19,8 +19,8 @@
 
    Correspondence binds cr, sr, peer key, RSA mode, and pms in one packed value.
    With fixed remaining parameters these determine ms, the traffic keys, and
-   the abstract client Finished flight. Scalar completion markers permit attack
-   replay despite the translator's limitations on nested event trace arguments.
+    the abstract client Finished flight. Scalar completion markers accompany the
+    full correspondence events; attack replay observes both.
    Wire messages are opaque constructors with public selectors. *)
 
 (* UPPAAL

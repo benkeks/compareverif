@@ -123,6 +123,8 @@ attacker_cost_channel: cost
 
 When ProVerif finds an attack, the translator runs it with long trace output and builds one `AttackOnQueryN` template for each attack trace. The template starts independently of the prefix fork and reaches its `success` location only when the recorded attack path completes. A generated query `E<> AttackOnQueryN.success` accompanies each template.
 
+Executed trace events, including goal events with nested arguments and wrapped lines, become event-channel receives in the replay. Their argument lists are parsed using balanced parentheses. Replay observes each event's occurrence and captures its payload; it does not independently validate that payload against the recorded term or track the absence of matching events required by a correspondence query.
+
 Attack traces may contain resource actions on the configured cost channel:
 
 ```text

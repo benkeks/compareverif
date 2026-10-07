@@ -152,7 +152,7 @@ _PROVERIF_KEYWORDS = _PROCESS_KEYWORDS | {
     "table",
     "type",
 }
-_EVENT_RE = re.compile(rf"^event\s+({IDENTIFIER_PATTERN})(?:\s*\((.*)\))?$")
+_EVENT_RE = re.compile(rf"^event\s+({IDENTIFIER_PATTERN})(?:\s*\((.*)\))?\s*;?$")
 _GET_RE = re.compile(rf"^get\s+({IDENTIFIER_PATTERN})\s*\(")
 _TYPED_VARIABLE_RE = re.compile(rf"^{IDENTIFIER_PATTERN}\s*:\s*{IDENTIFIER_PATTERN}$")
 _SECONDS_PATTERN_RE = re.compile(r"^seconds\s*\(\s*(\d+)\s*\)$")

@@ -189,6 +189,13 @@ def test_tls12_static_v2_authentication_controls(
     assert ("AttackOnQuery1" in document) == (expected == "false")
     assert "attack_weak_rsa" not in document
     assert "attack_strong_rsa" not in document
+    if expected == "false":
+        attack = ET.fromstring(document).find("template[name='AttackOnQuery1']")
+        assert attack is not None
+        synchronisations = [
+            label.text for label in attack.findall(".//label[@kind='synchronisation']")
+        ]
+        assert "client_finished?" in synchronisations
     for template in ET.fromstring(document).findall("template"):
         names = [location.findtext("name") for location in template.findall("location")]
         assert len(names) == len(set(names)), template.findtext("name")

@@ -9,7 +9,12 @@ from dataclasses import dataclass
 from .declarations import SourceDeclarations, parse_source_declarations
 from .identifier_analysis import collect_declared_name_types
 from .intermediate_process import ProcessSyntaxNode, extract_let_drifted_process
-from .syntax_utils import IDENTIFIER_PATTERN, IDENTIFIER_RE, split_top_level_commas
+from .syntax_utils import (
+    IDENTIFIER_PATTERN,
+    IDENTIFIER_RE,
+    find_matching_paren,
+    split_top_level_commas,
+)
 
 
 _QUERY_RE = re.compile(r"^-- Query (.+) in process \d+\.$")
@@ -25,9 +30,8 @@ _COST_ACTION_RE = re.compile(
     rf"(?P<channel>[^,]+), (?P<resource>{IDENTIFIER_PATTERN})\((?P<amount>\d+)\)\) "
     r"done(?: with message (?P=resource)\((?P=amount)\))?$"
 )
-_EVENT_RE = re.compile(
+_EVENT_PREFIX_RE = re.compile(
     rf"^\d+(?:st|nd|rd|th) process: event (?P<event>{IDENTIFIER_PATTERN})"
-    r"(?:\([^)]*\))? executed(?:; it is a goal)?$"
 )
 _ATTACKER_MESSAGE_RE = re.compile(r"^The attacker has the message (?P<term>.+) = (?P<goal>.+)\.$")
 _APPLICATION_RE = re.compile(rf"^({IDENTIFIER_PATTERN})\(")
@@ -130,11 +134,11 @@ def extract_attack_processes(
             statements.append(f"out({input_match.group('channel')}, {term});")
             continue
 
-        event_match = _EVENT_RE.match(line)
-        if event_match:
+        event_name = _trace_event_name(line)
+        if event_name is not None:
             event_input_count += 1
             statements.append(
-                f"in({event_match.group('event')}, attack_event_{event_input_count}: bitstring);"
+                f"in({event_name}, attack_event_{event_input_count}: bitstring);"
             )
             continue
 
@@ -238,19 +242,45 @@ def _flatten_statements(node: ProcessSyntaxNode) -> list[str]:
     return [node.text, *_flatten_statements(node.children[0])]
 
 
+def _trace_event_name(line: str) -> str | None:
+    """Recognize an executed event with an optional balanced argument list."""
+    match = _EVENT_PREFIX_RE.match(line)
+    if match is None:
+        return None
+    remainder = line[match.end():].strip()
+    if remainder.startswith("("):
+        close_index = find_matching_paren(remainder, 0)
+        if remainder[close_index] != ")":
+            return None
+        remainder = remainder[close_index + 1:].strip()
+    if re.fullmatch(r"executed(?:; it is a goal)?", remainder) is None:
+        return None
+    return match.group("event")
+
+
 def _logical_lines(lines: list[str]) -> list[str]:
     """Join ProVerif's terminal-wrapped trace lines."""
     logical_lines: list[str] = []
     for line in lines:
         stripped = line.strip()
         if logical_lines and _is_wrapped_trace_line(logical_lines[-1]) and stripped:
-            logical_lines[-1] += stripped
+            event_continuation = _EVENT_PREFIX_RE.match(logical_lines[-1]) is not None
+            if event_continuation and (
+                stripped.startswith(("RESULT ", "-- Query ", "---"))
+                or re.match(r"^\d+(?:st|nd|rd|th) process:", stripped)
+            ):
+                logical_lines.append(stripped)
+                continue
+            separator = " " if event_continuation else ""
+            logical_lines[-1] += separator + stripped
         else:
             logical_lines.append(stripped)
     return logical_lines
 
 
 def _is_wrapped_trace_line(line: str) -> bool:
+    if _EVENT_PREFIX_RE.match(line):
+        return not line.endswith((" executed", " executed; it is a goal"))
     if line.startswith("The attacker has the message "):
         return not line.endswith(".")
     if re.match(r"^\d+(?:st|nd|rd|th) process: out\(", line):

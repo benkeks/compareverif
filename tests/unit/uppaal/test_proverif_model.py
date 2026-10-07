@@ -114,9 +114,13 @@ def test_render_channel_skeleton_declares_channel_and_payload_variable(tmp_path)
         assert f"data {channel}_p;" in document
 
 
-def test_event_channel_is_declared_once_as_broadcast(tmp_path):
-    output = """--  Process 1 (that is, process 0, with let moved downwards):
-{1}event completed
+@pytest.mark.parametrize("terminator", ["", ";", " ;"])
+@pytest.mark.parametrize("payload", [None, "value", "pair(first, second)"])
+def test_event_channel_is_declared_once_as_broadcast(tmp_path, terminator, payload):
+    arguments = f"({payload})" if payload is not None else ""
+    continuation = "\n{2}out(io, value)" if terminator else ""
+    output = f"""--  Process 1 (that is, process 0, with let moved downwards):
+{{1}}event completed{arguments}{terminator}{continuation}
 
 Translating the process into Horn clauses...
 """
@@ -125,9 +129,19 @@ Translating the process into Horn clauses...
 
     render_channel_skeleton(output_file, process)
 
-    declarations = ET.parse(output_file).getroot().findtext("declaration")
+    root = ET.parse(output_file).getroot()
+    declarations = root.findtext("declaration")
+    assert declarations is not None
     assert declarations.count("chan completed;") == 1
     assert "broadcast chan completed;" in declarations
+    sends = [
+        transition
+        for transition in root.findall(".//transition")
+        if transition.findtext("label[@kind='synchronisation']") == "completed!"
+    ]
+    assert len(sends) == 1
+    assignment = sends[0].findtext("label[@kind='assignment']")
+    assert assignment == (f"completed_p = {payload}" if payload is not None else None)
 
 
 def test_render_channel_skeleton_builds_prefix_and_component_automata(tmp_path):

@@ -26,6 +26,7 @@ SCENARIO_FILES = [
     Path("examples/simple_ratchet_static.pv"),
     Path("examples/hashed_passwords_static.pv"),
     Path("examples/singularized_passwords_static.pv"),
+    Path("examples/3rd-party/tls12_attack_static_v2.pv"),
 ]
 
 
