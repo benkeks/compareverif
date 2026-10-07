@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 from xml.etree import ElementTree as ET
 
+from compareverif.proverif.declarations import SourceDeclarations, parse_source_declarations
 from compareverif.proverif.identifier_analysis import (
     collect_declared_names,
     declared_names_of,
@@ -18,34 +19,28 @@ from compareverif.proverif.intermediate_process import IntermediateProcess, Proc
 from compareverif.proverif.attack_process import AttackProcess
 from compareverif.proverif.process_structure import decompose_process
 from compareverif.proverif.syntax_utils import (
+    IDENTIFIER_PATTERN,
+    IDENTIFIER_RE,
     extract_balanced_parens,
     find_matching_paren,
+    find_top_level_equality,
     split_top_level_commas,
+    strip_proverif_comments,
 )
 
 from .document import write_document
 
-_TABLE_STATEMENT_RE = re.compile(r"^(?:insert|get)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-_INSERT_STATEMENT_RE = re.compile(r"^insert\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_FUNCTION_CALL_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-_FREE_DECLARATION_RE = re.compile(r"^\s*free\s+([^:]+)\s*:", re.MULTILINE)
-_FUNCTION_DECLARATION_RE = re.compile(
-    r"^\s*fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)(?:\s*:\s*[^.\[]+)?\s*(\[data\])?\s*\.",
-    re.MULTILINE,
-)
-_GLOBAL_IDENTIFIER_RE = re.compile(
-    r"^\s*(?:fun|table|event|channel)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE
-)
+_TABLE_STATEMENT_RE = re.compile(rf"^(?:insert|get)\s+({IDENTIFIER_PATTERN})\s*\(")
+_INSERT_STATEMENT_RE = re.compile(rf"^insert\s+({IDENTIFIER_PATTERN})\s*\(")
+_FUNCTION_CALL_RE = re.compile(rf"({IDENTIFIER_PATTERN})\s*\(")
 _REDUCTION_RE = re.compile(r"\breduc\b")
 _PROBABILISTIC_REDUCTION_RE = re.compile(
-    r"\breduc\s+forall\s+(?P<success>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*nat\s*,\s*"
-    r"(?P<total>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*nat\s*;\s*"
-    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\(\s*(?P=success)\s*,\s*(?P=total)\s*\)\s*=\s*"
+    rf"\breduc\s+forall\s+(?P<success>{IDENTIFIER_PATTERN})\s*:\s*nat\s*,\s*"
+    rf"(?P<total>{IDENTIFIER_PATTERN})\s*:\s*nat\s*;\s*"
+    rf"(?P<name>{IDENTIFIER_PATTERN})\(\s*(?P=success)\s*,\s*(?P=total)\s*\)\s*=\s*"
     r"(?P<result>true|false)\s*\.",
     re.MULTILINE,
 )
-_COMMENT_RE = re.compile(r"\(\*.*?\*\)", re.DOTALL)
 _TABLE_ROW_CAPACITY = 3
 _TABLE_FIELD_NAMES = ["first", "second", "third", "fourth", "fifth", "sixth"]
 _FORK_CHANNEL = "_fork"
@@ -157,11 +152,11 @@ _PROVERIF_KEYWORDS = _PROCESS_KEYWORDS | {
     "table",
     "type",
 }
-_EVENT_RE = re.compile(r"^event\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*\((.*)\))?$")
-_GET_RE = re.compile(r"^get\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-_TYPED_VARIABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\s*:\s*[A-Za-z_][A-Za-z0-9_]*$")
+_EVENT_RE = re.compile(rf"^event\s+({IDENTIFIER_PATTERN})(?:\s*\((.*)\))?$")
+_GET_RE = re.compile(rf"^get\s+({IDENTIFIER_PATTERN})\s*\(")
+_TYPED_VARIABLE_RE = re.compile(rf"^{IDENTIFIER_PATTERN}\s*:\s*{IDENTIFIER_PATTERN}$")
 _SECONDS_PATTERN_RE = re.compile(r"^seconds\s*\(\s*(\d+)\s*\)$")
-_LET_SINGLE_RE = re.compile(r"^let\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*[^=]+?=\s*(.+?)\s+in$")
+_LET_SINGLE_RE = re.compile(rf"^let\s+({IDENTIFIER_PATTERN})\s*:\s*[^=]+?=\s*(.+?)\s+in$")
 
 
 class DynamicChannelError(ValueError):
@@ -408,7 +403,7 @@ def _is_attacker_cost_input(
 ) -> bool:
     if len(arguments) != 2 or arguments[0] != attacker_cost_channel:
         return False
-    match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\((\d+)\)", arguments[1])
+    match = re.fullmatch(rf"({IDENTIFIER_PATTERN})\((\d+)\)", arguments[1])
     if match is None:
         raise InvalidAttackerCostInputError(
             f"Attacker cost input on channel {attacker_cost_channel!r} must use resource(n)."
@@ -633,27 +628,16 @@ def _table_getter_lines(
     return lines
 
 
-def extract_global_free_names(source: str) -> list[str]:
-    """Return names declared by source-level ProVerif ``free`` declarations, in order."""
-    names: list[str] = []
-    seen: set[str] = set()
-    for declaration in _FREE_DECLARATION_RE.finditer(source):
-        for name in _IDENT_RE.findall(declaration.group(1)):
-            if name not in seen:
-                seen.add(name)
-                names.append(name)
-    return names
+def extract_global_free_names(source: str | SourceDeclarations) -> list[str]:
+    """Return source-level ``free`` and ``const`` values in declaration order."""
+    declarations = source if isinstance(source, SourceDeclarations) else parse_source_declarations(source)
+    return declarations.value_names
 
 
-def reject_reserved_global_names(source: str) -> None:
+def reject_reserved_global_names(source: str | SourceDeclarations) -> None:
     """Warn about ALL_CAPS source declarations without rejecting translation."""
-    uncommented_source = _COMMENT_RE.sub("", source)
-    names = [
-        name
-        for declaration in _FREE_DECLARATION_RE.finditer(uncommented_source)
-        for name in _IDENT_RE.findall(declaration.group(1))
-    ]
-    names.extend(match.group(1) for match in _GLOBAL_IDENTIFIER_RE.finditer(uncommented_source))
+    declarations = source if isinstance(source, SourceDeclarations) else parse_source_declarations(source)
+    names = [name for name, declaration in declarations.symbols.items() if declaration.kind != "type"]
     reserved = sorted({name for name in names if name.upper() == name})
     if reserved:
         warnings.warn(
@@ -668,7 +652,7 @@ def reject_reserved_global_names(source: str) -> None:
 def _warn_generated_name_collisions(source: str, generated_names: set[str]) -> None:
     input_names = {
         name
-        for name in _IDENT_RE.findall(_COMMENT_RE.sub("", source))
+        for name in IDENTIFIER_RE.findall(strip_proverif_comments(source))
         if name not in _PROVERIF_KEYWORDS
     }
     collisions = sorted(generated_names & input_names)
@@ -697,9 +681,10 @@ def _generated_location_names(
     return names
 
 
-def extract_proverif_functions(source: str) -> ProVerifFunctions:
+def extract_proverif_functions(source: str | SourceDeclarations) -> ProVerifFunctions:
     """Classify declared functions as constructors or reduc-rule selectors."""
-    uncommented_source = _COMMENT_RE.sub("", source)
+    declarations = source if isinstance(source, SourceDeclarations) else parse_source_declarations(source)
+    uncommented_source = declarations.source
     probability_rules = _extract_probability_rules(uncommented_source)
     rules = [
         rule for rule in _extract_reduction_rules(uncommented_source)
@@ -708,11 +693,11 @@ def extract_proverif_functions(source: str) -> ProVerifFunctions:
     selector_matches = [(rule.selector, rule.arguments) for rule in rules]
     selectors = _ordered_unique([name for name, _ in selector_matches])
     selector_set = set(selectors)
-    declared_matches = _FUNCTION_DECLARATION_RE.findall(uncommented_source)
-    declared = _ordered_unique([name for name, _, _ in declared_matches])
+    declared_functions = declarations.functions
+    declared = list(declared_functions)
     arities = {
-        name: len(split_top_level_commas(arguments))
-        for name, arguments, _ in declared_matches
+        name: len(declaration.argument_types)
+        for name, declaration in declared_functions.items()
     }
     arities.update({rule.selector: len(rule.arguments) for rule in rules})
     return ProVerifFunctions(
@@ -720,7 +705,7 @@ def extract_proverif_functions(source: str) -> ProVerifFunctions:
         selectors=[name for name in selectors if name != "seconds"],
         arities=arities,
         rules={rule.selector: rule for rule in rules if rule.selector != "seconds"},
-        data_functions=[name for name, _, annotation in declared_matches if annotation],
+        data_functions=[name for name, declaration in declared_functions.items() if "data" in declaration.attributes],
         probability_rules=probability_rules,
     )
 
@@ -738,7 +723,7 @@ def _extract_reduction_rules(source: str) -> list[ReductionRule]:
         if semicolon == -1 or period == -1:
             continue
         equation = source[semicolon + 1 : period].strip()
-        equality = _find_top_level_equality(equation)
+        equality = find_top_level_equality(equation)
         if equality is None:
             continue
         left, right = equality
@@ -759,18 +744,6 @@ def _extract_probability_rules(source: str) -> dict[str, ProbabilityRule]:
         )
         for match in _PROBABILISTIC_REDUCTION_RE.finditer(source)
     }
-
-
-def _find_top_level_equality(text: str) -> tuple[str, str] | None:
-    depth = 0
-    for index, character in enumerate(text):
-        if character == "(":
-            depth += 1
-        elif character == ")":
-            depth -= 1
-        elif character == "=" and depth == 0:
-            return text[:index].strip(), text[index + 1 :].strip()
-    return None
 
 
 def _parse_term(text: str) -> Term:
@@ -1325,7 +1298,7 @@ def _attacker_cost_action(
     text: str, attacker_cost_channel: str | None, attacker_resources: set[str]
 ) -> tuple[str, str, int] | None:
     match = re.fullmatch(
-        r"(in|out)\(([^,]+),\s*([A-Za-z_][A-Za-z0-9_]*)\((\d+)\)\);?",
+        rf"(in|out)\(([^,]+),\s*({IDENTIFIER_PATTERN})\((\d+)\)\);?",
         text,
     )
     if match is None or match.group(2).strip() != attacker_cost_channel:
@@ -1394,7 +1367,7 @@ def _get_parts(text: str) -> tuple[str, list[str], list[str], list[int]]:
 
 
 def _is_data_term(term: str) -> bool:
-    return bool(_IDENT_RE.fullmatch(term)) or "(" in term
+    return bool(IDENTIFIER_RE.fullmatch(term)) or "(" in term
 
 
 def _get_variables(text: str) -> list[str]:
@@ -1418,14 +1391,9 @@ def _strip_grouping_parentheses(text: str) -> str:
 
 def _split_top_level_equality(equality: str) -> tuple[str, str]:
     """Split one equality without losing nested terms on either side."""
-    depth = 0
-    for index, character in enumerate(equality):
-        if character == "(":
-            depth += 1
-        elif character == ")":
-            depth -= 1
-        elif character == "=" and depth == 0:
-            return equality[:index].strip(), equality[index + 1 :].strip()
+    result = find_top_level_equality(equality)
+    if result is not None:
+        return result
     raise ValueError(f"Cannot translate get condition equality: {equality}")
 
 
@@ -2002,7 +1970,7 @@ class _ComponentBuilder:
 def _probability_weights(
     condition: str, probability_rules: dict[str, ProbabilityRule]
 ) -> tuple[str, str] | None:
-    match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\((\d+),\s*(\d+)\)", condition)
+    match = re.fullmatch(rf"({IDENTIFIER_PATTERN})\((\d+),\s*(\d+)\)", condition)
     used_rules = {
         name
         for name in probability_rules

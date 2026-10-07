@@ -6,9 +6,10 @@ import re
 import warnings
 from dataclasses import dataclass
 
+from .declarations import SourceDeclarations, parse_source_declarations
 from .identifier_analysis import collect_declared_name_types
 from .intermediate_process import ProcessSyntaxNode, extract_let_drifted_process
-from .syntax_utils import split_top_level_commas
+from .syntax_utils import IDENTIFIER_PATTERN, IDENTIFIER_RE, split_top_level_commas
 
 
 _QUERY_RE = re.compile(r"^-- Query (.+) in process \d+\.$")
@@ -21,18 +22,15 @@ _INPUT_RE = re.compile(
 )
 _COST_ACTION_RE = re.compile(
     r"^\d+(?:st|nd|rd|th) process: (?P<direction>in|out)\("
-    r"(?P<channel>[^,]+), (?P<resource>[A-Za-z_][A-Za-z0-9_]*)\((?P<amount>\d+)\)\) "
+    rf"(?P<channel>[^,]+), (?P<resource>{IDENTIFIER_PATTERN})\((?P<amount>\d+)\)\) "
     r"done(?: with message (?P=resource)\((?P=amount)\))?$"
 )
 _EVENT_RE = re.compile(
-    r"^\d+(?:st|nd|rd|th) process: event (?P<event>[A-Za-z_][A-Za-z0-9_]*)"
+    rf"^\d+(?:st|nd|rd|th) process: event (?P<event>{IDENTIFIER_PATTERN})"
     r"(?:\([^)]*\))? executed(?:; it is a goal)?$"
 )
 _ATTACKER_MESSAGE_RE = re.compile(r"^The attacker has the message (?P<term>.+) = (?P<goal>.+)\.$")
-_FREE_RE = re.compile(r"^\s*free\s+(\w+)\s*:\s*(\w+)", re.MULTILINE)
-_FUNCTION_RE = re.compile(r"^\s*fun\s+(\w+)\s*\(([^)]*)\)\s*:\s*(\w+)", re.MULTILINE)
-_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
-_APPLICATION_RE = re.compile(r"^(\w+)\(")
+_APPLICATION_RE = re.compile(rf"^({IDENTIFIER_PATTERN})\(")
 _FAILED_QUERY_RESULT_RE = re.compile(r"^RESULT .+ is false\.$")
 
 
@@ -59,15 +57,17 @@ class AttackProcess:
 
 
 def extract_attack_processes(
-    trace: str, source: str = "", *, attacker_cost_channel: str = "cost"
+    trace: str, source: str = "", *, attacker_cost_channel: str = "cost",
+    source_declarations: SourceDeclarations | None = None,
 ) -> list[AttackProcess]:
     """Return attacker processes for successful queries in a long trace.
 
     The function deliberately operates only on ProVerif text and does not depend
-    on any target backend.  ``source`` is optional and only improves type
-    inference for intercepted messages and initial fresh attacker names.
+    on any target backend. ``source`` supplies global names and types;
+    ``source_declarations`` can supply a shared catalogue including libraries.
     """
-    global_names, function_signatures = _parse_source_symbols(source)
+    declarations = source_declarations or parse_source_declarations(source)
+    global_names = declarations.symbols
     bound_name_types = _trace_bound_name_types(trace)
     processes: list[AttackProcess] = []
     current_query: str | None = None
@@ -109,7 +109,7 @@ def extract_attack_processes(
         if output_match:
             if output_match.group("channel") == attacker_cost_channel:
                 cost_term = output_match.group("term")
-                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*\(\d+\)", cost_term):
+                if re.fullmatch(rf"{IDENTIFIER_PATTERN}\(\d+\)", cost_term):
                     statements.append(f"in({attacker_cost_channel}, {cost_term});")
                     continue
             variable = output_match.group("variable")
@@ -118,7 +118,7 @@ def extract_attack_processes(
             term = output_match.group("term")
             statements.append(
                 f"in({output_match.group('channel')}, {attacker_variable}: "
-                f"{_term_type(term, function_signatures)});"
+                f"{_term_type(term, declarations)});"
             )
             continue
 
@@ -148,7 +148,7 @@ def extract_attack_processes(
 
         if (
             in_attacker_knowledge
-            and _IDENTIFIER_RE.match(line)
+            and IDENTIFIER_RE.fullmatch(line)
             and line not in global_names
             and line not in bound_name_types
         ):
@@ -162,7 +162,7 @@ def extract_attack_processes(
                 message_match.group("term"), substitutions, fresh_names
             )
             fresh_statements = [
-                f"new attack_{name}: {_fresh_type(name, trace, function_signatures)};"
+                f"new attack_{name}: {_fresh_type(name, trace, declarations)};"
                 for name in sorted(fresh_names)
             ]
             success_event = f"event attack_breaks_query_{query_number}()"
@@ -181,7 +181,7 @@ def extract_attack_processes(
         if current_query is not None and _FAILED_QUERY_RESULT_RE.match(line):
             if event_input_count:
                 fresh_statements = [
-                    f"new attack_{name}: {_fresh_type(name, trace, function_signatures)};"
+                    f"new attack_{name}: {_fresh_type(name, trace, declarations)};"
                     for name in sorted(fresh_names)
                 ]
                 processes.append(
@@ -260,22 +260,6 @@ def _is_wrapped_trace_line(line: str) -> bool:
     return False
 
 
-def _parse_source_symbols(source: str) -> tuple[set[str], dict[str, tuple[list[str], str]]]:
-    global_names = {match.group(1) for match in _FREE_RE.finditer(source)}
-    global_names.update(
-        match.group(1)
-        for match in re.finditer(r"^\s*channel\s+(\w+)", source, re.MULTILINE)
-    )
-    function_signatures = {
-        match.group(1): (
-            [argument.strip() for argument in match.group(2).split(",") if argument.strip()],
-            match.group(3),
-        )
-        for match in _FUNCTION_RE.finditer(source)
-    }
-    return global_names, function_signatures
-
-
 def _trace_bound_name_types(trace: str) -> dict[str, str]:
     try:
         process = extract_let_drifted_process(trace)
@@ -284,29 +268,31 @@ def _trace_bound_name_types(trace: str) -> dict[str, str]:
     return collect_declared_name_types(process.nodes)
 
 
-def _term_type(term: str, function_signatures: dict[str, tuple[list[str], str]]) -> str:
+def _term_type(term: str, declarations: SourceDeclarations) -> str:
     match = _APPLICATION_RE.match(term)
-    return function_signatures.get(match.group(1), ([], "bitstring"))[1] if match else "bitstring"
+    name = match.group(1) if match else term.strip()
+    declaration = declarations.symbols.get(name)
+    return (declaration.type_name or "bitstring") if declaration else "bitstring"
 
 
 def _fresh_type(
     name: str,
     trace: str,
-    function_signatures: dict[str, tuple[list[str], str]],
+    declarations: SourceDeclarations,
 ) -> str:
-    inferred_types = _argument_type_constraints(name, trace, function_signatures)
+    inferred_types = _argument_type_constraints(name, trace, declarations)
     return inferred_types.pop() if len(inferred_types) == 1 else "bitstring"
 
 
 def _argument_type_constraints(
-    name: str, trace: str, function_signatures: dict[str, tuple[list[str], str]]
+    name: str, trace: str, declarations: SourceDeclarations
 ) -> set[str]:
     inferred_types: set[str] = set()
-    for function, (argument_types, _) in function_signatures.items():
+    for function, declaration in declarations.functions.items():
         for match in re.finditer(rf"\b{function}\(([^()]*)\)", trace):
             for index, argument in enumerate(split_top_level_commas(match.group(1))):
-                if argument == name and index < len(argument_types):
-                    inferred_types.add(argument_types[index])
+                if argument == name and index < len(declaration.argument_types):
+                    inferred_types.add(declaration.argument_types[index])
     return inferred_types
 
 

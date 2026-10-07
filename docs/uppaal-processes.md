@@ -65,7 +65,9 @@ If bigger data is needed the switch `--wide-data` can be used to generate a 63-b
 
 ### Constructors and Selectors
 
-Functions declared with `fun` are classified as constructors unless their name appears on the left-hand side of a `reduc` rule. Reduction-rule functions are selectors. Declarations from locally resolvable `-lib` files are included.
+Source declarations are collected once from the model and locally resolvable `-lib` files, then shared by attack extraction and UPPAAL generation. The catalogue includes grouped `free` and `const` values, function signatures and attributes, channels, tables, events, and types; nested comments are ignored. Both `free` and `const` values become global data identifiers. Process-local bindings remain handled by the process scope analysis.
+
+Functions declared with `fun` are classified as constructors unless their name appears on the left-hand side of a `reduc` rule. Reduction-rule functions are selectors.
 
 Constructors receive four-bit datatype tags (limiting to fifteen constructors). Nullary constructors return their tag, unary constructors reserve the low four bits for the tag and shift their argument by four bits, and binary constructors use `BUILD_PAIR` to encode the tag, the first-argument width, and both arguments. Selectors inspect these tags and packed fields and return `-1` when their reduction pattern does not match.
 

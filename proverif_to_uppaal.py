@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from compareverif.proverif.intermediate_process import extract_preferred_process
+from compareverif.proverif.declarations import parse_source_declarations
 from compareverif.proverif.attack_process import extract_attack_processes
 from compareverif.proverif.libraries import (
     append_library_arguments,
@@ -125,11 +126,14 @@ def main() -> int:
         print(process.render_tree())
 
     source = scenario_file.read_text()
+    declaration_source = "\n".join([*read_declared_library_sources(scenario_file), source])
+    declarations = parse_source_declarations(declaration_source)
     pragmas = parse_uppaal_pragmas(source)
     attack_processes = [] if args.no_attacks else extract_attack_processes(
         result.stdout,
         source,
         attacker_cost_channel=pragmas.attacker_cost_channel,
+        source_declarations=declarations,
     )
     if args.show_attack_processes and not args.no_attacks:
         for attack_process in attack_processes:
@@ -140,13 +144,12 @@ def main() -> int:
         print("Warning: replications will be translated to loops.", file=sys.stderr)
 
     try:
-        declaration_source = "\n".join([*read_declared_library_sources(scenario_file), source])
-        reject_reserved_global_names(declaration_source)
+        reject_reserved_global_names(declarations)
         render_channel_skeleton(
             uppaal_output,
             process,
-            global_free_names=extract_global_free_names(source),
-            proverif_functions=extract_proverif_functions(declaration_source),
+            global_free_names=extract_global_free_names(declarations),
+            proverif_functions=extract_proverif_functions(declarations),
             attack_processes=attack_processes,
             input_source=declaration_source,
             non_blocking_channels=pragmas.non_blocking_channels,

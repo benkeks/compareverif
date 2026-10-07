@@ -95,6 +95,47 @@ def test_all_caps_names_warn_and_still_write_uppaal_output(tmp_path, monkeypatch
     assert "VALUE" in output_file.read_text()
 
 
+def test_library_declarations_are_shared_by_attack_extraction_and_rendering(
+    tmp_path, monkeypatch, capsys
+):
+    (tmp_path / "shared.pvl").write_text(
+        "type token.\nfree first, second: bitstring.\n"
+        "const mode: bitstring.\nfun snapshot(bitstring): token.\n"
+    )
+    scenario = tmp_path / "scenario.pv"
+    scenario.write_text(
+        "(* -lib shared.pvl *)\nchannel c.\nfree value, secret: bitstring.\n"
+        "process out(c, value) | out(c, value)\n"
+    )
+    trace = INITIAL_PROCESS + """
+-- Query not attacker(secret[]) in process 1.
+Additional knowledge of the attacker:
+first
+second
+mode
+1st process: out(c, ~M) with ~M = snapshot(mode) done
+The attacker has the message ~M = secret.
+"""
+    monkeypatch.setattr(
+        sys, "argv", ["proverif_to_uppaal.py", "--show-attack-processes", str(scenario)]
+    )
+    monkeypatch.setattr(
+        proverif_to_uppaal.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, trace, ""),
+    )
+    assert proverif_to_uppaal.main() == 0
+    attack = capsys.readouterr().out
+    assert "in(c, attack_M: token);" in attack
+    assert "new attack_" not in attack
+    root = ET.parse(scenario.with_suffix(".xml")).getroot()
+    declaration = root.findtext("declaration", "")
+    assert "data first =" in declaration
+    assert "data second =" in declaration
+    assert "data mode =" in declaration
+    assert "data snapshot(data value1)" in declaration
+
+
 def test_no_attacks_conflicts_with_show_attack_processes(monkeypatch, capsys):
     monkeypatch.setattr(
         sys,

@@ -15,13 +15,11 @@ from dataclasses import dataclass
 from typing import Iterable, Optional
 
 from .intermediate_process import IntermediateProcess, ProcessSyntaxNode
-from .syntax_utils import find_matching_paren, split_top_level_commas
+from .syntax_utils import IDENTIFIER_PATTERN, IDENTIFIER_RE, find_matching_paren, split_top_level_commas
 
-_IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
-_IDENT_RE = re.compile(_IDENT)
-_TYPED_NAME_RE = re.compile(rf"({_IDENT})\s*:\s*({_IDENT})")
-_TYPED_NAME_FULL_RE = re.compile(rf"^({_IDENT})\s*:\s*{_IDENT}$")
-_NEW_RE = re.compile(rf"^new\s+({_IDENT})\s*:\s*{_IDENT}")
+_TYPED_NAME_RE = re.compile(rf"({IDENTIFIER_PATTERN})\s*:\s*({IDENTIFIER_PATTERN})")
+_TYPED_NAME_FULL_RE = re.compile(rf"^({IDENTIFIER_PATTERN})\s*:\s*{IDENTIFIER_PATTERN}$")
+_NEW_RE = re.compile(rf"^new\s+({IDENTIFIER_PATTERN})\s*:\s*{IDENTIFIER_PATTERN}")
 _KEYWORDS = {
     "in", "out", "new", "let", "get", "insert", "event", "if", "then", "else", "suchthat",
     "true", "false",
@@ -151,7 +149,7 @@ def _resolve_node(
 
 
 def _referenced_identifiers(text: str) -> list[str]:
-    return [match.group(0) for match in _IDENT_RE.finditer(text) if match.group(0) not in _KEYWORDS]
+    return [match.group(0) for match in IDENTIFIER_RE.finditer(text) if match.group(0) not in _KEYWORDS]
 
 
 def _analyze_statement(text: str) -> tuple[list[str], str, Optional[str], bool]:
@@ -233,7 +231,7 @@ def _analyze_in(stripped: str) -> tuple[list[str], str, Optional[str], bool]:
 
 
 def _analyze_get(stripped: str) -> tuple[list[str], str, Optional[str], bool]:
-    match = re.match(rf"^get\s+{_IDENT}\s*\(", stripped)
+    match = re.match(rf"^get\s+{IDENTIFIER_PATTERN}\s*\(", stripped)
     if not match:
         return [], stripped, None, False
 

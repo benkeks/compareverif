@@ -106,3 +106,65 @@ RESULT event(evRSA) ==> event(evCocks) is false.
         "in(evRSA, attack_event_1: bitstring);",
         "event attack_breaks_query_1()",
     )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "free first, second: bitstring.",
+        "const first, second: bitstring.",
+        "fun first(): bitstring. fun second(): bitstring.",
+    ],
+)
+def test_declared_globals_are_not_invented_as_attacker_fresh_names(source):
+    trace = """
+-- Query event(done) ==> event(other) in process 0.
+Additional knowledge of the attacker:
+first
+second
+1st process: in(c, value: bitstring) done with message second
+1st process: event done executed; it is a goal
+RESULT event(done) ==> event(other) is false.
+"""
+    [process] = extract_attack_processes(trace, source)
+    assert process.statements == (
+        "out(c, second);",
+        "in(done, attack_event_1: bitstring);",
+        "event attack_breaks_query_1()",
+    )
+
+
+def test_commented_declarations_do_not_hide_real_attacker_fresh_names():
+    source = """(* outer (* inner *) free _fresh: bitstring. *)
+fun pk(key): bitstring.
+"""
+    trace = """
+-- Query not attacker(secret[]) in process 0.
+Additional knowledge of the attacker:
+_fresh
+The attacker has the message pk(_fresh) = secret.
+"""
+    [process] = extract_attack_processes(trace, source)
+    assert process.statements[0] == "new attack__fresh: key;"
+    assert "pk(attack__fresh)" in process.statements[-1]
+
+
+@pytest.mark.parametrize("name", ["wrap", "_wrap", "Wrap_12"])
+def test_intercepted_applications_use_source_identifier_grammar(name):
+    trace = f"""
+-- Query not attacker(secret[]) in process 0.
+1st process: out(c, ~M) with ~M = {name}(value) done
+The attacker has the message ~M = secret.
+"""
+    [process] = extract_attack_processes(trace, f"fun {name}(bitstring): token.")
+    assert process.statements[0] == "in(c, attack_M: token);"
+
+
+def test_intercepted_constants_use_the_shared_declared_type():
+    trace = """
+-- Query not attacker(secret[]) in process 0.
+1st process: out(c, ~M) with ~M = mode done
+The attacker has the message ~M = secret.
+"""
+    [process] = extract_attack_processes(trace, "const mode: algorithm.")
+    assert process.statements[0] == "in(c, attack_M: algorithm);"
