@@ -204,8 +204,8 @@ class UnsupportedSelectorRuleError(ValueError):
     """Raised when a reduction rule cannot be translated to a packed selector."""
 
 
-class ReservedTranslationNameError(ValueError):
-    """Raised when a source declaration uses an ALL_CAPS translation-reserved name."""
+class ReservedTranslationNameWarning(UserWarning):
+    """Warn when ALL_CAPS source names may clash with generated UPPAAL identifiers."""
 
 
 class GeneratedNameCollisionWarning(UserWarning):
@@ -646,7 +646,7 @@ def extract_global_free_names(source: str) -> list[str]:
 
 
 def reject_reserved_global_names(source: str) -> None:
-    """Reject ALL_CAPS source declarations because translation-generated names use that form."""
+    """Warn about ALL_CAPS source declarations without rejecting translation."""
     uncommented_source = _COMMENT_RE.sub("", source)
     names = [
         name
@@ -656,8 +656,12 @@ def reject_reserved_global_names(source: str) -> None:
     names.extend(match.group(1) for match in _GLOBAL_IDENTIFIER_RE.finditer(uncommented_source))
     reserved = sorted({name for name in names if name.upper() == name})
     if reserved:
-        raise ReservedTranslationNameError(
-            f"ALL_CAPS names are reserved for the UPPAAL translation: {', '.join(reserved)}."
+        warnings.warn(
+            f"ALL_CAPS source names may clash with generated UPPAAL identifiers: {', '.join(reserved)}. "
+            "Translation will continue, but name clashes can make the generated model invalid. "
+            "Rename these source declarations before using the model in UPPAAL.",
+            ReservedTranslationNameWarning,
+            stacklevel=2,
         )
 
 

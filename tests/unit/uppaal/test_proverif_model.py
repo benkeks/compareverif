@@ -31,7 +31,7 @@ from compareverif.uppaal import (
     extract_global_free_names,
     extract_proverif_functions,
     ProVerifFunctions,
-    ReservedTranslationNameError,
+    ReservedTranslationNameWarning,
     UnknownUppaalPragmaWarning,
     analyze_constructor_widths,
     render_channel_skeleton,
@@ -265,9 +265,11 @@ free salt1: bitstring [ private ].
     assert extract_global_free_names(source) == ["user1", "pw1", "singularization1", "salt1"]
 
 
-def test_all_caps_global_names_are_reserved_for_translation():
-    with pytest.raises(ReservedTranslationNameError, match="ALL_CAPS names are reserved"):
+def test_all_caps_global_names_warn_without_rejecting_translation():
+    with pytest.warns(ReservedTranslationNameWarning, match="MK, SECRET") as recorded:
         reject_reserved_global_names("fun MK(bitstring): bitstring.\nfree SECRET: bitstring.")
+    assert "Translation will continue" in str(recorded[0].message)
+    assert "generated model invalid" in str(recorded[0].message)
 
 
 def test_all_caps_let_process_names_are_allowed_after_proverif_unfolding():

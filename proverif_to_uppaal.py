@@ -25,7 +25,6 @@ from compareverif.uppaal import (
     InlineIfExpressionError,
     InvalidUppaalPragmaError,
     NestedReplicationError,
-    ReservedTranslationNameError,
     TupleDataError,
     UnsupportedConstructorArityError,
     UnsupportedGetConditionError,
@@ -170,7 +169,6 @@ def main() -> int:
         UnsupportedGetConditionError,
         UnsupportedSelectorRuleError,
         InvalidUppaalPragmaError,
-        ReservedTranslationNameError,
         UnsupportedProcessStructureError,
     ) as error:
         print(f"Cannot translate to a static UPPAAL model: {error}", file=sys.stderr)

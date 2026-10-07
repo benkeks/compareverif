@@ -69,6 +69,8 @@ Functions declared with `fun` are classified as constructors unless their name a
 
 Constructors receive four-bit datatype tags (limiting to fifteen constructors). Nullary constructors return their tag, unary constructors reserve the low four bits for the tag and shift their argument by four bits, and binary constructors use `BUILD_PAIR` to encode the tag, the first-argument width, and both arguments. Selectors inspect these tags and packed fields and return `-1` when their reduction pattern does not match.
 
+ALL_CAPS source declarations produce a `ReservedTranslationNameWarning`. Translation continues without renaming declarations; collisions can make the generated model invalid, so rename conflicting source declarations before using it in UPPAAL.
+
 Tuple data is not supported. Tuple bindings, tuple literals, and tuple values as function arguments are rejected. Input patterns must bind exactly one typed variable. Constructors with more than two arguments are rejected. A warning is emitted when a constructor term requires more than seven four-bit components in the 31-bit data range. (But there might be cases where this limit hits without a warning.)
 
 Table storage has fixed capacity (3 rows by default). Generated insertions stop when capacity is reached. Generated lookup functions return the first matching row or `-1` when no row matches.
