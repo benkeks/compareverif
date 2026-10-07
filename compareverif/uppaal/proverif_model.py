@@ -688,6 +688,10 @@ def _generated_location_names(
     names = {"before", "entry", "terminated", "forked", "replication", "get_failed"}
     for node in process.labeled_nodes():
         names.add(f"step_{node.label}")
+        if node.text.startswith("if "):
+            names.add(f"if_{node.label}")
+        elif node.text.startswith("get "):
+            names.add(f"get_failed_{node.label}")
         if _seconds_input(node.text, time_channels) is not None:
             names.add(f"step_{node.label}_after")
     return names
@@ -1708,6 +1712,10 @@ class _ComponentBuilder:
         self.location_elements = {
             location.get("id"): location for location in template.findall("location")
         }
+        self.location_names = {
+            location.findtext("name") for location in self.location_elements.values()
+        }
+        self.failed_lookup_locations: set[str] = set()
         self.location_y = {
             location_id: int(location.get("y", "0"))
             for location_id, location in self.location_elements.items()
@@ -1720,9 +1728,15 @@ class _ComponentBuilder:
 
     def location(self, title: str, *, urgent: bool = False, invariant: str | None = None, x: int = 0) -> str:
         location_id = f"{self.name}_node_{self.location_count}"
+        location_name = title
+        suffix = self.location_count
+        while location_name in self.location_names:
+            location_name = f"{title}_{suffix}"
+            suffix += 1
+        self.location_names.add(location_name)
         y = self.location_count * 160
         location = ET.SubElement(self.template, "location", {"id": location_id, "x": str(x), "y": str(y)})
-        ET.SubElement(location, "name", {"x": str(x + 20), "y": str(y - 24)}).text = title
+        ET.SubElement(location, "name", {"x": str(x + 20), "y": str(y - 24)}).text = location_name
         if invariant:
             ET.SubElement(location, "label", {"kind": "invariant", "x": "20", "y": str(y + 20)}).text = invariant
         else:
@@ -1750,11 +1764,7 @@ class _ComponentBuilder:
 
     def finalize_layout(self, terminal_id: str | None) -> None:
         """Place terminal states below the process and failed lookups to their right."""
-        terminal_candidates = {
-            location_id
-            for location_id, location in self.location_elements.items()
-            if location.findtext("name") == "get_failed"
-        }
+        terminal_candidates = self.failed_lookup_locations
         process_y = [
             y
             for location_id, y in self.location_y.items()
@@ -1823,7 +1833,7 @@ class _ComponentBuilder:
         if node.text.startswith("if "):
             condition = _uppaal_condition(node.text[len("if ") :].removesuffix(" then").strip())
             probability_weights = _probability_weights(condition, self.probability_rules)
-            decision = self.branchpoint(x=x) if probability_weights else self.location("if", x=x)
+            decision = self.branchpoint(x=x) if probability_weights else self.location(f"if_{node.label}", x=x)
             self.transition(
                 source,
                 decision,
@@ -1956,7 +1966,9 @@ class _ComponentBuilder:
         normal_children = [child for child in node.children if child.text != "else"]
         self.compile_children(normal_children, next_location, target)
         else_branch = next((child for child in node.children if child.text == "else"), None)
-        failure_target = self.location("get_failed", x=x) if else_branch is None else None
+        failure_target = self.location(f"get_failed_{node.label}", x=x) if else_branch is None else None
+        if failure_target is not None:
+            self.failed_lookup_locations.add(failure_target)
         failure_guard = " || ".join(f"{getter} == {self.not_found}" for getter in getters)
         if guard:
             failure_guard = f"({guard}) && ({failure_guard})"

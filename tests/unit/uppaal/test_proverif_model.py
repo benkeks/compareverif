@@ -628,13 +628,39 @@ Translating the process into Horn clauses...
 
     component = ET.parse(output_file).getroot().find(".//template[name='Component1']")
     decision = next(
-        location for location in component.findall("location") if location.findtext("name") == "if"
+        location for location in component.findall("location") if location.findtext("name") == "if_1"
     )
     assert decision.find("urgent") is None
     assert any(
         transition.find("source").get("ref") == decision.get("id")
         for transition in component.findall("transition")
     )
+
+
+def test_repeated_conditionals_have_unique_deterministic_location_names(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+(
+    {1}if value = value then
+        {2}if value = value then
+            {3}out(c, value)
+) | (
+    {4}out(c, value)
+)
+
+Translating the process into Horn clauses...
+"""
+    generated_names = []
+    for filename in ("first.xml", "second.xml"):
+        output_file = tmp_path / filename
+        render_channel_skeleton(output_file, extract_let_drifted_process(output))
+        root = ET.parse(output_file).getroot()
+        component = root.find(".//template[name='Component1']")
+        assert component is not None
+        names = [location.findtext("name") for location in component.findall("location")]
+        assert len(names) == len(set(names))
+        assert {"if_1", "if_2"} <= set(names)
+        generated_names.append(names)
+    assert generated_names[0] == generated_names[1]
 
 
 def test_probabilistic_condition_rejects_successes_above_total(tmp_path):
@@ -1383,7 +1409,7 @@ Translating the process into Horn clauses...
     )
     failed_id = next(
         location.get("id") for location in component.findall("location")
-        if location.findtext("name") == "get_failed"
+        if location.findtext("name") == "get_failed_3"
     )
     assert any(
         transition.find("source").get("ref") == failed_id
@@ -1442,8 +1468,39 @@ Translating the process into Horn clauses...
     render_channel_skeleton(output_file, process)
     component = ET.parse(output_file).getroot().find(".//template[name='Component1']")
     terminated = next(location for location in component.findall("location") if location.findtext("name") == "terminated")
-    failed = next(location for location in component.findall("location") if location.findtext("name") == "get_failed")
+    failed = next(location for location in component.findall("location") if location.findtext("name") == "get_failed_2")
     assert terminated.get("y") == failed.get("y")
     assert int(failed.get("x")) > int(terminated.get("x"))
+
+
+def test_repeated_get_failures_have_unique_names_and_preserve_layout(tmp_path):
+    output = """--  Process 1 (that is, process 0, with let moved downwards):
+{1}new key: bitstring;
+(
+    {2}get store(first: bitstring, value: bitstring) suchthat first = key in
+        {3}get store(second: bitstring, other: bitstring) suchthat second = key in
+            {4}out(c, other)
+) | (
+    {5}out(c, key)
+)
+
+Translating the process into Horn clauses...
+"""
+    output_file = tmp_path / "model.xml"
+    render_channel_skeleton(output_file, extract_let_drifted_process(output))
+    component = ET.parse(output_file).getroot().find(".//template[name='Component1']")
+    assert component is not None
+    locations = component.findall("location")
+    names = [location.findtext("name") for location in locations]
+    assert len(names) == len(set(names))
+    failed = [
+        location for location in locations
+        if location.findtext("name") in {"get_failed_2", "get_failed_3"}
+    ]
+    assert len(failed) == 2
+    terminated = next(location for location in locations if location.findtext("name") == "terminated")
+    for location in failed:
+        assert location.get("y") == terminated.get("y")
+        assert int(location.get("x", "0")) > int(terminated.get("x", "0"))
 
 
