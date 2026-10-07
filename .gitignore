@@ -10,3 +10,4 @@ __pycache__/
 artifact/compareverif-docker.tar.gz
 artifact/out-*
 *.xml
+examples/3rd-party/
